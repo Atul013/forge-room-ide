@@ -1,0 +1,22 @@
+{
+	"$schema": "vscode://schemas/color-theme",
+	"name": "Forge Room · Ink & Ember",
+	"type": "dark",
+	"colors": {
+		"focusBorder": "#e49b52", "foreground": "#e9e5dc", "descriptionForeground": "#aaa79d", "disabledForeground": "#77766e", "errorForeground": "#df726a", "textLink.foreground": "#e49b52",
+		"editor.background": "#151916", "editor.foreground": "#e9e5dc", "editorLineNumber.foreground": "#858585", "editorLineNumber.activeForeground": "#dfdfd5", "editorCursor.foreground": "#efae65", "editor.selectionBackground": "#80603b88", "editor.lineHighlightBackground": "#ffffff07", "editorIndentGuide.background1": "#303731", "editorIndentGuide.activeBackground1": "#6b766a", "editorGutter.background": "#151916", "editorError.foreground": "#df726a", "editorWarning.foreground": "#e4b96b", "editorInfo.foreground": "#7fb3bd",
+		"sideBar.background": "#1c211d", "sideBar.foreground": "#d9d9d0", "sideBarTitle.foreground": "#edece2", "sideBarSectionHeader.background": "#252a25", "sideBarSectionHeader.foreground": "#c3c8bd", "activityBar.background": "#1a201b", "activityBar.foreground": "#e5a85e", "activityBar.inactiveForeground": "#899188", "activityBarBadge.background": "#98623a", "activityBarBadge.foreground": "#fff2dd",
+		"statusBar.background": "#483625", "statusBar.foreground": "#f5eadb", "statusBar.noFolderBackground": "#372e25", "titleBar.activeBackground": "#1a201b", "titleBar.activeForeground": "#edece2", "titleBar.inactiveBackground": "#1c211d", "titleBar.inactiveForeground": "#aaa79d", "panel.background": "#181d19", "panel.border": "#343a33", "panelTitle.activeBorder": "#d48b47",
+		"tab.activeBackground": "#151916", "tab.activeForeground": "#f0eee5", "tab.inactiveBackground": "#202520", "tab.inactiveForeground": "#aaa99f", "tab.border": "#343a33", "editorGroupHeader.tabsBackground": "#202520", "editorGroup.border": "#343a33", "button.background": "#835831", "button.foreground": "#fff2dd", "button.hoverBackground": "#9c6a3b", "input.background": "#202520", "input.foreground": "#edece2", "input.border": "#4b5148", "list.activeSelectionBackground": "#4c4935", "list.activeSelectionForeground": "#f6f0dd", "list.hoverBackground": "#ffffff0b", "badge.background": "#504435", "badge.foreground": "#f4ead7",
+		"terminal.background": "#151916", "terminal.foreground": "#dfdfd5", "terminal.ansiRed": "#d36d62", "terminal.ansiGreen": "#9eb88a", "terminal.ansiYellow": "#e2b46b", "terminal.ansiBlue": "#85a6b6", "terminal.ansiMagenta": "#b38faf", "terminal.ansiCyan": "#7fb3bd", "diffEditor.insertedTextBackground": "#7fa47738", "diffEditor.removedTextBackground": "#c15c5238"
+	},
+	"tokenColors": [
+		{ "scope": ["comment"], "settings": { "foreground": "#848b81", "fontStyle": "italic" } },
+		{ "scope": ["keyword", "storage"], "settings": { "foreground": "#d58f78" } },
+		{ "scope": ["string"], "settings": { "foreground": "#bac08c" } },
+		{ "scope": ["constant.numeric", "constant.language"], "settings": { "foreground": "#e2b46b" } },
+		{ "scope": ["entity.name.function", "support.function"], "settings": { "foreground": "#81b6bc" } },
+		{ "scope": ["entity.name.type", "entity.name.class", "support.type"], "settings": { "foreground": "#d6b277" } },
+		{ "scope": ["variable"], "settings": { "foreground": "#e5e3d9" } }
+	]
+}

@@ -1,0 +1,25 @@
+﻿# Dependencies and generated extension output
+**/node_modules/
+**/dist/
+**/out/
+**/.DS_Store
+Thumbs.db
+
+# Locally built IDE output and packed extensions
+.build/
+*.vsix
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+!services/room-service/test/fixtures/server-cert.pem
+*.pfx
+!services/room-service/test/fixtures/server.pfx
+*.key
+
+# Local logs and editor workspace state
+*.log
+.vscode/
+.idea/

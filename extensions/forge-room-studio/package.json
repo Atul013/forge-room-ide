@@ -1,0 +1,137 @@
+{
+  "name": "forge-room-studio",
+  "publisher": "forge-room",
+  "displayName": "Forge Room Studio",
+  "description": "Curated workspace themes and visual presets for Forge Room IDE.",
+  "version": "0.14.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onView:forgeRoomStudio.gallery",
+    "onCommand:forgeRoomStudio.exportThemeBundle",
+    "onCommand:forgeRoomStudio.importThemeBundle"
+  ],
+  "scripts": {
+    "check": "node --check extension.js && node --check themeBundles.js && node --check themeContrast.js && node --check themePreview.js && node --check profileSettings.js && node --check media/studio.js",
+    "test": "node --test test/themeBundles.test.js test/themeContrast.test.js test/themePreview.test.js test/profileSettings.test.js test/studioMotion.test.js"
+  },
+  "files": [
+    "extension.js",
+    "themeBundles.js",
+    "themeContrast.js",
+    "themePreview.js",
+    "profileSettings.js",
+    "media/**",
+    "themes/**",
+    "README.md",
+    "LICENSE"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "forgeRoomStudio",
+          "title": "Studio",
+          "icon": "media/studio.svg"
+        }
+      ]
+    },
+    "views": {
+      "forgeRoomStudio": [
+        {
+          "id": "forgeRoomStudio.gallery",
+          "name": "Theme Studio",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "forgeRoomStudio.open",
+        "title": "Forge Room: Open Theme Studio"
+      },
+      {
+        "command": "forgeRoomStudio.restore",
+        "title": "Forge Room: Restore Previous Appearance"
+      },
+      {
+        "command": "forgeRoomStudio.customizePalette",
+        "title": "Forge Room: Create Custom Color Palette"
+      },
+      {
+        "command": "forgeRoomStudio.customizeSyntaxPalette",
+        "title": "Forge Room: Customize Syntax Colors"
+      },
+      {
+        "command": "forgeRoomStudio.exportProfile",
+        "title": "Forge Room: Export Project Profile"
+      },
+      {
+        "command": "forgeRoomStudio.importProfile",
+        "title": "Forge Room: Import Project Profile"
+      },
+      {
+        "command": "forgeRoomStudio.exportThemeBundle",
+        "title": "Forge Room: Export Custom Theme Bundle"
+      },
+      {
+        "command": "forgeRoomStudio.importThemeBundle",
+        "title": "Forge Room: Import Custom Theme Bundle"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "forgeRoomStudio.open",
+          "when": "view == forgeRoomStudio.gallery",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "forgeRoomStudio.restore",
+          "when": "forgeRoomStudio.hasPreviousTheme"
+        }
+      ]
+    },
+    "themes": [
+      {
+        "label": "Forge Room Â· Neon Ronin",
+        "uiTheme": "vs-dark",
+        "path": "./themes/neon-ronin-color-theme.json"
+      },
+      {
+        "label": "Forge Room Â· Starship Deck",
+        "uiTheme": "vs-dark",
+        "path": "./themes/starship-deck-color-theme.json"
+      },
+      {
+        "label": "Forge Room Â· Moss Shrine",
+        "uiTheme": "vs-dark",
+        "path": "./themes/moss-shrine-color-theme.json"
+      },
+      {
+        "label": "Forge Room Â· Ink & Ember",
+        "uiTheme": "vs-dark",
+        "path": "./themes/ink-ember-color-theme.json"
+      },
+      {
+        "label": "Forge Room Â· Paper Studio",
+        "uiTheme": "vs",
+        "path": "./themes/paper-studio-color-theme.json"
+      },
+      {
+        "label": "Forge Room Â· Signal Guard",
+        "uiTheme": "hc-black",
+        "path": "./themes/signal-guard-color-theme.json"
+      }
+    ]
+  }
+}

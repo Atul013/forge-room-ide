@@ -1,0 +1,11 @@
+dist/*.js
+dist/src/**
+src/**
+test/**
+*.vsix
+AI_NATIVE_REPO_AUDIT.md
+BUILD_STATUS.md
+CURRENT_STATE.md
+PRODUCT_SPEC.md
+tsconfig.json
+package-lock.json

@@ -1,0 +1,366 @@
+{
+  "name": "team-lobby-ide",
+  "publisher": "forge-room",
+  "displayName": "Team Lobby IDE",
+  "description": "A shared room and live activity feed for human and agent teammates.",
+  "version": "0.108.0",
+  "private": true,
+  "license": "MIT",
+  "files": [
+    "dist/bundle/extension.js",
+    "media",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./dist/bundle/extension.js",
+  "activationEvents": [
+    "onView:teamLobby.home"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "teamLobby",
+          "title": "Team Lobby",
+          "icon": "media/team.svg"
+        }
+      ]
+    },
+    "views": {
+      "teamLobby": [
+        {
+          "id": "teamLobby.home",
+          "name": "Project Room",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "teamLobby.host",
+        "title": "Team Lobby: Host Room"
+      },
+      {
+        "command": "teamLobby.join",
+        "title": "Team Lobby: Join Room"
+      },
+      {
+        "command": "teamLobby.leave",
+        "title": "Team Lobby: Leave Room"
+      },
+      {
+        "command": "teamLobby.post",
+        "title": "Team Lobby: Post Update"
+      },
+      {
+        "command": "teamLobby.message",
+        "title": "Team Lobby: Send Message"
+      },
+      {
+        "command": "teamLobby.createTask",
+        "title": "Team Lobby: Create Task"
+      },
+      {
+        "command": "teamLobby.handoffTask",
+        "title": "Team Lobby: Hand Off Task"
+      },
+      {
+        "command": "teamLobby.createNote",
+        "title": "Team Lobby: Add Project Room Note"
+      },
+      {
+        "command": "teamLobby.agentAsk",
+        "title": "Forge Room Agent: Ask"
+      },
+      {
+        "command": "teamLobby.agentPlan",
+        "title": "Forge Room Agent: Plan"
+      },
+      {
+        "command": "teamLobby.agentBuild",
+        "title": "Forge Room Agent: Build"
+      },
+      {
+        "command": "teamLobby.agentContinue",
+        "title": "Forge Room Agent: Continue or Redirect Last Agent Session"
+      },
+      {
+        "command": "teamLobby.agentPause",
+        "title": "Forge Room Agent: Pause Active Request"
+      },
+      {
+        "command": "teamLobby.agentResume",
+        "title": "Forge Room Agent: Resume Paused Session"
+      },
+      {
+        "command": "teamLobby.agentStopSession",
+        "title": "Forge Room Agent: Discard Last Agent Session"
+      },
+      {
+        "command": "teamLobby.agentRollback",
+        "title": "Forge Room Agent: Restore Build Checkpoint"
+      },
+      {
+        "command": "teamLobby.agentStartTerminalCapture",
+        "title": "Forge Room Agent: Start Local Terminal Capture"
+      },
+      {
+        "command": "teamLobby.agentStopTerminalCapture",
+        "title": "Forge Room Agent: Stop Terminal Capture"
+      },
+      {
+        "command": "teamLobby.agentClearTerminalCapture",
+        "title": "Forge Room Agent: Clear Captured Terminal Output"
+      },
+      {
+        "command": "teamLobby.projectInstructions",
+        "title": "Forge Room Agent: Open Project Instructions"
+      },
+      {
+        "command": "teamLobby.agentProfiles",
+        "title": "Forge Room Agent: Open Reusable Agent Profiles"
+      },
+      {
+        "command": "teamLobby.createWorktree",
+        "title": "Team Lobby: Create Isolated Git Worktree for Task"
+      },
+      {
+        "command": "teamLobby.removeWorktree",
+        "title": "Team Lobby: Remove Clean Local Task Worktree"
+      },
+      {
+        "command": "teamLobby.createInvite",
+        "title": "Team Lobby: Create Room Invite"
+      },
+      {
+        "command": "teamLobby.revokeInvite",
+        "title": "Team Lobby: Revoke Room Invite"
+      },
+      {
+        "command": "teamLobby.configureRoomService",
+        "title": "Team Lobby: Configure Room Service"
+      },
+      {
+        "command": "teamLobby.rotateRoomServiceKey",
+        "title": "Team Lobby: Rotate Room Service Account Key"
+      },
+      {
+        "command": "teamLobby.viewRoomServiceAudit",
+        "title": "Team Lobby: View Room Service Audit History"
+      },
+      {
+        "command": "teamLobby.review",
+        "title": "Team Lobby: Share Review Summary"
+      },
+      {
+        "command": "teamLobby.handoff",
+        "title": "Team Lobby: Share Handoff Note"
+      },
+      {
+        "command": "teamLobby.shareDiff",
+        "title": "Team Lobby: Review and Share Git Diff"
+      },
+      {
+        "command": "teamLobby.stopLiveDiff",
+        "title": "Team Lobby: Stop Live Git Diff Sharing"
+      },
+      {
+        "command": "teamLobby.commentOnSelection",
+        "title": "Team Lobby: Comment on Selected Lines"
+      },
+      {
+        "command": "teamLobby.shareGitConflicts",
+        "title": "Team Lobby: Scan and Share Git Conflict Paths"
+      },
+      {
+        "command": "teamLobby.openRoom",
+        "title": "Forge Room: Open Project Room"
+      },
+      {
+        "command": "teamLobby.agentBuildFromPlan",
+        "title": "Forge Room Agent: Review Plan and Build"
+      },
+      {
+        "command": "teamLobby.agentSavePlan",
+        "title": "Forge Room Agent: Save Last Plan as Markdown"
+      },
+      {
+        "command": "teamLobby.agentSaveReviewBundle",
+        "title": "Forge Room Agent: Save Build Review Bundle"
+      },
+      {
+        "command": "teamLobby.configureGitConflictSharing",
+        "title": "Team Lobby: Configure Automatic Git Conflict Path Sharing"
+      },
+      {
+        "command": "teamLobby.exportHistory",
+        "title": "Team Lobby: Export Room History"
+      },
+      {
+        "command": "teamLobby.shareEditorLocation",
+        "title": "Team Lobby: Share Current Editor Location"
+      },
+      {
+        "command": "teamLobby.toggleLiveLocationSharing",
+        "title": "Team Lobby: Toggle Live Editor Location Sharing"
+      },
+      {
+        "command": "teamLobby.followParticipant",
+        "title": "Team Lobby: Follow Teammate"
+      },
+      {
+        "command": "teamLobby.stopFollowing",
+        "title": "Team Lobby: Stop Following Teammate"
+      },
+      {
+        "command": "teamLobby.shareCurrentDocument",
+        "title": "Team Lobby: Share Current Document for Live Editing"
+      },
+      {
+        "command": "teamLobby.joinSharedDocument",
+        "title": "Team Lobby: Join Live Shared Document"
+      },
+      {
+        "command": "teamLobby.stopSharedDocument",
+        "title": "Team Lobby: Stop Live Shared Editing"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "teamLobby.openRoom",
+          "when": "view == teamLobby.home",
+          "group": "navigation"
+        },
+        {
+          "command": "teamLobby.host",
+          "when": "view == teamLobby.home && !teamLobby.connected",
+          "group": "navigation"
+        },
+        {
+          "command": "teamLobby.join",
+          "when": "view == teamLobby.home && !teamLobby.connected",
+          "group": "navigation"
+        },
+        {
+          "command": "teamLobby.post",
+          "when": "view == teamLobby.home && teamLobby.connected",
+          "group": "navigation"
+        },
+        {
+          "command": "teamLobby.message",
+          "when": "view == teamLobby.home && teamLobby.connected",
+          "group": "navigation"
+        },
+        {
+          "command": "teamLobby.createTask",
+          "when": "view == teamLobby.home && teamLobby.connected",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Team Lobby",
+      "properties": {
+        "teamLobby.sharing.fileActivity": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Share relative file paths and edit/save activity with room participants. This setting is off by default."
+        },
+        "teamLobby.sharing.commandActivity": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Allow a separate per-run choice to share a bounded verification command with its linked room task. This setting is off by default."
+        },
+        "teamLobby.server.certificatePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Path to a TLS certificate chain used to host secure wss:// rooms. Leave blank with the private key setting to use unencrypted trusted-LAN transport."
+        },
+        "teamLobby.server.privateKeyPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Local path to the TLS private key matching the certificate. The key contents are read locally and are never sent to participants."
+        },
+        "teamLobby.server.publicAddress": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional DNS name or IP included in room invites. A public address requires TLS; unencrypted hosting is bound to a private IPv4 LAN interface. Leave blank to use the detected private LAN address."
+        },
+        "teamLobby.ai.acp.command": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Trusted local executable for optional ACP v1 Ask/Plan sessions. It runs with your OS account privileges and environment; configure only an agent you trust."
+        },
+        "teamLobby.ai.acp.arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine",
+          "description": "Arguments passed directly to the configured ACP executable without a shell."
+        },
+        "teamLobby.ai.mcp.servers": {
+          "type": "object",
+          "scope": "machine",
+          "default": {},
+          "markdownDescription": "Trusted local MCP stdio servers for Forge Room Ask and Plan. Selected processes run with ambient OS privileges and are not sandboxed. Configure each entry with `command`, optional `args`, and optional `cwd`; every tool call requires separate approval. Do not place secrets in this setting.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "teamLobby.sharing.gitConflicts": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "When enabled, share relative paths and your identity when Git reports unresolved merge stages while a room is connected. File contents and patches are never shared."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p . && esbuild dist/extension.js --bundle --platform=node --target=node20 --external:vscode --external:bufferutil --external:utf-8-validate --outfile=dist/bundle/extension.js",
+    "check": "tsc -p . --noEmit",
+    "test": "npm run build && node --test test/rollbackGuard.test.js test/reviewDiff.test.js test/reviewBundle.test.js test/conflictPaths.test.js test/gitEvents.test.js test/gitStatus.test.js test/gitDiff.test.js test/workspaceDiagnostics.test.js test/workspaceSymbols.test.js test/workspaceTasks.test.js test/acpClient.test.js test/acpSessionState.test.js test/mcpClient.test.js test/taskWorktreeIdentity.test.js test/taskWorktreeManagement.test.js test/sharedDocument.test.js test/inviteIdentity.test.js test/taskCriteria.test.js test/planHandoff.test.js test/planArtifact.test.js test/commentAnchor.test.js test/inviteRevocation.test.js test/directMessages.test.js test/agentSkills.test.js test/agentProfiles.test.js test/projectGuidance.test.js test/taskAuthorization.test.js test/roomMembers.test.js test/agentActivity.test.js test/agentCapabilities.test.js test/agentSessionIdentity.test.js test/verificationActivity.test.js test/toolEvidence.test.js test/taskDeadline.test.js test/tokenBudget.test.js test/contextFiles.test.js test/agentControl.test.js test/taskDependencyPolicy.test.js test/taskCompletionPolicy.test.js test/roomIdentity.test.js test/taskHandoffPolicy.test.js test/workspacePaths.test.js test/workspaceEdit.test.js test/terminalContext.test.js test/roomArtifacts.test.js test/roomTransport.integration.test.js test/roomHostingPolicy.test.js test/roomHistoryExport.test.js test/sharedLocation.test.js test/roomServiceClient.test.js test/workspaceInventory.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "^2.3.1",
+    "ws": "^8.18.0",
+    "yjs": "13.6.27"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "@types/ws": "^8.5.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,660 @@
+FORGE ROOM — COMPLETE IMPLEMENTATION HANDOFF PROMPT
+A hackathon-first multiplayer collaboration and orchestration system for an EXISTING desktop IDE
+Revision: 1.0 | Scope: Forge Room feature only | Implementation horizon: V1, V2, V3
+
+================================================================================
+INSTRUCTIONS TO THE CODING AGENT / ENGINEERING MODEL
+================================================================================
+
+You are working inside an IDE project that is ALREADY UNDER DEVELOPMENT. Your task is to design and incrementally implement its flagship feature, “Forge Room” (working name): a multiplayer hackathon room where human developers AND their AI coding agents collaborate as visible, permissioned participants. This prompt is an implementation handoff, NOT a request to rebuild the entire IDE, discard its current UI, or return another abstract brainstorm.
+
+FIRST, inspect the ACTUAL existing repository thoroughly: app structure, framework, routing/navigation, state management, backend/API, filesystem/editor integration, Git integration, terminal, agent runtimes, authentication, persistence, OS targets, tests, build scripts, and current collaboration code. Reuse what works. Present a file-level implementation map and risks before modifying code. Do not fabricate what already exists, claim a feature is operational without exercising it, or replace working features needlessly. Respect established design conventions and preserve editing performance. The attached/concept UI is inspiration for spatial organization only, not an exact pixel-perfect specification or proof of implementation.
+
+Nonnegotiable product interpretation:
+• Forge Room is like a multiplayer game lobby, but for software development, built INTO the existing IDE.
+• A project team can create or join a room, over the internet or over a local network when supported.
+• Humans and AI agents are BOTH meaningful participants in the room, with distinct identities and capabilities; agents retain a human/service owner, permission scope, and provenance.
+• “Spectate/follow” and “shared editing” BOTH exist; these are different modes with different permission boundaries.
+• Participants see permissioned live activity—human edits, agent edits, tasks, tests, command activity, previews, blockers, and build state—BEFORE Git commit/push, where integrations permit.
+• Room chat, voice (later phase), tasks, timing, agents, live activity, and demo readiness work together rather than being disconnected tabs.
+• Hackathon timing is first-class: overall countdown, intermediate milestones, due tasks, warnings, escalation, and authorization-controlled agent dispatch.
+• The system actively assists coordination, but does NOT silently commandeer others’ machines, run high-risk commands, or transfer ownership without approved policies.
+• Git remains authoritative for durable history/merges. Forge Room provides live awareness and coordination between Git operations.
+• The main IDE must remain fully usable solo, offline, and outside a room.
+• Do not turn this project into a generic Kanban clone or an AI-agent-only orchestration dashboard.
+
+The goal is a real, maintainable end-to-end feature. If a requested capability depends on unavailable APIs, explain the limitation and implement a truthful supported tier or extension point rather than simulating success.
+
+================================================================================
+1. PRODUCT DEFINITION, PRINCIPLES AND USERS
+================================================================================
+
+Working name: Forge Room. Its purpose is to turn a hackathon team into a connected “development party”: people join a room, optionally bring agents, build in parallel, see what others are doing live, communicate contextually, resolve conflicts early, and reach a reliable demo/submission before the timer expires.
+
+Primary use cases:
+A. 24-hour or 48-hour hackathon team of 2–8 developers, potentially in different cities.
+B. Same-place team connected through LAN or internet.
+C. Human who hand-writes code while teammates use autonomous coding agents.
+D. Human running multiple agent sessions in parallel, each on an isolated worktree.
+E. Team lead switching among participant perspectives without repeatedly requesting pushes/status documents.
+F. Last-hour triage: identify critical blockers, prioritize work, selectively dispatch authorized agents, and ensure deploy/demo readiness.
+G. Optional later non-hackathon room presets: pair programming, sprint, code review, learning/mentoring.
+
+Design principles:
+1. One live room provides immediate team context.
+2. People and agents are first-class actors, but human owners control agent access and approvals.
+3. Show REAL progress, not just manually updated task labels.
+4. Deep links from events to evidence: files, diff hunks, agent runs, logs, tests, previews, decisions.
+5. Collaboration can be spectating, commenting, co-editing, or delegation; permissions differ for each.
+6. No push/commit is required to SEE authorized working progress; Git remains required for proper integration/release policy.
+7. Consent, privacy, least privilege, reliable recovery, and non-destructive defaults.
+8. A lightweight workflow for fast teams; tasks are helpful but not mandatory to write code.
+9. Support progressive capability tiers across editor/agent providers; never claim universal live-buffer access.
+10. A responsive, formal desktop IDE UI: code editor remains primary, terminal and preview remain available, Forge Room adds concise but powerful panels.
+
+What this feature is NOT:
+- a replacement editor, Git, code hosting service, Discord clone, or cloud IDE prerequisite;
+- a mandatory proprietary runtime for every collaborator;
+- unrestricted remote control of teammates’ computers;
+- “all agents can read all files and prompts”;
+- an always-on surveillance system tracking private keystrokes or unrelated windows;
+- a claim that every external IDE permits unsaved buffer streaming or remote edits.
+
+================================================================================
+2. FIRST-RUN EXPERIENCE AND ROOM LIFECYCLE
+================================================================================
+
+2.1 Entry points in the existing IDE
+- Prominent but unobtrusive “Rooms / Live” entry in existing navigation or top bar.
+- Create Room / Join Room / Recent Rooms / Return to Room actions.
+- Room chip in main IDE status area: room name, live/connecting/offline state, participant count, time remaining, unread alerts.
+- Command palette/keyboard actions for room operations.
+- Avoid distracting welcome screens replacing code editing; users may dismiss/collapse the lobby panel.
+
+2.2 Create Room wizard (minimal, progressive)
+- Choose project/current workspace, optionally bind Git repo/branch; room need not require Git repo to start.
+- Room name, description, privacy (invite-only by default), optional icon.
+- Mode: Hackathon (default), Pairing, Team Sprint, Review (latter modes can be V3 presets).
+- Network: internet/cloud relay or LAN/direct discovery where supported; clearly display availability.
+- Hackathon duration and explicit start time/timezone; common templates 12h, 24h, 36h, 48h, custom.
+- Optional schedule: deadlines/milestones, demo/submission URL, project title.
+- Roles/permissions; sharing scope preview.
+- Create unique, high-entropy invitation links/codes; expiration/maximum uses/rotation; optional approval of join requests.
+- Show exactly what local files/activity will be shared before starting the stream.
+- No code uploads by default merely from room creation; sharing requires permissioned session settings.
+
+2.3 Join Room
+- Enter code, follow invite link, LAN discover/join, or choose recent room.
+- Authenticate as supported; display identity, room owner, network mode, project name, permissions.
+- Resolve local project binding: open existing repo, clone repo with consent, or join discussion/read-only without code checkout.
+- Offer capability handshake: desktop editor, CLI, extension, agent connector, browser viewer; state each supported sync level.
+- Choose what to share: presence, active file metadata, saved diffs, unsaved buffers (only with supported opt-in), terminal summaries (not raw by default), agent activity, preview artifacts.
+- Joining must not silently overwrite, pull, reset, switch branch, or execute scripts in the local workspace.
+
+2.4 Room lifecycle
+- Create, join, leave, pause sharing, reconnect, end/archive, restore session, export summary.
+- Online rooms persist their metadata when everyone is offline; presence expires after lease/heartbeat timeout.
+- Archived room is read-only unless reactivated by an authorized role.
+- Hackathon timer continues from an authoritative start/end timestamp during disconnect or app shutdown; do not simply count browser intervals.
+- Timers can be paused/extended ONLY by authorized room admin, with an audit event and participant notice.
+- Participant absence never deletes their code or agent artifacts.
+- Closing the desktop IDE must not imply remotely hosted agents are stopped unless the chosen runtime policy says so; communicate actual behavior.
+
+2.5 Member roles and identities
+- Human: owner, admin/co-organizer, contributor, reviewer/guest.
+- Agent: actor with unique session ID, provider/runtime, owner, attached task, permission profile, observed status.
+- One user may have multiple local clients and multiple agents; avoid double-counting in human headcount.
+- Support room nicknames/display name and explicit avatar initials/image as privacy permits.
+- Members list groups owned agents under their human while still letting agents be independently selected/spectated.
+- Indicate human vs agent, current connection, last seen, activity, selected task, sync capability, execution location.
+- Basic user moderation: kick, mute, remove permissions, revoke invite, ban/deny rejoin where appropriate.
+
+================================================================================
+3. ROOM UI / UX (NOT A FULL IDE REDESIGN)
+================================================================================
+
+Reference inspiration: existing concept shows a top-right live member indicator, a right dock with Chat / Agents / Tasks / Team tabs, bottom-right Live Activity, code editor occupying center, file explorer left, terminal bottom, and preview. Maintain general integration and practicality; do NOT copy the concept slavishly, assume exact styling, or redesign existing core editor/terminal/preview unnecessarily.
+
+3.1 Global room header
+- Project and room selector; status online/offline/LAN/connectivity; member avatars/count; invite action; voice state when available.
+- Hackathon countdown compactly visible; expanded popover shows milestone timeline, timezone, admin controls.
+- Clear indicator when local files or buffer contents are actively shared.
+- Alerts for conflicts, overdue tasks, pending approval, build failures; no excessive blinking.
+
+3.2 Room panel tabs
+- TEAM/LOBBY: roster, roles, active participants, owned agents, presence, spectate/follow, request edit, invite, quick chat/voice.
+- CHAT: room/channel/thread text chat, direct message, mentions, reactions, attachments with safe constraints, links to code/diff/test/agent/task; agent messages attributed correctly.
+- TASKS: fast capture, assignment, priority, due time, blocker, dependency, progress, linked context, triage; list/board/timeline optional.
+- AGENTS: agent roster, model/provider/runtime, available/busy/blocked, assigned owner, execution permission, queue, logs, progress, pending approvals; manual/automatic dispatch controls.
+- LIVE/ACTIVITY: filtering, timeline, summaries, link to exact changes and evidence.
+- BUILD/DEMO: build/test health, live previews, deployment/readiness (can be another contextual panel instead of always-on tabs).
+
+3.3 UI layout behavior
+- Dock/undock/right side/bottom panel/collapse; preserve minimum viable editor width.
+- Multiple users/agents can be inspected in split panes without destroying local tab layout.
+- Follow mode is opt-in, read-only unless separately granted co-edit rights; easy stop-follow action.
+- Panels have connected/loading/offline/empty/error/reconnecting states.
+- Avoid invented activity: display real events or label seeded demo fixtures.
+- Proper keyboard shortcuts, focus order, accessibility, reduced motion, and high contrast.
+- Notifications support do-not-disturb/focus mode, batching, category filtering, and acknowledgment.
+
+3.4 Live presence and activity affordances
+- Remote cursors/selections with colors/labels only when explicitly shared and a capable client supports it.
+- Edited/locked/conflict badges at file/symbol level; avoid implying exclusive locks unless an actual lock exists.
+- Optional agent cursors/change regions linked to a verified agent operation; if provenance isn't available show “source unknown”.
+- Activity panel shows actor, event, link, event time, confidence/sync status; filters for human, agents, my tasks, blocking, file, build, high priority.
+- Clicking “Alice editing AuthService.ts” opens the permitted live perspective/diff. Clicking “Agent running tests” opens test run, safe logs, artifacts.
+
+================================================================================
+4. HUMAN + AGENT COLLABORATION MODEL
+================================================================================
+
+4.1 First-class actor model
+- Every action has an actor, which is human / agent / automation / system.
+- An agent has `owner_user_id`, `agent_session_id`, `provider`, `runtime`, `capabilities`, `permissions`, `task`, `status`, `execution_scope`, audit/provenance metadata.
+- Agents can be local, remote, or provider-hosted. UI makes location and sharing explicit.
+- Event provenance records whether a known edit was authored by a person, a tracked agent, or an unknown process. Never guess authorship from code style.
+- Human retains approval over agent-run commands, sensitive tools, merge/deploy, cross-user delegation, budget changes.
+
+4.2 Perspective switching
+- Select any participating human or agent and open a detail view.
+- Human perspective: shared workspace presence, active file, cursor when shared, uncommitted diff, test/build state, preview, assigned task, current blockers.
+- Agent perspective: intent/plan summary where exposed, current tool/operation status, changed files, staged changes, test results, elapsed time, owner, pending approvals, logs/artifacts, next action.
+- Team perspective: project-wide activity, dependency impact, open blockers, overlapping modifications, task critical path, preview/deploy readiness.
+- Agent perspective must not reveal private hidden model reasoning or private session content unavailable under provider controls.
+
+4.3 Communication
+- Human-to-human room text and direct message.
+- Human-to-agent messaging in own agent session.
+- “Ask teammate” opens a direct human thread, not automatically a prompt to their agent.
+- “Ask agent owner to run this” sends a request; only owner/authorized policy can grant execution.
+- Agent can raise blocker/request review/request missing data/publish completed artifacts into shared thread.
+- Contextual actions on a line, diff, task, preview frame, terminal result, test failure.
+- Threads should be searchable, linkable and preserve decisions without making all private DMs part of shared agent context.
+
+4.4 Shared editing AND spectating (both required)
+Spectate / follow:
+- Watch someone's actively shared file, cursor/selection, updates, diff, preview, or agent operations.
+- Read-only by default; can ask to co-edit.
+- Following another person's editor does not hijack your main navigation, modify their code, or automatically download their full repository.
+- Permissions can be revoked instantly; viewer displays stale/revoked state.
+
+Co-edit:
+- Request shared-edit session; owner/admin accepts and grants explicit scope (file(s), role, duration, optional turn/lock policy).
+- For capable text buffers, concurrent editing uses a tested CRDT/OT solution, deterministic conflict/reconnect semantics, awareness cursors, and cross-client undo rules.
+- For worktree/diff-only participants, offer review-and-propose patch flow; NEVER pretend their unsaved buffer is synchronized.
+- Patch application checks base revision; stale or overlapping edits require reconciliation.
+- Agent-generated edits join via controlled patches, not uncontrolled edits to another participant's private process.
+- Support pause/resume/revoke, fork into separate worktree, handoff/ownership and audit.
+
+4.5 Extensible client levels
+Level A: Full supported collaborative buffer editing + presence/follow.
+Level B: Saved-buffer/worktree incremental diff + live activity + chat/comments.
+Level C: Git/task/agent events and read/comment capability.
+Each client advertises capabilities; never overpromise a universal cross-IDE multiplayer editor. Initial product only needs native Forge desktop capability and optionally companion connector/CLI; external IDE interoperability grows later.
+
+================================================================================
+5. LIVE PROJECT AWARENESS / EVENT FEED
+================================================================================
+
+Events to support (permissioned):
+- member join/leave/reconnect; presence/focus/idle (user-controlled);
+- active file changed, editing started/stopped, remote cursor/selection where supported;
+- shared file snapshot/diff saved, patch proposed/applied/rejected;
+- task created/assigned/started/blocked/complete/overdue/reopened;
+- agent started/planning/editing/running tests/waiting approval/failed/completed/cancelled;
+- terminal/build/test started/ended, error counts, artifact link, preview deployed;
+- Git worktree/branch created, commit pushed, PR opened/merged, integration conflict;
+- decision/contract updated, dependency impacted, change conflict detected;
+- countdown warning, milestone due, auto-dispatch queued/approved/started/failed;
+- demo readiness changed, checklist item completed, submission completed.
+
+Every event should have: immutable ID, project/room, actor type/id, monotonic server sequence or cursor, timestamp, event schema version, visibility scope, source and evidence refs, idempotency key. Respect privacy and rate limits. Batch noisy file events; avoid raw keystroke logging. A short “since last seen” feed must link to evidence. Real-time metrics should be measured rather than guaranteed universally. Distinguish `live`, `delayed`, `offline`, `not supported` statuses.
+
+Live uncommitted work visibility:
+- A participant may share scoped file activity, saved file diffs, and optional unsaved buffers through permitted editor hooks.
+- Git worktree status is NOT a substitute for seeing remote unsaved buffers.
+- Exclude ignored files, credentials, `.env`, tokens, caches, binary assets by default; allow conscious changes to sharing rules with prominent warnings.
+- Snapshot/diff streaming uses local content filters, revision hashes, rate limit, durable/reliable reconnect, deletion policy.
+- Do not silently merge/discard collisions. Show conflicting modifications and owner/review choices.
+
+================================================================================
+6. HACKATHON CLOCK, MILESTONES AND PRIORITY ENGINE
+================================================================================
+
+6.1 Clock
+- Authoritative room start/end timestamps (server when online, locally coordinated authority for LAN), time-zone-safe and clock-skew aware.
+- Presets: 12/24/36/48 hours, custom time, scheduled start, immediate start.
+- Time left, elapsed, percentage, scheduled milestones, working session break reminders (optional).
+- Reminder thresholds configurable: e.g. 6h, 3h, 1h, 30m, 15m, 5m before end. These are DEFAULT examples, not fixed rules.
+- Notifications and optional room voice announcement with consent.
+- Admin pause/extend/end with clear log and notifications; never silently restart when client reconnects.
+
+6.2 Task model
+- Fast create with title and optional description, owner (human, agent, or unassigned), priority, severity, due_at, estimate, status, milestone, blockers, dependencies, file/contracts/repo references, acceptance criteria, permissioned sharing, agent eligibility.
+- States: backlog -> ready -> in progress -> blocked -> review -> validated -> done; abandoned/cancelled and reopened paths.
+- “done” must be distinguished from “agent says done”; validated only when configured gates pass or explicit human exception.
+- Simple list by default; optional board, timeline, priority heat map. Do not force Kanban ceremony for a 24h sprint.
+- Templates: create landing page, API endpoint, auth, tests, deploy, demo deck, final submission.
+
+6.3 Dependencies and critical path
+- Tasks have dependency edges and blocking reasons.
+- Due-date alerts prioritize tasks on the critical path; prioritize demo-critical tasks as deadline approaches.
+- Warn on cycles and impossible schedules; do not pretend estimates are accurate forecasts.
+- Connect dependency warnings to actual code/contract changes when known.
+
+6.4 Deadline-driven automation (core requested behavior)
+- The room has an AUTOMATION POLICY configured by owner/admin: OFF, RECOMMEND, AUTO-QUEUE, or AUTO-EXECUTE-WITHIN-APPROVED-BOUNDS.
+- Triggers may include `task.due_soon`, `task.overdue`, `owner.blocked`, `owner.inactive`, `milestone.at_risk`, `test.failed`, `integration.blocked`, `demo.deadline_approaching`.
+- Owner can configure lead-time thresholds per priority. Time pressure alone does not override permission policy.
+- On trigger: assess task eligibility and dependencies; verify no conflicting owner run, required context, suitable agent, budget, permission and resource lock; avoid duplicate dispatch via idempotency keys; send explanation to room feed and task owner.
+- RECOMMEND: suggest help, require explicit human acceptance to queue.
+- AUTO-QUEUE: place a proposal in bounded queue, notify owner, require execution authorization unless previously granted.
+- AUTO-EXECUTE-WITHIN-APPROVED-BOUNDS: run automatically only if the owner previously explicitly approved the policy, task category, execution environment, tools, max cost/time, path scope, and branch/write permissions. High-risk actions (secrets, destructive commands, external posting, protected merges, production deploy) STILL require fresh explicit confirmation.
+- If task has an active human owner, coordinate; do NOT secretly replace their work. Allow the human to decline, pause, or reclaim.
+- Start agents in an isolated worktree/sandbox where feasible; attach change evidence/tests; require review before integrating shared/main branch.
+- If no eligible agent is available, send alert/escalation without falsely marking task assigned or started.
+- Every trigger/decision must be visible: why, rule, who authorized, selected agent, current worktree, expected scope, stop reason, outcome.
+- Cancellation, retry, timeout, backoff, budget ceiling, and rate limiting required.
+
+6.5 Example acceptance scenario
+At 45 minutes before deadline, “repair login flow” is still critical and blocked. Room automation evaluates the rule. Under RECOMMEND it asks the owner to dispatch an available test/fix agent; under previously approved bounded auto-execute it starts an isolated patch attempt, posts live progress, runs focused tests, and requests human review. It must not merge, deploy, access secrets or execute out-of-scope commands automatically. Duplicate timer events must not launch duplicate agents.
+
+================================================================================
+7. AGENT FLEET AND DISPATCH
+================================================================================
+
+Agent roster:
+- Human owner; provider, model, adapter version; capabilities (read/write/run/test/browser/remote), context scope, sandbox/worktree, current task, queue length, status, costs where reliably exposed.
+- Distinguish AVAILABLE, QUEUED, RUNNING, WAITING, BLOCKED, FAILED, COMPLETED, CANCELLED and OFFLINE; reconcile provider-specific states honestly.
+- One agent can be attached to a human project and optionally visible to team, but personal/private sessions stay private unless shared.
+
+Dispatch:
+- Manual human assignment, agent pickup request, deadline-driven queue, blocker-driven recommendation.
+- Skill-based routing as a later enhancement: code area/language/provider capabilities/availability/cost; not magical self-assessed expertise.
+- Explain suggested routing, competing priorities, expected context, safe permissions, and estimated budget.
+- Prevent uncontrolled fan-out, repeated failures, double assignment, and multiple actors rewriting the same file unknowingly.
+- Respect repo boundaries, file ownership, current worktrees, current human edits, dependencies and active test runs.
+- Agent task messages are explicit; no hidden commands to others' agents or machines.
+- Run results attach diff, changed files, tests, logs, preview, failures, open issues and review decision.
+
+Permission broker:
+- Read source, write allowed files, execute local shell, install packages, network, external APIs, secrets, git push, merge, deployment: separate grants.
+- High risk actions require fresh human consent; approval prompts name exact tool, command/path, impact.
+- Audit, cancel, timeout, rollback/recovery, tool output redaction.
+- For incompatible providers or absent adapters, return capability error, not faux completion.
+
+Agent interoperability:
+- Define adapter interface independent of provider; adapt supported APIs/CLIs/protocols (where officially permitted).
+- Common methods: capabilities(), startTask(), statusEvents(), sendInstruction(), requestApproval(), stopTask(), resultArtifacts(), health().
+- Support local/remote agent runtimes and share selected events via authenticated room stream.
+- Do not assume agent tooling exposes hidden reasoning or complete token usage; use activity/plan summaries when available.
+
+================================================================================
+8. CHAT, VOICE AND REAL-TIME COMMUNICATION
+================================================================================
+
+Text chat (V1):
+- Room, task, and code-anchored threads; mentions, reactions, timestamps, replies, edited/deleted messages, history/search.
+- Direct human messaging with separate privacy and retention from room decisions.
+- Link files, line ranges, diffs, preview snapshots, test runs, agent sessions, task items.
+- “Ask owner”, “Request review”, “Request edit access”, “Request agent help”, “Mark resolved”.
+- Markdown/code blocks with sanitized rendering; no HTML/script injection.
+- Typing presence optional; message moderation/rate limiting; notifications configurable.
+
+Voice (V2):
+- Room voice channel with join/leave, mute/deafen, push-to-talk, input/output device selection, speaking indicator, reconnect, volume per participant, permission control.
+- Prefer a well-maintained real-time media stack (WebRTC and SFU/managed service as justified), encryption in transit, proper TURN/STUN for internet rooms; pure peer-to-peer LAN possible where supported.
+- Implement voice without affecting editor performance; offer screen share V2/V3 only with explicit OS permission and selection of shared window.
+- Voice is opt-in, never recorded/transcribed by default; recordings/transcription only if separately authorized and clearly disclosed.
+- Keep text chat fully functional when voice fails or is unavailable.
+
+Notifications:
+- Room mentions, direct messages, review requests, agent approval, urgent deadlines, build failed, contract breakage.
+- Alert hierarchy: informational, important, blocking, critical; nonurgent batching during focus mode.
+
+================================================================================
+9. BUILD, PREVIEW, GIT, TESTING AND DEMO READINESS
+================================================================================
+
+Build/test status:
+- Connect the existing IDE's run/debug/test/terminal integration to room feeds via structured events, not arbitrary raw command streaming.
+- Show status, last run time, runner/project revision, artifact link, failures and responsible participant when known.
+- Share evidence-based summaries; scrub environment secrets and private terminal output.
+- Attach validation results to task/agent/checkpoint/commit.
+
+Shared preview theater (V2):
+- Share authenticated preview from a local/remote dev server with owner consent and bounded exposure; do not silently tunnel private localhost ports to public internet.
+- Room members can watch, optionally interact when enabled, comment on UI/DOM/screenshot coordinates, attach bug repro and console log summaries.
+- Per-user preview permissions; URL expiry and revoke.
+- Screenshots/video/screenshare only when intentionally generated/shared.
+
+Git interop:
+- Existing Git workflow stays intact: branches, worktrees, diffs, commits, PRs, conflict resolution.
+- Live progress does not force frequent commit/pull cycles, but cross-workspace changes must still be reconciled and integrated safely.
+- Shared diff/working changes are not equivalent to committed source history.
+- Checkpoints create immutable recoverable artifacts; optional “promote to commit” by authorized participant.
+- Room can list branches/worktrees/change owners and reveal conflicts early.
+
+Demo readiness center (V2):
+- Global deadline and countdown; health checklist with evidence: build green, core workflow tested, preview available, deployment healthy, README/docs, presentation/demo script, judges' submission form, required links, last commit/revision, remaining P0 bugs.
+- Actions to run automated smoke tests, generate demo checklist, collect screenshots or documentation through authorized agents.
+- Distinguish “ready by checklist” from guaranteed real-world success. Never fake test or deployment results.
+- Last-hour shipping mode emphasizes blocking failures over polish; optional submission checklist with manual acknowledgement.
+
+================================================================================
+10. V1 / V2 / V3 DETAILED RELEASE PLAN
+================================================================================
+
+IMPORTANT: V1 is a usable, securely permissioned vertical slice. The full roadmap is specified now, but do not build V3 first, or claim all releases are implemented. Each phase must pass measurable acceptance tests. Adapt the order to current repo architecture without losing the core outcomes.
+
+V0 — REPOSITORY AUDIT AND FOUNDATION (prerequisite; not a public release)
+- Inspect real current app and architecture.
+- Inventory usable editor, auth, persistence, agents, Git, terminal, preview, tests.
+- Decide in-process vs out-of-process room client, websocket transport, backend persistence, identity, local/LAN architecture.
+- Define event schemas, permission model, sharing policy, repo/workspace identity, reconnect strategy, and threat model.
+- Show design integration sketch grounded in existing UI.
+- Define build/test commands and performance budget; add missing harnesses.
+- Outcome: approved technical design and a demonstrable connectivity spike between two clients.
+
+V1 — MULTIPLAYER ROOM MVP: REAL, END-TO-END
+Must ship:
+1. Create/join/leave room, invite code/link, basic owner/member roles and membership.
+2. Online internet connection through room backend; LAN discovery/direct connectivity if feasible now, otherwise provide explicit staged V1-LAN follow-up—do not mislabel internet relay as LAN.
+3. Room roster showing humans and individually attributable agent sessions, connection/status/capability.
+4. Room status indicator, create/invite controls, basic chat with messages/mentions and code-context links.
+5. Live activity event stream from real integrations; filter/select event, see provenance and evidence.
+6. Real scoped saved-file diff streaming before commit/push, with secure excludes, participant opt-in, base revisions and reconnect. If unsaved buffer streaming can be delivered safely in existing editor, include it; otherwise label sync level and schedule full buffer co-edit tier clearly.
+7. Spectate/follow read-only shared file/diff perspective; request-edit-access UI and approval workflow. If true concurrent editing cannot yet be supported safely, V1 allows guarded patch collaboration and explicit shared-session prototype—not false multi-cursor co-edit claims.
+8. Tasks: rapid create/assign/status/priority/due_at, linked actor(s) and artifacts; basic blocker handling.
+9. Hackathon clock (server authoritative), milestones and configurable reminder notifications.
+10. Agent presence via at least one actual supported adapter; manual dispatch only or explicitly approved policy; real events and logs linked to sessions. Mock adapter ONLY for tests/demo, clearly marked.
+11. Basic auto-dispatch RULE ENGINE in RECOMMEND mode by default: detect due-soon/overdue critical tasks and suggest eligible agent; requires human approval to run. Foundation for later bounded autopilot.
+12. Basic build/test signals and activity feed from existing IDE capabilities.
+13. Persistence, reconnect, idempotency, offline/empty/error UI, and exportable room activity summary.
+14. Access revocation, opt-in sharing, secret filters, backend authorization tests, audit events.
+15. No regression to coding, terminal, Git, agent execution, or editor performance.
+
+V1 acceptance demo:
+- On separate machines or isolated clients, host creates room, second human joins.
+- Both see accurate online status and chat.
+- Client A edits a permitted source file WITHOUT a Git commit; B sees an authorized updated diff.
+- B comments/asks about a change and A receives it.
+- A starts a real supported agent: its owner/status/progress/changed files appear according to permissions.
+- Create a deadline task; countdown continues correctly after disconnect/reconnect; reminder fires once despite retries.
+- Deadline rule proposes an agent task but never starts it without approval in V1 default policy.
+- Revoking access halts additional protected content delivery; secrets and ignored files never arrive.
+- No concurrent/stale update silently overwrites a participant's work.
+
+V2 — TRUE LIVE MULTIPLAYER + AGENT AUTOMATION + SHIPPING
+Must add:
+1. Supported shared-buffer co-edit with remote cursors, selection, collaborative undo and CRDT/OT; permissioned and recoverable.
+2. More robust spectate/follow: follow file navigation, open teammate perspective in split pane, join/leave shared editing, optional lock/turn-taking.
+3. Room voice chat, mute/deafen/push-to-talk, speaker indicators, graceful reconnect; optional screen share.
+4. Full bounded agent auto-queue/auto-execute policy modes, pre-approved scopes, resource/budget/time limits, escalation and duplicate prevention; permissioned, reviewed changes.
+5. Agent fleet queue, available/busy/blocked state, manual reassignment, abort/retry controls and task-linked results.
+6. Critical path/milestone risk, priority engine, task dependencies and time-aware notifications.
+7. Shared preview theater with comments/repro artifacts; authorized preview tunnel or secure internal URL.
+8. Live conflict awareness: same-file edits, worktree overlap, API contract changes, stale agent context, integration warnings.
+9. Demo readiness panel and endgame “Ship Mode”; last-hour P0 triage, build/test/deploy/submit checklist.
+10. Room decision log, handoffs, source-backed “since last seen” summary.
+11. Reusable checkpoints and safer restore; trace task/agent patch/test/approval/commit.
+12. Performance/load hardening and stronger LAN/local support if delayed from V1.
+
+V2 acceptance demo:
+- Two permitted users co-edit the same text file simultaneously and reconnect without data loss.
+- Users spectate human and agent perspectives, transition read-only -> approved co-edit, revoke access mid-session.
+- Voice works across supported networks without forcing users to expose their machine.
+- Under a pre-approved bounded rule, overdue critical task is auto-queued/executed in an isolated environment; owner is informed, budget observed, reviews patch before merge.
+- Demo center shows genuine build/test/preview health and any blocking tasks.
+- Conflicting edits are flagged and recoverable; no silent destructive merge.
+
+V3 — HACKATHON MISSION CONTROL AND CROSS-IDE ECOSYSTEM
+Must add/prioritize after real-world pilot:
+1. Third-party IDE/CLI adapter SDK and integrations for major IDEs where officially supported; capability negotiation and truthful A/B/C sync tiers.
+2. Cross-IDE spectating/activity/diff/comments; extend true co-edit only where APIs support it; browser guest/reviewer view.
+3. Smart dispatch routing: skill/capability/language/cost/runtime/resource-aware suggestions and coordination across owned agents.
+4. Auto Rescue: identify blocked/inactive task owners, request consent to help, suggest teammate or authorized agent, detect repetition loops; no forced takeover.
+5. Hackathon room modes: Build Focus, Review, Integration Freeze, Ship/Panic Mode, Demo Practice. Modes change priority and notifications; never silently remove permissions.
+6. Panic Mode near final deadline: critical path, unresolved blockers, must-have vs nice-to-have, readiness gaps, approved autonomous triage suggestions; avoid harmful auto-merge/deploy.
+7. Change Impact Radar/project graph: file/symbol/API/contract/dependency links, likely affected users/agents/tasks, confidence/source, actionable alerts.
+8. Interface contract board for frontend-backend/schema event agreements, impact and acknowledgement.
+9. Advanced shared preview: collaborative annotation, screenshot diffs, test-repro capture, demo simulation, browser-run checks with approval.
+10. Handoff bundles with current diff, decisions, tests, remaining problems and agent context; search across room history with source links.
+11. Optional shared debugging, remote dev sessions and deeper CI/CD/Git-host integrations.
+12. Hackathon templates, room presets, reusable automations, onboarding, analytics, export and archival.
+13. Cloud scaling, multi-room administration, observability, quotas, usage/billing if applicable, compliance and data-residency controls.
+14. Voice optional recording/transcription only with explicit consent and robust privacy controls.
+
+V3 acceptance demo:
+- Teammate A uses Forge, B uses a supported other IDE or CLI, while two owned agents run; all see the true capability level and permissioned shared activity.
+- A contract change alerts relevant teammate/agent owners with evidence rather than generic noise.
+- 30 minutes before demo, room switches to an approved Ship/Panic workflow, surfaces blockers, offers agent rescue, and validates the critical end-to-end flow.
+- Room history exports a coherent, sourced timeline of decisions, patches, tests, approvals and submission status.
+
+OUT OF SCOPE UNTIL VALIDATED: unsupported arbitrary IDE remote control; accessing other users' private agent prompts; remote keystroke surveillance; silent filesystem upload; unapproved production deploy; replacing Git; guaranteed automatic conflict-free co-edit for every file type; autonomous final submission without owner consent.
+
+================================================================================
+11. KEY SCENARIOS / USER JOURNEYS TO IMPLEMENT AND TEST
+================================================================================
+
+Scenario A: 24h launch
+1. Lead creates room attached to existing project; selects 24h and invitation-only.
+2. Remote teammates join from their machines. Room shows “4 humans, 3 attached agents” (distinct counts).
+3. Room timer starts from server timestamp, tasks/milestones appear, everyone opts into sharing scopes.
+4. One member works manually, another runs an agent; others can spectate permitted progress.
+5. Room feed links file edits, chat, task progress and build evidence.
+
+Scenario B: Spectate -> collaborate
+1. Dev B clicks Dev A and watches authorized file/diff/cursor.
+2. B asks about a line and requests editing access.
+3. A permits only the specific file/session/time.
+4. Both can co-edit where supported; B can fall back to patch proposal where not.
+5. A revokes; writes stop, data reconciles safely; audit records transition.
+
+Scenario C: AI agent behaves as teammate
+1. A runs agent; agent appears under A as an active actor.
+2. Agent publishes plan/progress/patch/test results where provider permits.
+3. B spectates, comments on diff, asks A to redirect the agent.
+4. A approves new direction. Agent edits sandbox/worktree, submits evidence.
+5. Human reviews before committing/merging; room activity links each step.
+
+Scenario D: Deadline auto-pickup
+1. Task critical, due soon and unmet.
+2. Scheduler evaluates available agents, eligibility, dependencies and policy.
+3. RECOMMEND -> alert; AUTO-QUEUE -> queue; bounded AUTO-EXECUTE -> run only if preauthorized.
+4. Owner can opt out/pause/reclaim; agent may not silently access secrets/merge/deploy.
+5. Show tests and patch, review required, record outcome.
+
+Scenario E: Last-hour mission control
+1. 60 minutes remain. Room suggests Ship Mode.
+2. Sort tasks by severity and contribution to demo, identify blockers and merge risks.
+3. Team may authorize bounded agent fixes, run smoke tests, inspect shared preview.
+4. Demo checklist includes actual deployment and submission evidence.
+5. Leader exports handoff/log and ends/archive room.
+
+Scenario F: LAN/offline
+1. Two machines on same LAN join a room or use supported discovery/host mode.
+2. Connections may drop; identities, sequence cursors and snapshots resync without duplicate edits/events.
+3. Host disconnects: define explicit failover or graceful suspended state; never invent uptime.
+4. Switching between LAN/cloud does not silently duplicate rooms or expose code publicly.
+
+================================================================================
+12. SECURITY / PRIVACY / PERMISSIONS (REQUIRED IN EVERY PHASE)
+================================================================================
+
+- Project membership enforced on BACKEND and for every websocket/topic/subscription, not merely by hiding UI.
+- Signed and short-lived invites; token expiry, rotation, revocation; no guessable codes.
+- Role + resource capabilities: read presence, read diff, read file, comment, co-edit, view preview, manage tasks, instruct own agent, request other agent, manage room, deploy.
+- Default read-only observation unless granted; default no file contents/unsaved buffers shared unless selected scope explicitly allows them.
+- Locally filter secrets, `.env`, SSH keys, tokens, private key patterns, caches, binaries, ignored paths; provide safe policy overrides with warnings and logs.
+- Do not share terminal raw output, environment variables, clipboard, screen, microphone, private agent prompts, or unrelated files by default.
+- Authenticate/authorize every file snapshot, stream, comment, task and agent command; do not trust client-claimed owner/role.
+- Transport encryption; encrypted storage where applicable; OS credential store; data retention/deletion/export controls.
+- Voice/screen consent, explicit sharing indicator, stop/revoke button and no auto-recording.
+- Agents run with least privilege. Treat repository instructions, untrusted chat, issue content, webpage and tool results as prompt injection risks.
+- Prevent command execution via malformed chat/context messages. Isolate webviews. Validate IPC and URLs.
+- Every auto-dispatch action requires rule attribution, policy evaluation, bounded scope, audit and idempotency; sensitive operations always require human approval.
+- Remote code/preview exposure through explicit authenticated tunnels only, no unsafe public ports by default.
+- Audit join/leave, permission grant/revoke, share mode, agent dispatch, file write, checkpoint, merge/deploy.
+- Abuse prevention: rate limits, quotas, moderation, member kick/ban, attachment scanning, DOS resistance.
+- Offline local cache protected; clean logout and access revocation semantics documented (previously cached data cannot be remotely erased with certainty).
+- Do not market end-to-end encryption unless genuinely implemented and audited.
+
+================================================================================
+13. ARCHITECTURE / IMPLEMENTATION GUIDANCE
+================================================================================
+
+Do not impose a framework switch blindly. Adapt to the existing IDE. Suggested modules and boundaries:
+
+CLIENT / IDE INTEGRATION
+- Room UI/route/panels integrated with existing workbench components.
+- Local workspace event collector (filesystem/Git/editor hooks), redaction, revision/snapshot manager.
+- Native editing/follow protocol with capability detection.
+- Agent adapter manager bridging existing agent runtimes into room events.
+- Permission UI, secure local credential/token store, offline event cache.
+- Preview/build/test adapters using current IDE capabilities.
+
+ROOM BACKEND (cloud internet service or local/LAN host depending mode)
+- Room/session identity, invites, role capabilities and audit.
+- Presence with heartbeat, lease expiration, reconnect.
+- Realtime transport (e.g. authenticated WebSocket), event routing, cursor replay, server-side permission checks.
+- Durable room/task/chat/decision state, membership, timers/schedules.
+- Snapshot metadata and encrypted artifacts with retention.
+- Agent dispatch queue, policy evaluation, scheduler, trigger deduplication, lease/lock management, notifications.
+- Voice signaling/media layer (V2, e.g. WebRTC with robust NAT traversal via appropriate infra).
+- Analytics/metrics and admin operations.
+
+RECOMMENDED HIGH-LEVEL DATA ENTITIES
+User; Room; Membership; Invite; WorkspaceBinding; Connection; CapabilitySet; SharingGrant; ParticipantPresence; AgentSession; AgentAdapter; Task; TaskDependency; Milestone; CountdownConfig; AutomationPolicy; AutomationRule; DispatchJob; Approval; ActivityEvent; FileSnapshot; FilePatch; CoeditSession; CodeComment; ChatThread; ChatMessage; Decision; Checkpoint; BuildRun; TestRun; PreviewSession; DemoChecklist; AuditRecord; Notification.
+
+Minimum robust scheduler semantics:
+- Store room/ task deadlines as UTC instants with user-facing timezone metadata.
+- Evaluate triggers in server authority; persist next schedule/trigger states.
+- Repeated worker execution must be idempotent (unique trigger key e.g. room+task+rule+deadline version).
+- Lock/lease dispatch jobs; queue retries/backoff; enforce concurrency, budget, max runtime and cancel.
+- State machine validates transitions; detect dead/abandoned jobs.
+- Human/admin edits to task deadline invalidate old queued triggers appropriately.
+- Never equate “queued” with “started”, “agent finished” with “validated”, or “timer fired” with “authorized”.
+
+Realtime consistency and resilience:
+- Event IDs, server sequences, actor attribution, timestamps, schema version and visibility ACL.
+- Reconnect via last-ack cursor, deduplication, catchup snapshot, heartbeat and exponential backoff.
+- Separate ephemeral presence/cursor events from durable chat/tasks/checkpoints/audit.
+- Use base revision/ETag/hash preconditions for snapshots/patches.
+- For true coediting, use a mature CRDT/OT library, document concurrency/undo semantics and test offline convergence.
+- Compress/batch changes; cap artifact sizes; backpressure; do not let live events freeze the IDE.
+- For LAN host disconnection, define truthful fallback rather than assuming an always-on authoritative server.
+
+Performance / reliability targets (initial hypotheses to measure and adjust):
+- Editor typing and terminal interactions unaffected by active room.
+- Typical local/internet text/presence activity feels near-live, target under 1 second p95 for ordinary small events on a healthy connection; measure separately by network/provider.
+- No silent file loss or overwritten patches under concurrent edits.
+- Reconnect preserves room identity, task state, and acknowledged event history.
+- High-cardinality file/cursor events sampled or coalesced; event feed useful rather than noisy.
+- Support 2–8 simultaneous developers and multiple agents in first hackathon pilot, stress test larger rooms subsequently.
+
+================================================================================
+14. TECHNICAL TEST PLAN / ACCEPTANCE CRITERIA
+================================================================================
+
+UNIT TESTS
+- Room/invite/roles capability policy; token expiry/revocation.
+- Hackathon timer math across timezone, reconnection and clock drift.
+- Milestone due rules; rescheduling; trigger deduplication.
+- Agent selection eligibility and dispatch state transitions; kill/time/budget/permission enforcement.
+- Event schema, serialization, visibility scopes, ordering/retry logic.
+- Redaction and sharing allow/deny rules.
+- Patch base revision and conflict detection.
+- Chat thread/code anchor update and stale-anchor handling.
+- Notification priorities and focus mode.
+
+INTEGRATION TESTS
+- Two real clients create/join room, exchange presence and text chat.
+- Human source file edit without Git push shows permitted remote live diff.
+- Agent adapter emits real run status and artifacts.
+- Spectate access granted/revoked; coedit restricted to shared scopes.
+- Concurrent same-file edits do not silently overwrite; valid patch conflict surfaced.
+- Room resumes after process/network restart with correct clock.
+- Deadline trigger proposes only once; approved bounded dispatch proceeds; unapproved dispatch never starts.
+- Disallow secret-file upload, cross-room websocket eavesdropping and unauthorized agent instructions.
+- Voice (V2), preview access expiry, and coedit sync convergence.
+- V3 cross-IDE support matrix reflects actual limits.
+
+END-TO-END HACKATHON SMOKE TEST
+- Create room; invite team; start 24h timer (test with accelerated/fake clock where needed).
+- Share project activity, spectate, request edit, coedit where supported.
+- Open task due soon, observe reminders and authorized dispatch.
+- Start human-owned agent, observe events/test results and review patch.
+- Preview app, check build/test/deployment status and final demo checklist.
+- Disconnect, rejoin, archive, export summary and verify permissions/revocation.
+
+Do not declare a phase complete until the demonstrated workflow actually runs. Record commands run, logs, failures, unsupported platforms, and residual risks. Fake-demo data must be explicitly labelled.
+
+================================================================================
+15. BUILD DELIVERABLES AND WORK DISCIPLINE
+================================================================================
+
+Before coding, provide:
+1. Repository architecture audit and what is already implemented.
+2. Exact integration touchpoints (existing UI navigation/panels, editor events, Git, terminals, agents, backend/auth, notifications).
+3. A phased and ordered engineering plan decomposed into reviewable vertical slices, each with acceptance criteria and test strategy.
+4. Initial architecture decisions for online rooms and LAN (authority, transport, discovery, NAT/callbacks, security), live snapshots and CRDT, scheduler, agent adapters, voice provider, and persistent storage.
+5. Risk register, compatibility caveats and minimum blocked questions.
+
+During coding:
+- Implement V1 complete before adding V2/V3 unless shared infrastructure demands otherwise.
+- Keep app usable between commits; no giant irreversible rewrite.
+- Use existing styling/theme/component conventions and keyboard behavior.
+- Reuse installed dependencies when sensible; pin any new dependencies and explain why.
+- Provide dev setup/commands and `.env.example` without secrets.
+- Use migrations; maintain schema/API contracts and versioned real-time events.
+- Add tests at each slice; run lint/typecheck/unit/integration/build.
+- Document privacy settings, sharing behavior, agent permissions and data retention.
+- Keep developer docs updated: `docs/forge-room/architecture.md`, `protocol.md`, `permissions.md`, `agent-adapters.md`, `release-plan.md`, `test-plan.md`, `supported-clients.md`, and `README` integration as appropriate.
+- Record implementation ledger: implemented, partially implemented, not implemented, blocked, actual evidence.
+- If a feature must be mocked for development, isolate as an explicitly named test/demo adapter; NEVER display it as a functioning backend integration in production UI.
+- Preserve previous existing IDE work and migrations; use source control checkpoints before broad edits.
+
+Definition of done:
+- Verified actual behavior, not just a static mock or component with dummy state.
+- Loading/empty/error/offline/reconnection paths.
+- Permission enforcement and secret-safe observability.
+- Accessibility basics; no editor-performance regression.
+- Unit/integration/e2e coverage appropriate to risk.
+- Design and code reviewed, documented, tested.
+- Reporting accurate about limitations.
+
+================================================================================
+16. PRIORITY STACK / WHICH FEATURE TO BUILD FIRST
+================================================================================
+
+Order of engineering focus:
+P0: Existing IDE audit and integration constraints.
+P0: Room identity/create/join/presence + secure authorization.
+P0: Real live uncommitted changes from two clients + read-only spectate.
+P0: Room chat/comments + activity feed with evidence links.
+P0: Agent actor/progress integration, hackathon timer, tasks and RECOMMEND-level deadline alerts.
+P0: Reconnect, privacy, revocation, no data loss, build stability.
+P1: True collaborative buffers, voice, shared preview, bounded auto-execute with approval policy.
+P1: Deadline critical path, contract/conflict awareness, checkpoints, demo readiness.
+P2: Cross-IDE connector ecosystem, impact radar, auto rescue, Panic Mode and richer hackathon command center.
+
+Why this sequence: The user already has an IDE. The mission is to prove that a team can collaborate live inside it—not to spend the first months recreating a code editor, inventing flashy mock dashboards or implementing full autonomous agent fleets before reliable networking/permissions exist.
+
+================================================================================
+17. FINAL INSTRUCTION TO THE IMPLEMENTING MODEL
+================================================================================
+
+Treat this as the canonical vision for the Forge Room flagship feature of an EXISTING IDE. Build a multiplayer hackathon room—not an AI-only collaboration sidebar. Humans and AI agents should appear together as visible, permissioned participants; developers should be able to watch others and, when explicitly allowed, edit together; room chat/voice, live activity, deadlines, tasks, agent orchestration, previews and demo-readiness should be one coherent workflow.
+
+The special feature is the fusion of:
+  (1) game-like room/lobby UX,
+  (2) live human + AI agent development perspectives,
+  (3) collaboration before commits,
+  (4) hackathon countdowns and deadline-triggered, policy-governed agent dispatch,
+  (5) dependable code integration and demo delivery.
+
+Start by inspecting the actual repository. Then implement the smallest authentic, end-to-end V1 slice and grow systematically through V2 and V3. Preserve the existing IDE. Never substitute UI fiction for working synchronization, testing or real agent execution. Escalate hard technical constraints plainly and preserve user ownership of files, agents and deployment.
+
+END OF IMPLEMENTATION PROMPT

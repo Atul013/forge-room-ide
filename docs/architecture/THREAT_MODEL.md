@@ -1,0 +1,59 @@
+# Forge Room threat model
+
+**Scope reviewed:** Team Lobby 0.90.0, Forge Room Studio 0.10.0, and the self-hosted room-service prototype 0.1.0.  
+**Reviewed:** 21 October 2026  
+**Status:** Engineering threat assessment for the self-hosted desktop product. This is not a penetration test or a certification. Re-review after architectural changes and before operating any public managed service.
+
+## System and trust boundaries
+
+Forge Room is a Code OSS desktop application. Team Lobby runs in the IDE extension host. A room host may accept local clients over `ws://` on a private IPv4 interface or loopback, or over `wss://` with an operator-provided certificate and private key. The host issues expiring bearer invites and remains the room authority. The optional HTTPS room service provisions accounts, room metadata, and hashed expiring/revocable invites, then relays active room protocol traffic over WSS to the host's loopback authority. It does not persist room content and is not a managed multi-tenant service.
+
+The IDE user, their local workspace, and their operating-system account are trusted by the local extension host. Room participants are authenticated only by possession of an invite. A participant must still receive host approval for shared-document subscription. Configured ACP and MCP executables run as the user's OS account; Forge Room does not sandbox them. MCP is available only to Ask/Plan through explicitly selected local stdio servers and per-call approval. Model providers receive only the context and requests the user selects and confirms, subject to the provider's own handling policies.
+
+The self-hosted TLS connection encrypts traffic between a client and the host and uses normal certificate validation. It is not end-to-end encryption: the host can read all room content. Host-local history is mutable and bounded; it is not an immutable compliance audit log. A managed service, tenant isolation, account administration, and server-side retention controls are outside this release.
+
+## Assets to protect
+
+| Asset | Where it exists | Impact if exposed or changed |
+|---|---|---|
+| Workspace files and unsaved editor buffers | Each participant's IDE; shared buffers in host and approved subscriber memory | Source disclosure, unwanted edits, or loss of unsaved in-memory text |
+| Agent prompts and selected context | IDE memory and the selected model provider during a request | Disclosure of source, credentials, or private project details |
+| Room invite secrets | Host memory and the host user's clipboard when copied | Unauthorized room entry until expiry or revocation |
+| TLS private key | Host machine at the configured key path | Impersonation of the public room endpoint |
+| Service account keys, invite hashes, and control-plane database | Team Lobby SecretStorage, service process memory, and local JSON database | Account impersonation, room metadata disclosure, or unauthorized invitation |
+| Room identity, messages, tasks, notes, and event history | Host memory and host-local history file; selected items may be exported | Disclosure, impersonation, or tampering with local records |
+| Build changes and checkpoints | Workspace and local extension state | Unwanted changes, rollback of later edits, or loss of recovery data |
+| Build rollback targets | Workspace text documents and file-system paths at confirmation and apply time | A stale checkpoint or path redirection could overwrite later work or modify outside the workspace |
+| External process credentials and OS access | Configured ACP/MCP process and the host OS account | Access beyond the Forge Room capability boundary |
+
+## Threats and current controls
+
+| Threat | Current controls | Residual risk / evidence still needed |
+|---|---|---|
+| Network observer reads or alters room traffic | Plain WebSocket can bind only to loopback or a private IPv4 LAN address. Public invite addresses require WSS configuration. The client uses standard certificate validation; TLS is limited to TLS 1.2 or later. | The host and TLS terminator can read content. Local WSS checks covered trusted and untrusted certificates and invite rejection; public DNS, firewall, router, and separate-machine behavior still need deployment testing. |
+| Unauthorized user joins or reconnects | Random 256-bit invite secrets expire after 12 hours; accepted identities are pinned per invite; the host can revoke an invite and disconnect its active participants. Messages on a revoked session are rejected. | Anyone who obtains a live invite can join under a chosen display name. There is no account, MFA, organization membership, device binding, or tenant isolation. |
+| Stolen or lost room-service account key | Team Lobby stores the account key in VS Code SecretStorage. Owners can rotate it over HTTPS; service operators can recover an account through an admin-only route. Only key hashes persist, previous keys are immediately invalidated, account-scoped audit events are written, and hosted rooms disconnect. Disabled account recovery also revokes outstanding invites. | The service has one active long-lived key per account and no user-driven recovery or scoped/short-lived credentials. Local audit storage is mutable and not tamper-evident. Owner rotation, admin recovery and disconnect behavior have automated tests; separate-machine acceptance remains open. |
+| Rollback overwrites later or unrelated changes | Checkpoints retain the exact post-Build contents. Rollback checks every path under the workspace and verifies content both before confirmation and again after confirmation immediately before applying one atomic workspace edit. Any changed, missing, escaped, or symlinked Build-created target cancels the full restore. | Exact-content matching favors safety over partial rollback: an unrelated edit in a checkpointed file requires review before retrying. VS Code workspace edits do not provide a cross-process filesystem lock, so the final check is immediately before apply but cannot prevent a concurrent external writer in the same instant. Regression tests cover mismatch and unsafe target rejection. |
+| Participant changes shared content without consent | Shared editing is explicitly started by the host; each participant requests subscription; host approval is required. Full state and updates are bounded and relayed only among subscribers. The host can end the session. | Approved participants can change the shared buffer. There is no per-range authorization, signed edit history, or content-level end-to-end encryption. Exercise concurrent edits and revocation in separate IDEs. |
+| Path traversal or symlink escape | Room paths are validated as relative paths. Shared document joins map to one workspace root and use filesystem realpath containment. Duplicate multi-root folder names fail closed. | Test additional platform-specific path edge cases and exercise the IDE file-open path on Windows, macOS, and Linux. |
+| Malformed or oversized network message exhausts the host | WebSocket payload, document size, update size, per-peer update rate and volume are bounded; the room has a participant cap. | These are application limits, not a complete denial-of-service defense. There is no service-wide bandwidth quota, global rate limiter, or managed abuse response. |
+| Malicious project instructions or model output gains authority | Project guidance, skills, and profiles are treated as untrusted text. Tool capabilities and sensitive context require separate user choices; Build changes use review and apply confirmation. | Model behavior varies by provider. Do not add command, write, or network tools without explicit policy, isolation, tests, and new threat review. |
+| ACP process bypasses Forge Room permissions | ACP is opt-in and requires confirmation of the executable, arguments, workspace and selected context. The client advertises no filesystem or terminal methods and denies protocol permission requests. | The child process still inherits ambient OS privileges and may access files, commands, network, and credentials directly. Use only trusted executables; ACP is not a sandbox. |
+| MCP server performs unapproved local actions or returns hostile tool metadata | MCP servers are machine-configured and selected per Ask/Plan request after provider-transfer consent. The extension bounds server count, tool count, schema/description size, call count and output. Startup/discovery requests time out after 15 seconds and are cancellable; tool calls time out after two minutes and inherit request cancellation. Every agent-mediated call requires a modal approval showing complete JSON arguments; arguments over 3,000 characters are refused. Processes close after the turn. | MCP servers run unsandboxed with the IDE user's OS privileges and may read/write files, launch commands, or access the network independently, even without a Forge tool call. Tool descriptions/schema are untrusted hints, not policy. Approve only servers you trust. Tests use a local protocol fixture for handshake, timeout, cancellation, and shutdown; third-party server and provider acceptance are outstanding. |
+| Host-local history is altered, leaked, or retained too long | History is bounded; invite secrets and TLS credentials are not serialized. Export is user initiated and direct messages are excluded by default. | The host user and local malware can read or modify the file. There are no signatures, encryption-at-rest guarantee, centralized retention policy, or immutable audit semantics. |
+| Malicious or vulnerable extension/package compromises the IDE | VSIX packages bundle runtime dependencies and are hash-pinned in the Code OSS built-in extension manifest. | This does not replace dependency review, signed release provenance, update security, or a full supply-chain audit. |
+
+## Release gates for a public managed service
+
+Do not describe the current extension-host room as a managed internet service. Before a public multi-tenant service is built or operated, require all of the following:
+
+1. Add organization authorization, scoped short-lived client credentials, self-service recovery, and managed account administration. Account/room/invite controls are integrated with Team Lobby but provisioned by the local service operator; the operator can recover active accounts through an admin-only key-rotation endpoint, and account owners can rotate their own keys.
+2. TLS termination and certificate/key lifecycle management that do not require private keys to be placed in user workspaces; abuse controls for connection, message, storage, and invitation rates.
+3. A durable datastore with tenant isolation, authenticated access, backup/restore, deletion, retention, export, and tamper-evident audit requirements defined and tested.
+4. Explicit data-flow and retention disclosures for room messages, shared buffers, prompts, provider transfers, logs, crash reports, and telemetry. Define whether the service operator can read room contents; do not imply end-to-end encryption unless it is implemented and independently validated.
+5. A deployment threat model covering service operators, cloud credentials, database access, backup access, account recovery, denial of service, supply chain, and incident response. Complete independent security review before general availability.
+6. Two-machine and multi-tenant acceptance for authentication, authorization, invite revocation, reconnect, persistence recovery, rate limits, deletion, and audit behavior.
+
+## Review triggers
+
+Revisit this document when expanding MCP beyond selected local stdio servers, adding remote MCP/OAuth, ACP Build, managed accounts, mobile clients, voice/signaling, write/shell/network agent tools, widget or Pack execution, new room-content persistence, or any feature that changes who can read or modify workspace data.
