@@ -28,7 +28,7 @@ This is a source checkpoint for the first native Rust slices. It is not yet an i
 - CI compilation is not Windows 11 acceptance. No launch, footprint, memory, upgrade or uninstall measurement exists yet.
 - The build is unsigned.
 - The installer is per-user and deliberately does not modify PATH or register file associations; the native app has no stable project-file format yet.
-- The portable archive includes generated third-party license texts. Windows artifacts are retained temporarily as CI artifacts and are not a published release.
+- The portable archive includes a locked dependency inventory and a cargo-about-generated report associating shipped Rust dependencies with their full license texts. Packaging fails closed if a dependency license cannot be determined. Windows artifacts are retained temporarily as CI artifacts and are not a published release.
 
 ## Extension tiers
 

@@ -9,10 +9,9 @@ $manifest = Join-Path $root "native\forge-room-app\Cargo.toml"
 $releaseExe = Join-Path $root "native\forge-room-app\target\$Target\release\forge-room-early-preview.exe"
 $artifacts = Join-Path $root "artifacts\windows-x64"
 $package = Join-Path $artifacts "Forge-Room-Early-Preview-$Version-windows-x64"
-$licenses = Join-Path $package "licenses"
 
 Remove-Item $artifacts -Recurse -Force -ErrorAction SilentlyContinue
-New-Item $licenses -ItemType Directory -Force | Out-Null
+New-Item $package -ItemType Directory -Force | Out-Null
 
 if (-not (Test-Path $releaseExe)) {
     throw "Release executable is missing: $releaseExe"
@@ -23,6 +22,12 @@ Copy-Item (Join-Path $root "docs\native\EARLY_PREVIEW_NOTES.md") $package
 Copy-Item (Join-Path $root "native\LICENSE-MIT") (Join-Path $package "LICENSE-MIT.txt")
 
 cargo fetch --locked --manifest-path $manifest --target $Target
+$aboutConfig = Join-Path $root "native\forge-room-app\about.toml"
+$aboutTemplate = Join-Path $PSScriptRoot "third-party-licenses.hbs"
+$aboutOutput = Join-Path $package "THIRD_PARTY_LICENSES.html"
+cargo about generate --locked --fail --manifest-path $manifest --config $aboutConfig --output-file $aboutOutput $aboutTemplate
+if ($LASTEXITCODE -ne 0) { throw "cargo-about license generation failed with exit code $LASTEXITCODE" }
+
 $metadata = cargo metadata --locked --manifest-path $manifest --filter-platform $Target --format-version 1 | ConvertFrom-Json
 $nodeById = @{}
 foreach ($node in $metadata.resolve.nodes) { $nodeById[$node.id] = $node }
@@ -44,24 +49,14 @@ $noticeRows = @()
 foreach ($id in ($visited | Sort-Object)) {
     $item = $packageById[$id]
     if (-not $item.source) { continue }
-    $sourceDir = Split-Path $item.manifest_path -Parent
-    $licenseFiles = Get-ChildItem $sourceDir -File | Where-Object {
-        $_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE)(\.|-|$)'
-    }
-    if (-not $licenseFiles) {
-        throw "Dependency $($item.name) $($item.version) has no packaged license/notice file"
-    }
-    $destination = Join-Path $licenses "$($item.name)-$($item.version)"
-    New-Item $destination -ItemType Directory -Force | Out-Null
-    foreach ($file in $licenseFiles) { Copy-Item $file.FullName $destination }
     $noticeRows += "- $($item.name) $($item.version) — $($item.license) — $($item.repository)"
 }
 
 $noticeHeader = @(
     "# Third-party notices",
     "",
-    "The corresponding license and notice texts are stored under the licenses directory.",
-    "This inventory was generated from Cargo metadata for $Target.",
+    "The corresponding full license texts and crate associations are stored in THIRD_PARTY_LICENSES.html.",
+    "This inventory was generated from locked Cargo metadata for $Target.",
     ""
 )
 Set-Content (Join-Path $package "THIRD_PARTY_NOTICES.md") ($noticeHeader + $noticeRows) -Encoding utf8NoBOM
@@ -103,7 +98,8 @@ $metrics = [ordered]@{
     portableArchiveBytes = (Get-Item $portable).Length
     installerBytes = (Get-Item $installer).Length
     preparedInstalledFootprintBytes = $installedBytes
-    dependencyLicenseDirectories = (Get-ChildItem $licenses -Directory).Count
+    thirdPartyLicenseReportBytes = (Get-Item $aboutOutput).Length
+    dependencyInventoryEntries = $noticeRows.Count
     signed = $false
 }
 $metrics | ConvertTo-Json | Set-Content (Join-Path $artifacts "BUILD_METRICS.json") -Encoding utf8NoBOM
