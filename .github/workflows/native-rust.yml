@@ -1,10 +1,12 @@
 name: Native Rust slice
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - "native/**"
       - "docs/native/**"
+      - "packaging/**"
       - ".github/workflows/native-rust.yml"
   push:
     branches:
@@ -12,6 +14,7 @@ on:
     paths:
       - "native/**"
       - "docs/native/**"
+      - "packaging/**"
       - ".github/workflows/native-rust.yml"
 
 permissions:
@@ -40,7 +43,39 @@ jobs:
         run: cargo clippy --locked --manifest-path native/forge-room-core/Cargo.toml --all-targets -- -D warnings
       - name: Graphical shell check
         run: cargo check --locked --manifest-path native/forge-room-app/Cargo.toml
+      - name: Graphical shell format
+        run: cargo fmt --manifest-path native/forge-room-app/Cargo.toml -- --check
       - name: Graphical shell tests
         run: cargo test --locked --manifest-path native/forge-room-app/Cargo.toml
       - name: Graphical shell clippy
         run: cargo clippy --locked --manifest-path native/forge-room-app/Cargo.toml --all-targets -- -D warnings
+
+  package-windows:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build native Windows release
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc --manifest-path native/forge-room-app/Cargo.toml
+      - name: Build portable archive, installer and checksums
+        run: ./packaging/windows/package.ps1
+      - name: Verify silent install, launch and uninstall
+        run: ./packaging/windows/verify.ps1
+      - name: Upload Forge Room Early Preview artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64
+          path: |
+            artifacts/windows-x64/Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64.zip
+            artifacts/windows-x64/Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64-setup.exe
+            artifacts/windows-x64/SHA256SUMS.txt
+            artifacts/windows-x64/BUILD_METRICS.json
+            artifacts/windows-x64/LAUNCH_SMOKE.json
+          if-no-files-found: error
+          retention-days: 14

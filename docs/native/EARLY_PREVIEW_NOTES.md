@@ -27,6 +27,8 @@ This is a source checkpoint for the first native Rust slices. It is not yet an i
 - Atomic save/recovery still needs crash-injection and Windows filesystem verification.
 - CI compilation is not Windows 11 acceptance. No launch, footprint, memory, upgrade or uninstall measurement exists yet.
 - The build is unsigned.
+- The installer is per-user and deliberately does not modify PATH or register file associations; the native app has no stable project-file format yet.
+- The portable archive includes generated third-party license texts. Windows artifacts are retained temporarily as CI artifacts and are not a published release.
 
 ## Extension tiers
 
@@ -39,7 +41,7 @@ This is a source checkpoint for the first native Rust slices. It is not yet an i
 
 ## Platform support
 
-No platform is yet supported as an installable IDE. Windows 11 x64 is the first target. Linux and macOS remain unsupported until separately built and tested.
+Windows 11 x64 is the first packaging target. A Windows CI build, silent install/launch/uninstall smoke test and artifact do not by themselves establish interactive Windows support. Linux and macOS remain unsupported until separately built and tested.
 
 ## Measurements from this checkpoint
 

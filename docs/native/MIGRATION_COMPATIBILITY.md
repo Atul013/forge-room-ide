@@ -60,7 +60,7 @@ eframe/egui 0.37 is used only for the bounded graphical shell because the offici
 
 ## Packaging gates
 
-Direct modern WiX configuration is the current Windows installer candidate; `cargo-wix` is not selected because its documented path remains coupled to WiX v3. The final engine/version requires a license and maintenance check on the Windows build runner.
+Inno Setup 6.7.1 is used for the first Windows package because it is a proven native installer already present on the GitHub-hosted Windows 2025 image, supports non-administrative per-user installation and avoids WiX 7's current maintenance-fee/EULA decision. The script remains reproducible and does not download an installer tool at build time. A later move to WiX remains possible after its licensing and maintenance implications are accepted.
 
 Do not produce an installer until all of these are true:
 
