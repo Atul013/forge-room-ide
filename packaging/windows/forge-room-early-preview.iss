@@ -43,7 +43,7 @@ VersionInfoVersion=0.109.0.1
 VersionInfoCompany=Forge Room contributors
 VersionInfoDescription=Forge Room Early Preview installer
 VersionInfoProductName=Forge Room Early Preview
-VersionInfoProductVersion={#AppVersion}
+VersionInfoProductVersion=0.109.0.1
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -55,7 +55,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "{#PackageDir}\forge-room-early-preview.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\EARLY_PREVIEW_NOTES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PackageDir}\LICENSE-MIT.txt"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PackageDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PackageDir}\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PackageDir}\THIRD_PARTY_LICENSES.html"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Forge Room Early Preview"; Filename: "{app}\forge-room-early-preview.exe"; WorkingDir: "{userdocs}"
