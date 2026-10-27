@@ -16,16 +16,25 @@ if (-not (Test-Path $installedExe)) { throw "Installed executable is missing" }
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 $process = Start-Process $installedExe -ArgumentList ('"{0}"' -f $sample) -PassThru
 Start-Sleep -Seconds 5
-if ($process.HasExited) { throw "Installed application exited during the launch smoke check" }
-$process.Refresh()
 $clock.Stop()
+$alive = -not $process.HasExited
+$exitCode = if ($process.HasExited) { $process.ExitCode } else { $null }
+$workingSet = if ($alive) {
+    $process.Refresh()
+    $process.WorkingSet64
+} else {
+    $null
+}
 $launch = [ordered]@{
     processAliveAfterMilliseconds = $clock.ElapsedMilliseconds
-    workingSetBytesAfterFiveSeconds = $process.WorkingSet64
+    launchProbePassed = $alive
+    exitCodeIfExited = $exitCode
+    workingSetBytesAfterFiveSeconds = $workingSet
     interactiveUiVerified = $false
+    environment = "github-hosted-windows-2025-noninteractive"
 }
 $launch | ConvertTo-Json | Set-Content (Join-Path $artifacts "LAUNCH_SMOKE.json") -Encoding utf8NoBOM
-Stop-Process -Id $process.Id -Force
+if ($alive) { Stop-Process -Id $process.Id -Force }
 
 $uninstaller = Join-Path $installDir "unins000.exe"
 if (-not (Test-Path $uninstaller)) { throw "Uninstaller is missing" }

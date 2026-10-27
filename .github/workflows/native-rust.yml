@@ -68,7 +68,7 @@ jobs:
       - name: Build portable archive, installer and checksums
         id: package
         run: ./packaging/windows/package.ps1
-      - name: Verify silent install, launch and uninstall
+      - name: Verify silent install and uninstall; record headless launch probe
         run: ./packaging/windows/verify.ps1
       - name: Upload Forge Room Early Preview artifacts
         if: always() && steps.package.outcome == 'success'

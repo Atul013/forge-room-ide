@@ -1,6 +1,6 @@
 # Forge Room Early Preview 0.109.0-alpha.1
 
-This is a source checkpoint for the first native Rust slices. It is not yet an installable IDE release and must not be published or presented as a beta.
+This is an installable artifact checkpoint for the first native Rust slices. It is an early preview, not a beta, and is not a published GitHub release.
 
 ## Included
 
@@ -18,14 +18,15 @@ This is a source checkpoint for the first native Rust slices. It is not yet an i
 - File picker, multi-file workspace, syntax highlighting, LSP, DAP, Git UI, terminal and task runner.
 - Realtime room transport, invitations, encryption and reconnect.
 - Theme/profile UI, accessibility and high-DPI acceptance.
-- Installer, portable archive, checksums and draft prerelease artifacts; packaging remains gated on a Windows build and actual interactive open/edit/save acceptance.
+- Interactive Windows open/edit/save acceptance, upgrade testing and a signed release.
 
 ## Known limitations
 
 - The CLI state file is local and trusted; it is not an authenticated multi-user protocol.
 - Activity timestamps use Unix seconds and are not signed or tamper-evident.
 - Atomic save/recovery still needs crash-injection and Windows filesystem verification.
-- CI compilation is not Windows 11 acceptance. No launch, footprint, memory, upgrade or uninstall measurement exists yet.
+- CI compilation and a non-interactive launch probe are not Windows 11 desktop acceptance. The GitHub-hosted runner process exited before the five-second launch probe completed, so no launch-time or memory claim is made.
+- Silent per-user installation is exercised by CI. Clean uninstall and launch-probe evidence are emitted with the artifact; upgrade remains untested.
 - The build is unsigned.
 - The installer is per-user and deliberately does not modify PATH or register file associations; the native app has no stable project-file format yet.
 - The portable archive includes a locked dependency inventory and a cargo-about-generated report associating shipped Rust dependencies with their full license texts. Packaging fails closed if a dependency license cannot be determined. Windows artifacts are retained temporarily as CI artifacts and are not a published release.
@@ -45,4 +46,4 @@ Windows 11 x64 is the first packaging target. A Windows CI build, silent install
 
 ## Measurements from this checkpoint
 
-The optimized CLI binary built in the Linux cloud runner is 816,288 bytes. The optimized Linux graphical executable is 18,379,112 bytes. Neither is an installer size, total Windows payload or supported-platform claim. The graphical executable was compiled and its document model was tested, but it was not interactively launched because this cloud runner has no graphical display. Launch time and memory were not recorded; no values are inferred.
+The Windows artifact bundle includes `BUILD_METRICS.json` with the exact executable, portable archive, installer, prepared-payload and license-report byte counts for that build, plus `SHA256SUMS.txt` for both distributable files. The artifacts are unsigned and require no subsequent payload download. The CI runner did not provide interactive desktop acceptance; launch time, stable idle memory, editor workload memory and room workload memory remain unmeasured.

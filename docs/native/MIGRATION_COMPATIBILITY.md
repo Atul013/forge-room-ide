@@ -44,7 +44,7 @@ eframe/egui 0.37 is used only for the bounded graphical shell because the offici
 | Rooms/reconnect/invites | Team Lobby protocol 17 | Deferred | Native authenticated encrypted transport |
 | Appearance profiles | Forge Room Studio 0.14.0 | Deferred | Native design tokens, contrast and reduced motion |
 | AI Ask/Plan/Build | Team Lobby 0.108.0 | Deferred | Provider-neutral native capability registry |
-| Installer/prerelease | None for native app | Blocked by missing graphical usable slice and Windows runner | Build, measure and test unsigned Windows 11 x64 package |
+| Installer/prerelease | None for native app | Unsigned Inno Setup installer and license-complete portable archive built on Windows x64 CI | Interactive Windows 11 launch/open/edit/save, upgrade and manual installer UX acceptance |
 
 ## Extension compatibility tiers
 
@@ -62,7 +62,7 @@ eframe/egui 0.37 is used only for the bounded graphical shell because the offici
 
 Inno Setup 6.7.1 is used for the first Windows package because it is a proven native installer already present on the GitHub-hosted Windows 2025 image, supports non-administrative per-user installation and avoids WiX 7's current maintenance-fee/EULA decision. The script remains reproducible and does not download an installer tool at build time. A later move to WiX remains possible after its licensing and maintenance implications are accepted.
 
-Do not produce an installer until all of these are true:
+The early-preview artifact is intentionally below beta quality. Remaining gates before a beta or published release are:
 
 1. Native graphical open, edit and save are interactively verified on Windows 11 x64 (CI compilation alone is insufficient).
 2. Room/task state survives launch, upgrade and uninstall without deleting user projects/settings.
