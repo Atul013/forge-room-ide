@@ -1,0 +1,18 @@
+[package]
+name = "forge-room-early-preview"
+version = "0.109.0-alpha.1"
+edition = "2021"
+license = "MIT"
+description = "Editor-independent native Forge Room domain slice"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+name = "forge_room_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "forge-room-preview"
+path = "src/main.rs"
