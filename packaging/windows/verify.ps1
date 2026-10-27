@@ -12,6 +12,8 @@ $install = Start-Process $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBO
 if ($install.ExitCode -ne 0) { throw "Silent installation failed with exit code $($install.ExitCode)" }
 $installedExe = Join-Path $installDir "forge-room-early-preview.exe"
 if (-not (Test-Path $installedExe)) { throw "Installed executable is missing" }
+$startupLog = Join-Path $env:LOCALAPPDATA "Forge Room Early Preview\logs\startup-error.log"
+if (Test-Path $startupLog) { Remove-Item $startupLog -Force }
 
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 $process = Start-Process $installedExe -ArgumentList ('"{0}"' -f $sample) -PassThru
@@ -25,11 +27,16 @@ $workingSet = if ($alive) {
 } else {
     $null
 }
+$startupErrorCaptured = Test-Path $startupLog
+if ($startupErrorCaptured) {
+    Copy-Item $startupLog (Join-Path $artifacts "STARTUP_ERROR.log") -Force
+}
 $launch = [ordered]@{
     processAliveAfterMilliseconds = $clock.ElapsedMilliseconds
     launchProbePassed = $alive
     exitCodeIfExited = $exitCode
     workingSetBytesAfterFiveSeconds = $workingSet
+    startupErrorLogCaptured = $startupErrorCaptured
     interactiveUiVerified = $false
     environment = "github-hosted-windows-2025-noninteractive"
 }
@@ -44,3 +51,7 @@ Start-Sleep -Seconds 2
 if (Test-Path $installedExe) { throw "Application executable remained after uninstall" }
 
 Get-Content (Join-Path $artifacts "LAUNCH_SMOKE.json")
+if ($startupErrorCaptured) {
+    Write-Host "Captured native startup diagnostic:"
+    Get-Content (Join-Path $artifacts "STARTUP_ERROR.log")
+}
