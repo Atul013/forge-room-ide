@@ -6,8 +6,13 @@ license = "MIT"
 description = "Native graphical Forge Room Early Preview shell"
 
 [dependencies]
-eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "wayland", "x11"] }
 forge-room-core = { package = "forge-room-early-preview", path = "../forge-room-core" }
+
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "persistence", "wgpu"] }
+
+[target.'cfg(not(windows))'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "wayland", "x11"] }
 
 [[bin]]
 name = "forge-room-early-preview"
