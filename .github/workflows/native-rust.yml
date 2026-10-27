@@ -41,8 +41,6 @@ jobs:
         run: cargo test --locked --manifest-path native/forge-room-core/Cargo.toml
       - name: Clippy
         run: cargo clippy --locked --manifest-path native/forge-room-core/Cargo.toml --all-targets -- -D warnings
-      - name: Resolve graphical shell dependencies
-        run: cargo generate-lockfile --manifest-path native/forge-room-app/Cargo.toml
       - name: Graphical shell check
         run: cargo check --locked --manifest-path native/forge-room-app/Cargo.toml
       - name: Graphical shell format
@@ -65,8 +63,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install pinned license report generator
         run: cargo install --locked --features cli cargo-about --version 0.9.2
-      - name: Resolve graphical shell dependencies
-        run: cargo generate-lockfile --manifest-path native/forge-room-app/Cargo.toml
       - name: Build native Windows release
         run: cargo build --release --locked --target x86_64-pc-windows-msvc --manifest-path native/forge-room-app/Cargo.toml
       - name: Build portable archive, installer and checksums
@@ -86,6 +82,5 @@ jobs:
             artifacts/windows-x64/BUILD_METRICS.json
             artifacts/windows-x64/LAUNCH_SMOKE.json
             artifacts/windows-x64/STARTUP_ERROR.log
-            native/forge-room-app/Cargo.lock
           if-no-files-found: error
           retention-days: 14
