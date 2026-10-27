@@ -1,6 +1,6 @@
 # Forge Room Early Preview 0.109.0-alpha.1
 
-This is a source checkpoint for the first native Rust slice. It is not yet an installable IDE release and must not be published or presented as a beta.
+This is a source checkpoint for the first native Rust slices. It is not yet an installable IDE release and must not be published or presented as a beta.
 
 ## Included
 
@@ -11,14 +11,14 @@ This is a source checkpoint for the first native Rust slice. It is not yet an in
 - Private-by-default sharing policy.
 - Offline JSON state with atomic replacement, previous-state backup and recovery from corrupt primary state.
 - CLI workflow for creating a room, adding participants/tasks, changing status, handing off work, recording evidence and listing tasks.
+- Native graphical UTF-8 text open/edit/save slice with keyboard save, unsaved-state indication, a high-DPI-aware native window and AccessKit integration.
 
 ## Missing
 
-- Native graphical shell and editor.
-- Open/edit/save, syntax highlighting, LSP, DAP, Git UI, terminal and task runner.
+- File picker, multi-file workspace, syntax highlighting, LSP, DAP, Git UI, terminal and task runner.
 - Realtime room transport, invitations, encryption and reconnect.
 - Theme/profile UI, accessibility and high-DPI acceptance.
-- Installer, portable archive, checksums and draft prerelease artifacts.
+- Installer, portable archive, checksums and draft prerelease artifacts; packaging remains gated on a Windows build and actual interactive open/edit/save acceptance.
 
 ## Known limitations
 
@@ -43,4 +43,4 @@ No platform is yet supported as an installable IDE. Windows 11 x64 is the first 
 
 ## Measurements from this checkpoint
 
-The optimized CLI binary built in the Linux cloud runner is 816,288 bytes. This is not an installer size, total payload, graphical-editor footprint, Windows measurement or platform-support claim. Launch time and memory were not recorded because the runner lacks a suitable measurement tool; no values are inferred.
+The optimized CLI binary built in the Linux cloud runner is 816,288 bytes. The optimized Linux graphical executable is 18,379,112 bytes. Neither is an installer size, total Windows payload or supported-platform claim. The graphical executable was compiled and its document model was tested, but it was not interactively launched because this cloud runner has no graphical display. Launch time and memory were not recorded; no values are inferred.

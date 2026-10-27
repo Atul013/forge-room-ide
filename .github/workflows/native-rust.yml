@@ -38,3 +38,9 @@ jobs:
         run: cargo test --locked --manifest-path native/forge-room-core/Cargo.toml
       - name: Clippy
         run: cargo clippy --locked --manifest-path native/forge-room-core/Cargo.toml --all-targets -- -D warnings
+      - name: Graphical shell check
+        run: cargo check --locked --manifest-path native/forge-room-app/Cargo.toml
+      - name: Graphical shell tests
+        run: cargo test --locked --manifest-path native/forge-room-app/Cargo.toml
+      - name: Graphical shell clippy
+        run: cargo clippy --locked --manifest-path native/forge-room-app/Cargo.toml --all-targets -- -D warnings

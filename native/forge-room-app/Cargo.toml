@@ -1,0 +1,14 @@
+[package]
+name = "forge-room-app"
+version = "0.109.0-alpha.1"
+edition = "2024"
+license = "MIT"
+description = "Native graphical Forge Room Early Preview shell"
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "wayland", "x11"] }
+forge-room-core = { package = "forge-room-early-preview", path = "../forge-room-core" }
+
+[[bin]]
+name = "forge-room-early-preview"
+path = "src/main.rs"

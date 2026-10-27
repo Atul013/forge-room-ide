@@ -21,6 +21,9 @@ Primary references used for this decision:
 - Zed language and debugger extension prerequisites: <https://zed.dev/docs/extensions/publishing/prerequisites.html> and <https://zed.dev/docs/extensions/debugger-extensions>
 - WiX upstream: <https://github.com/wixtoolset>
 - `cargo-wix` WiX v3 limitation: <https://github.com/volks73/cargo-wix/issues/302>
+- eframe native options and platform integration: <https://docs.rs/eframe/0.37.0/eframe/struct.NativeOptions.html> and <https://github.com/emilk/egui/tree/0.37.0/crates/eframe>
+
+eframe/egui 0.37 is used only for the bounded graphical shell because the official integration supports native Windows, high-DPI viewports and AccessKit without a web runtime. Upstream also documents its heavier framework dependency set and evolving interfaces; it is not yet selected as Forge's long-term full editor component.
 
 ## Source-backed behavior matrix
 
@@ -35,8 +38,8 @@ Primary references used for this decision:
 | Review/check/handoff evidence | extension activity/review flows | Foundation ported | Signed/linked artifact model |
 | Recovery-safe local state | host-local history and rollback requirements | New native atomic save/backup recovery | Crash-injection and Windows filesystem tests |
 | Scoped sharing | product spec and threat model | Explicit private defaults only | Consent UI, transport and revocation |
-| Offline/solo use | product requirement | CLI slice works locally | Native graphical editor loop |
-| Editor open/edit/save | Code OSS | Deferred | Select native editor component and verify Windows workflow |
+| Offline/solo use | product requirement | CLI and graphical text-editing slices work locally | Workspace and room/task UI |
+| Editor open/edit/save | Code OSS | Native UTF-8 single-file slice implemented with eframe/egui | Interactive Windows acceptance, file picker, multi-file workspace and syntax support |
 | Git, terminal, tasks/tests | Code OSS + Team Lobby capabilities | Deferred | Native adapters with explicit permissions |
 | Rooms/reconnect/invites | Team Lobby protocol 17 | Deferred | Native authenticated encrypted transport |
 | Appearance profiles | Forge Room Studio 0.14.0 | Deferred | Native design tokens, contrast and reduced motion |
@@ -61,7 +64,7 @@ Direct modern WiX configuration is the current Windows installer candidate; `car
 
 Do not produce an installer until all of these are true:
 
-1. Native graphical open, edit and save work on Windows 11 x64.
+1. Native graphical open, edit and save are interactively verified on Windows 11 x64 (CI compilation alone is insufficient).
 2. Room/task state survives launch, upgrade and uninstall without deleting user projects/settings.
 3. Release build measurements exist for installer payload, installed footprint, launch time and idle/editor/room memory.
 4. Install, launch, upgrade and uninstall are actually exercised in a Windows environment.
