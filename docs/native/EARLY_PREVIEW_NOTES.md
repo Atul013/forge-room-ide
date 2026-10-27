@@ -25,7 +25,7 @@ This is an installable artifact checkpoint for the first native Rust slices. It 
 - The CLI state file is local and trusted; it is not an authenticated multi-user protocol.
 - Activity timestamps use Unix seconds and are not signed or tamper-evident.
 - Atomic save/recovery still needs crash-injection and Windows filesystem verification.
-- CI compilation and a non-interactive launch probe are not Windows 11 desktop acceptance. The GitHub-hosted runner process exited before the five-second launch probe completed, so no launch-time or memory claim is made.
+- CI compilation and a non-interactive launch probe are not Windows 11 desktop acceptance. The Windows build uses eframe's WGPU renderer because the hosted runner has no usable OpenGL 2.0 context.
 - Silent per-user installation is exercised by CI. Clean uninstall and launch-probe evidence are emitted with the artifact; upgrade remains untested.
 - The build is unsigned.
 - The installer is per-user and deliberately does not modify PATH or register file associations; the native app has no stable project-file format yet.
@@ -46,4 +46,4 @@ Windows 11 x64 is the first packaging target. A Windows CI build, silent install
 
 ## Measurements from this checkpoint
 
-The Windows artifact bundle includes `BUILD_METRICS.json` with the exact executable, portable archive, installer, prepared-payload and license-report byte counts for that build, plus `SHA256SUMS.txt` for both distributable files. The artifacts are unsigned and require no subsequent payload download. The CI runner did not provide interactive desktop acceptance; launch time, stable idle memory, editor workload memory and room workload memory remain unmeasured.
+The Windows artifact bundle includes `BUILD_METRICS.json` with the exact executable, portable archive, installer, prepared-payload and license-report byte counts for that build, plus `SHA256SUMS.txt` for both distributable files. The WGPU checkpoint measured a 14,084,096-byte executable, 5,687,015-byte portable archive, 6,159,999-byte installer and 14,360,113-byte prepared footprint. The non-interactive process remained alive after five seconds with a 58,515,456-byte working set. The artifacts are unsigned and require no subsequent payload download. The CI runner did not provide interactive desktop acceptance; visible-window startup time, stable idle memory, editor workload memory and room workload memory remain unmeasured.
