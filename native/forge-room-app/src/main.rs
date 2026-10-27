@@ -4,12 +4,25 @@ mod document;
 
 use document::DocumentSession;
 use eframe::egui;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 const APP_NAME: &str = "Forge Room Early Preview";
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(173, 72, 72);
 
-fn main() -> eframe::Result {
+fn main() {
+    if let Err(error) = run() {
+        let message = format!("{error:#}");
+        let log_path = startup_error_path();
+        if let Some(parent) = log_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(&log_path, format!("{message}\n"));
+        eprintln!("{APP_NAME} failed to start: {message}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> eframe::Result {
     let initial_path = std::env::args_os().nth(1).map(PathBuf::from);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -26,6 +39,13 @@ fn main() -> eframe::Result {
             Ok(Box::new(ForgeRoomApp::new(creation_context, initial_path)))
         }),
     )
+}
+
+fn startup_error_path() -> PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join(APP_NAME).join("logs").join("startup-error.log")
 }
 
 struct ForgeRoomApp {
