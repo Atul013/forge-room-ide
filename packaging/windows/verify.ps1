@@ -8,8 +8,8 @@ $installDir = Join-Path $env:LOCALAPPDATA "Programs\Forge Room Early Preview"
 $sample = Join-Path $env:TEMP "forge-room-preview-smoke.txt"
 Set-Content $sample "Forge Room Early Preview smoke file" -Encoding utf8NoBOM
 
-& $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-if ($LASTEXITCODE -ne 0) { throw "Silent installation failed with exit code $LASTEXITCODE" }
+$install = Start-Process $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+if ($install.ExitCode -ne 0) { throw "Silent installation failed with exit code $($install.ExitCode)" }
 $installedExe = Join-Path $installDir "forge-room-early-preview.exe"
 if (-not (Test-Path $installedExe)) { throw "Installed executable is missing" }
 
@@ -29,8 +29,8 @@ Stop-Process -Id $process.Id -Force
 
 $uninstaller = Join-Path $installDir "unins000.exe"
 if (-not (Test-Path $uninstaller)) { throw "Uninstaller is missing" }
-& $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-if ($LASTEXITCODE -ne 0) { throw "Silent uninstall failed with exit code $LASTEXITCODE" }
+$uninstall = Start-Process $uninstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($uninstall.ExitCode)" }
 Start-Sleep -Seconds 2
 if (Test-Path $installedExe) { throw "Application executable remained after uninstall" }
 

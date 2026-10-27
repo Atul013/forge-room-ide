@@ -66,10 +66,12 @@ jobs:
       - name: Build native Windows release
         run: cargo build --release --locked --target x86_64-pc-windows-msvc --manifest-path native/forge-room-app/Cargo.toml
       - name: Build portable archive, installer and checksums
+        id: package
         run: ./packaging/windows/package.ps1
       - name: Verify silent install, launch and uninstall
         run: ./packaging/windows/verify.ps1
       - name: Upload Forge Room Early Preview artifacts
+        if: always() && steps.package.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64
