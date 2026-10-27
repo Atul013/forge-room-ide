@@ -81,5 +81,6 @@ jobs:
             artifacts/windows-x64/SHA256SUMS.txt
             artifacts/windows-x64/BUILD_METRICS.json
             artifacts/windows-x64/LAUNCH_SMOKE.json
+            artifacts/windows-x64/STARTUP_ERROR.log
           if-no-files-found: error
           retention-days: 14
