@@ -1,3 +1,4 @@
+# A ref update with this path triggers the full Windows artifact job.
 name: Native Rust slice
 
 on:
