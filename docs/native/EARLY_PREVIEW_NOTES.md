@@ -26,7 +26,7 @@ This is an installable artifact checkpoint for the first native Rust slices. It 
 - Activity timestamps use Unix seconds and are not signed or tamper-evident.
 - Atomic save/recovery still needs crash-injection and Windows filesystem verification.
 - CI compilation and a non-interactive launch probe are not Windows 11 desktop acceptance. The Windows build uses eframe's WGPU renderer because the hosted runner has no usable OpenGL 2.0 context.
-- Silent per-user installation is exercised by CI. Clean uninstall and launch-probe evidence are emitted with the artifact; upgrade remains untested.
+- Silent per-user installation is exercised by CI. The workflow installs an alpha.0 baseline with the same stable AppId, upgrades to alpha.1, verifies application-data and external-project preservation, checks default shortcut behavior, and then performs a clean uninstall. Machine-readable install and launch evidence are emitted with the artifact.
 - The build is unsigned.
 - The installer is per-user and deliberately does not modify PATH or register file associations; the native app has no stable project-file format yet.
 - The portable archive includes a locked dependency inventory and a cargo-about-generated report associating shipped Rust dependencies with their full license texts. Packaging fails closed if a dependency license cannot be determined. Windows artifacts are retained temporarily as CI artifacts and are not a published release.
