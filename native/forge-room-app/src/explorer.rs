@@ -135,7 +135,7 @@ fn row(
         Kind::File => icons::file(
             painter,
             Rect::from_center_size(egui::pos2(x + 22.0, y), egui::vec2(10.0, 13.0)),
-            theme::TEXT_DIM,
+            file_color(label),
         ),
     }
     let font = if bold {
@@ -156,4 +156,18 @@ fn row(
         color,
     );
     response
+}
+
+/// Tint for a file icon by extension, so file types are easy to tell apart at a glance.
+fn file_color(name: &str) -> Color32 {
+    match name.rsplit('.').next().unwrap_or("") {
+        "rs" => Color32::from_rgb(222, 150, 110),
+        "md" | "txt" => Color32::from_rgb(110, 170, 225),
+        "toml" | "yml" | "yaml" | "json" => Color32::from_rgb(205, 190, 90),
+        "ps1" | "iss" | "cs" | "bat" => Color32::from_rgb(120, 170, 235),
+        "js" | "ts" => Color32::from_rgb(235, 215, 95),
+        "py" => Color32::from_rgb(110, 165, 215),
+        "png" | "ico" | "svg" | "jpg" => Color32::from_rgb(160, 200, 120),
+        _ => theme::TEXT_DIM,
+    }
 }

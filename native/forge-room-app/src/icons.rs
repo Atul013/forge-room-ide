@@ -89,3 +89,20 @@ pub fn close_cross(painter: &Painter, center: Pos2, color: Color32) {
         stroke,
     );
 }
+
+/// Git branch glyph (two nodes joined to a third) for the status bar.
+pub fn branch(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.2, color);
+    let x = rect.left() + 3.0;
+    let top = egui::pos2(x, rect.top() + 2.5);
+    let bottom = egui::pos2(x, rect.bottom() - 2.5);
+    let side = egui::pos2(rect.right() - 3.0, rect.top() + rect.height() * 0.38);
+    painter.line_segment([top, bottom], stroke);
+    painter.line_segment(
+        [side, egui::pos2(x, rect.bottom() - rect.height() * 0.45)],
+        stroke,
+    );
+    for center in [top, bottom, side] {
+        painter.circle_stroke(center, 2.0, stroke);
+    }
+}

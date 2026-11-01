@@ -5,6 +5,8 @@ pub struct Tab {
     pub id: u64,
     pub doc: DocumentSession,
     untitled: Option<u32>,
+    /// True until the editor has placed the cursor at the start of the document.
+    pub fresh: bool,
 }
 
 impl Tab {
@@ -61,6 +63,7 @@ impl Tabs {
             id: self.take_id(),
             doc: DocumentSession::default(),
             untitled: Some(self.next_untitled),
+            fresh: true,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -83,6 +86,7 @@ impl Tabs {
             id: self.take_id(),
             doc,
             untitled: None,
+            fresh: true,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;

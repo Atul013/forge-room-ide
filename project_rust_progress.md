@@ -27,13 +27,17 @@ Single place for the state of the native app and its installer. Shared agent han
   - Status bar: Ln/Col, UTF-8, CRLF/LF, version, last action or error (non-UTF-8 and files over 10 MB are refused with a message).
   - Window title follows the file and folder; shortcuts Ctrl+N/O/Shift+O/S/Shift+S/W/B.
   - 10 unit tests (document, tabs, workspace, position).
+- **Step 2, editor core (partly done, verified on screen):**
+  - Syntax highlighting per file extension (syntect via egui_extras), line-number gutter aligned to the real text layout, current-line highlight, no soft wrap with horizontal scroll, cursor starts at 1:1.
+  - Breadcrumb path bar under the tabs; Git branch in the status bar (read from `.git/HEAD`); file-type colored icons in the explorer.
+  - 13 unit tests; rustfmt, clippy `-D warnings` and the cargo-about license gate pass locally.
 - Logo embedded in the exe (`build.rs`, `assets/forge-room.ico`).
 - Toolchain: Rust 1.99.1 (eframe 0.37 deps need 1.95+).
 
 ## Roadmap (in order)
 
 1. ~~**IDE shell**~~ done.
-2. **Editor core:** line numbers, syntax highlighting, current-line highlight, find/replace in file, go to line.
+2. **Editor core:** ~~line numbers, syntax highlighting, current-line highlight~~ done; still to do: find/replace in file, go to line, bracket matching, indent guides, minimap.
 3. **Command palette and search:** Ctrl+Shift+P command palette, Ctrl+P quick open, find in files.
 4. **Terminal and Git:** integrated terminal panel, Git status/diff gutter in the explorer and status bar.
 5. Later: LSP (diagnostics, completion, go to definition), settings and keybindings, themes, session restore, multi-cursor, split editors, extension story, Room/collaboration UI from the product spec.
@@ -46,5 +50,6 @@ Single place for the state of the native app and its installer. Shared agent han
 
 - No external-change detection (a file edited on disk while open is not noticed).
 - No new-file/rename/delete in the explorer yet; no drag to reorder tabs; no split view.
+- No TOML/TypeScript colors (syntect default grammar pack has no grammar for them); unknown extensions render as plain text.
 - Large files (egui TextEdit re-lays out the whole buffer) will not scale; this is why step 2 may need a custom editor widget.
 - Folder/file dialogs block the UI thread while open.

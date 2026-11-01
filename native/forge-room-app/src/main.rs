@@ -2,6 +2,7 @@
 
 mod document;
 mod explorer;
+mod gutter;
 mod icons;
 mod position;
 mod tabs;
@@ -9,6 +10,7 @@ mod theme;
 mod workspace;
 
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
+use egui_extras::syntax_highlighting::{CodeTheme, highlight};
 use std::{fs, path::PathBuf};
 use tabs::{Tabs, normalize};
 use workspace::Workspace;
@@ -77,6 +79,7 @@ struct ForgeRoomApp {
     focus_editor: bool,
     cursor: (usize, usize),
     last_title: String,
+    branch: Option<String>,
 }
 
 fn shortcut(ui: &egui::Ui, modifiers: Modifiers, key: Key) -> bool {
@@ -96,6 +99,7 @@ impl ForgeRoomApp {
             focus_editor: false,
             cursor: (1, 1),
             last_title: String::new(),
+            branch: None,
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -108,6 +112,10 @@ impl ForgeRoomApp {
     fn open_path(&mut self, path: PathBuf) {
         if path.is_dir() {
             self.workspace = Some(Workspace::new(normalize(&path)));
+            self.branch = self
+                .workspace
+                .as_ref()
+                .and_then(|workspace| workspace::git_branch(&workspace.root));
             self.show_sidebar = true;
             self.status = format!("Opened folder {}", path.display());
             return;
@@ -316,6 +324,10 @@ impl ForgeRoomApp {
                 if let Some(workspace) = self.workspace.as_mut() {
                     workspace.refresh();
                 }
+                self.branch = self
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace::git_branch(&workspace.root));
             }
         }
     }
@@ -423,38 +435,163 @@ impl ForgeRoomApp {
 
     fn editor(&mut self, ui: &mut egui::Ui) {
         let focus = std::mem::take(&mut self.focus_editor);
-        let line_height = ui.text_style_height(&egui::TextStyle::Monospace);
+        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let (row_height, char_width) =
+            ui.fonts_mut(|fonts| (fonts.row_height(&font_id), fonts.glyph_width(&font_id, '0')));
+        let current_line = self.cursor.0 - 1;
         let mut cursor_index = None;
         let Some(tab) = self.tabs.active_tab() else {
             self.welcome(ui);
             return;
         };
         let id = egui::Id::unique(("editor", tab.id));
+        let extension = tab
+            .doc
+            .path()
+            .and_then(|path| path.extension())
+            .map(|extension| extension.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "txt".into());
+        let code_theme = CodeTheme::from_style(ui.style());
+        let line_count = gutter::line_count(tab.doc.text());
+        let gutter_width = gutter::gutter_digits(line_count) as f32 * char_width + 30.0;
+
         egui::ScrollArea::both()
             .id_salt(("scroll", tab.id))
             .auto_shrink(false)
             .show(ui, |ui| {
-                egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(14, 8))
-                    .show(ui, |ui| {
-                        let rows = (ui.available_height() / line_height).floor() as usize;
-                        let output = egui::TextEdit::multiline(tab.doc.text_mut())
-                            .id(id)
-                            .code_editor()
-                            .frame(egui::Frame::NONE)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(rows.max(10))
-                            .lock_focus(true)
-                            .show(ui);
-                        if focus {
-                            output.response.request_focus();
+                ui.add_space(8.0);
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let rows = (ui.available_height() / row_height).floor() as usize;
+                    // Only the width matters here: numbers are painted from the real text layout below.
+                    let (gutter, _) =
+                        ui.allocate_exact_size(egui::vec2(gutter_width, 1.0), egui::Sense::hover());
+
+                    let mut layouter = |ui: &egui::Ui,
+                                        text: &dyn egui::TextBuffer,
+                                        _wrap_width: f32| {
+                        let mut job =
+                            highlight(ui.ctx(), ui.style(), &code_theme, text.as_str(), &extension);
+                        job.wrap.max_width = f32::INFINITY; // no soft wrap, so gutter numbers match rows
+                        ui.fonts_mut(|fonts| fonts.layout_job(job))
+                    };
+                    if tab.fresh {
+                        // egui starts a new editor with the cursor at the end; VS Code starts at 1:1.
+                        tab.fresh = false;
+                        let mut state =
+                            egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(
+                                egui::text::CCursor::default(),
+                            )));
+                        state.store(ui.ctx(), id);
+                    }
+                    let output = egui::TextEdit::multiline(tab.doc.text_mut())
+                        .id(id)
+                        .font(font_id.clone())
+                        .frame(egui::Frame::NONE)
+                        .margin(egui::Margin::ZERO)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(rows.max(10))
+                        .lock_focus(true)
+                        .layouter(&mut layouter)
+                        .show(ui);
+                    if focus {
+                        output.response.request_focus();
+                    }
+
+                    // Gutter numbers and current-line highlight, placed from the galley rows so
+                    // they stay aligned with the text whatever the font's reported row height.
+                    let clip = ui.clip_rect();
+                    let painter = ui.painter();
+                    for (line, placed) in output.galley.rows.iter().enumerate() {
+                        let top = output.galley_pos.y + placed.min_y();
+                        let height = placed.height();
+                        if top + height < clip.top() {
+                            continue;
                         }
-                        cursor_index = output.cursor_range.map(|range| range.primary.index.0);
-                    });
+                        if top > clip.bottom() {
+                            break;
+                        }
+                        let current = line == current_line;
+                        if current {
+                            painter.rect_filled(
+                                egui::Rect::from_min_max(
+                                    egui::pos2(gutter.left(), top),
+                                    egui::pos2(clip.right().max(gutter.right()), top + height),
+                                ),
+                                0.0,
+                                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 9),
+                            );
+                        }
+                        painter.text(
+                            egui::pos2(gutter.right() - 16.0, top),
+                            egui::Align2::RIGHT_TOP,
+                            line + 1,
+                            font_id.clone(),
+                            if current {
+                                theme::TEXT
+                            } else {
+                                egui::Color32::from_rgb(92, 94, 100)
+                            },
+                        );
+                    }
+                    cursor_index = output.cursor_range.map(|range| range.primary.index.0);
+                });
             });
         if let (Some(index), Some(tab)) = (cursor_index, self.tabs.tabs.get(self.tabs.active)) {
             self.cursor = position::line_col(tab.doc.text(), index);
         }
+    }
+
+    /// Path of the active file relative to the opened folder, like VS Code's breadcrumb bar.
+    fn breadcrumbs(&self, ui: &mut egui::Ui) {
+        let Some(tab) = self.tabs.tabs.get(self.tabs.active) else {
+            return;
+        };
+        let parts: Vec<String> = match tab.doc.path() {
+            Some(path) => {
+                let relative = self
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| path.strip_prefix(&workspace.root).ok())
+                    .unwrap_or(path);
+                let mut parts: Vec<String> = relative
+                    .components()
+                    .filter_map(|part| match part {
+                        std::path::Component::Normal(name) => {
+                            Some(name.to_string_lossy().into_owned())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if self.workspace.is_none() && parts.len() > 3 {
+                    parts.drain(..parts.len() - 3);
+                }
+                parts
+            }
+            None => vec![tab.title()],
+        };
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(16, 5))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let last = parts.len().saturating_sub(1);
+                    for (index, part) in parts.iter().enumerate() {
+                        if index > 0 {
+                            ui.label(egui::RichText::new("\u{203a}").color(theme::TEXT_DIM));
+                        }
+                        let color = if index == last {
+                            theme::TEXT
+                        } else {
+                            theme::TEXT_DIM
+                        };
+                        ui.label(egui::RichText::new(part).size(12.5).color(color));
+                    }
+                });
+            });
     }
 
     fn welcome(&mut self, ui: &mut egui::Ui) {
@@ -494,6 +631,13 @@ impl ForgeRoomApp {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            if let Some(branch) = &self.branch {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 16.0), egui::Sense::hover());
+                icons::branch(ui.painter(), rect, theme::TEXT);
+                ui.label(egui::RichText::new(branch).color(theme::TEXT));
+                ui.add_space(10.0);
+            }
             ui.label(egui::RichText::new(&self.status).color(theme::TEXT_DIM));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let dim = |text: String| egui::RichText::new(text).color(theme::TEXT_DIM);
@@ -655,6 +799,7 @@ impl eframe::App for ForgeRoomApp {
             .show(ui, |ui| {
                 if !self.tabs.tabs.is_empty() {
                     self.tab_bar(ui);
+                    self.breadcrumbs(ui);
                 }
                 self.editor(ui);
             });

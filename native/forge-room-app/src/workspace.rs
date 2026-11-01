@@ -137,3 +137,47 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 }
+
+/// Current Git branch (or short commit when detached), read from `.git/HEAD` without running git.
+pub fn git_branch(root: &Path) -> Option<String> {
+    let head = fs::read_to_string(root.join(".git").join("HEAD")).ok()?;
+    let head = head.trim();
+    match head.strip_prefix("ref: refs/heads/") {
+        Some(branch) => Some(branch.to_string()),
+        None if head.len() >= 7 && head.chars().all(|c| c.is_ascii_hexdigit()) => {
+            Some(head[..7].to_string())
+        }
+        None => None,
+    }
+}
+
+#[cfg(test)]
+mod git_tests {
+    use super::*;
+
+    fn repo_with_head(contents: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("forge-room-git-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::write(dir.join(".git").join("HEAD"), contents).unwrap();
+        dir
+    }
+
+    #[test]
+    fn reads_branch_name_and_detached_head() {
+        let dir = repo_with_head("ref: refs/heads/native-rust-ide\n");
+        assert_eq!(git_branch(&dir).as_deref(), Some("native-rust-ide"));
+        fs::write(
+            dir.join(".git").join("HEAD"),
+            "a6bcad7e4f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d\n",
+        )
+        .unwrap();
+        assert_eq!(git_branch(&dir).as_deref(), Some("a6bcad7"));
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(git_branch(&dir), None);
+    }
+}
