@@ -58,8 +58,6 @@ jobs:
     runs-on: windows-2025
     permissions:
       contents: write # only used to publish a pre-release when a v* tag is pushed
-    permissions:
-      contents: read
     defaults:
       run:
         shell: pwsh
