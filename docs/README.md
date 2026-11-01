@@ -1,8 +1,6 @@
 ﻿# Documentation map
 
-- Product goals: [product specification](product/PRODUCT_SPEC.md)
-- Progress and ideas: [project progress ledger](../PROJECT_PROGRESS.md)
-- Research: competitor feature research, AI feature research, repository audit, and master gap audit in `research/`
-- Architecture: threat model and implementation map in `architecture/`
-- Planning: build status, current state, delivery and reconciliation briefs in `planning/`
-- Source briefs: original user-supplied requirement prompts in `source-prompts/`
+- Status and roadmap: [project_rust_progress.md](../project_rust_progress.md)
+- Early preview notes (shown in the installer): [native/EARLY_PREVIEW_NOTES.md](native/EARLY_PREVIEW_NOTES.md)
+- Migration compatibility research: [native/MIGRATION_COMPATIBILITY.md](native/MIGRATION_COMPATIBILITY.md)
+- Installer design, behaviour and verification: [design/installer-progress.md](design/installer-progress.md); approved mockups in `design/installer-concepts/glass-flow-v4/`
