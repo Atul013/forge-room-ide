@@ -20,6 +20,13 @@ pub enum Command {
     GoToLine,
     QuickOpen,
     GitRefresh,
+    GitSync,
+    SwitchBranch,
+    ToggleBlame,
+    GitPull,
+    GitPush,
+    GitFetch,
+    GitStash,
     ToggleTerminal,
 }
 
@@ -48,6 +55,13 @@ pub const ALL: &[(Command, &str, &str)] = &[
     (Command::ToggleTerminal, "View: Toggle Terminal", "Ctrl+`"),
     (Command::ColorTheme, "Preferences: Color Theme", ""),
     (Command::GitRefresh, "Git: Refresh", ""),
+    (Command::SwitchBranch, "Git: Checkout to…", ""),
+    (Command::ToggleBlame, "GitLens: Toggle Line Blame", ""),
+    (Command::GitSync, "Git: Sync Changes", ""),
+    (Command::GitPull, "Git: Pull", ""),
+    (Command::GitPush, "Git: Push", ""),
+    (Command::GitFetch, "Git: Fetch", ""),
+    (Command::GitStash, "Git: Stash Changes", ""),
 ];
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ mod find;
 mod find_bar;
 mod fuzzy;
 mod git;
+mod graph;
 mod gutter;
 mod icons;
 mod palette;
@@ -86,6 +87,12 @@ enum SidebarView {
     Room,
 }
 
+/// A Git operation running on a background thread (network calls can take seconds).
+struct GitJob {
+    label: String,
+    receiver: std::sync::mpsc::Receiver<Result<String, String>>,
+}
+
 enum Choice {
     Save,
     Discard,
@@ -110,6 +117,15 @@ struct ForgeRoomApp {
     last_git: std::time::Instant,
     hunks: Vec<git::Hunk>,
     hunks_tab: Option<u64>,
+    graph_commits: Vec<git::CommitInfo>,
+    graph_rows: Vec<graph::Row>,
+    file_history: Vec<git::CommitInfo>,
+    history_name: Option<String>,
+    stash_count: usize,
+    blame: Vec<git::BlameLine>,
+    blame_enabled: bool,
+    git_job: Option<GitJob>,
+    pending_discard: Option<Vec<git::Change>>,
     gallery: theme_gallery::Gallery,
     room: rooms::RoomView,
     terminal: Option<terminal::Terminal>,
@@ -182,6 +198,15 @@ impl ForgeRoomApp {
             last_git: std::time::Instant::now(),
             hunks: Vec::new(),
             hunks_tab: None,
+            graph_commits: Vec::new(),
+            graph_rows: Vec::new(),
+            file_history: Vec::new(),
+            history_name: None,
+            stash_count: 0,
+            blame: Vec::new(),
+            blame_enabled: true,
+            git_job: None,
+            pending_discard: None,
             gallery: theme_gallery::Gallery::default(),
             room: rooms::RoomView::default(),
             terminal: None,
@@ -321,6 +346,27 @@ impl ForgeRoomApp {
             }
             Command::ColorTheme => self.gallery.open(),
             Command::GitRefresh => self.refresh_git(),
+            Command::ToggleBlame => {
+                self.blame_enabled = !self.blame_enabled;
+                self.status = if self.blame_enabled {
+                    "Line blame on".into()
+                } else {
+                    "Line blame off".into()
+                };
+            }
+            Command::SwitchBranch => {
+                if let Some(root) = self.repo_root() {
+                    match git::branches(&root) {
+                        Ok(list) => self.palette.open_branches(list),
+                        Err(error) => self.status = format!("Git: {error}"),
+                    }
+                }
+            }
+            Command::GitSync => self.git_action(source_control::Action::Sync),
+            Command::GitPull => self.git_action(source_control::Action::Pull),
+            Command::GitPush => self.git_action(source_control::Action::Push),
+            Command::GitFetch => self.git_action(source_control::Action::Fetch),
+            Command::GitStash => self.git_action(source_control::Action::Stash),
             Command::Find => self.find.show_bar(false),
             Command::Replace => self.find.show_bar(true),
             Command::QuickOpen => {
@@ -522,21 +568,12 @@ impl ForgeRoomApp {
             }
             return;
         }
-        // Most specific first, so Ctrl+Shift+S is not taken by Ctrl+S.
+        // Most specific first: every Ctrl+Shift chord is tested before its plain Ctrl twin,
+        // otherwise Ctrl+G would swallow Ctrl+Shift+G.
         if shortcut(ui, command_shift, Key::P) {
             self.run_command(Command::GoToLine, true);
         } else if shortcut(ui, command_shift, Key::F) {
             self.run_command(Command::ShowSearch, false);
-        } else if shortcut(ui, command, Key::P) {
-            self.run_command(Command::QuickOpen, false);
-        } else if shortcut(ui, command, Key::F) {
-            self.run_command(Command::Find, false);
-        } else if shortcut(ui, command, Key::H) {
-            self.run_command(Command::Replace, false);
-        } else if shortcut(ui, command, Key::G) {
-            self.run_command(Command::GoToLine, false);
-        } else if shortcut(ui, command, Key::Backtick) {
-            self.run_command(Command::ToggleTerminal, false);
         } else if shortcut(ui, command_shift, Key::S) {
             self.save_active(true);
         } else if shortcut(ui, command_shift, Key::G) {
@@ -547,6 +584,16 @@ impl ForgeRoomApp {
             self.switch_view(SidebarView::Room);
         } else if shortcut(ui, command_shift, Key::O) {
             self.open_folder_dialog();
+        } else if shortcut(ui, command, Key::P) {
+            self.run_command(Command::QuickOpen, false);
+        } else if shortcut(ui, command, Key::F) {
+            self.run_command(Command::Find, false);
+        } else if shortcut(ui, command, Key::H) {
+            self.run_command(Command::Replace, false);
+        } else if shortcut(ui, command, Key::G) {
+            self.run_command(Command::GoToLine, false);
+        } else if shortcut(ui, command, Key::Backtick) {
+            self.run_command(Command::ToggleTerminal, false);
         } else if shortcut(ui, command, Key::S) {
             self.save_active(false);
         } else if shortcut(ui, command, Key::O) {
@@ -784,6 +831,10 @@ impl ForgeRoomApp {
             self.is_repo = false;
             self.branch = None;
             self.hunks.clear();
+            self.graph_commits.clear();
+            self.graph_rows.clear();
+            self.file_history.clear();
+            self.history_name = None;
             return;
         };
         self.is_repo = git::is_repo(&root);
@@ -802,6 +853,9 @@ impl ForgeRoomApp {
             Err(_) => workspace::git_branch(&root),
         };
         self.git_status = Some(result);
+        self.graph_commits = git::log_all(&root, 80).unwrap_or_default();
+        self.graph_rows = graph::layout(&self.graph_commits);
+        self.stash_count = git::stash_list(&root).len();
         self.refresh_hunks();
     }
 
@@ -812,11 +866,21 @@ impl ForgeRoomApp {
             return;
         };
         let Ok(relative) = path.strip_prefix(&root) else {
+            self.file_history.clear();
+            self.history_name = None;
+            self.blame.clear();
             return;
         };
         let relative = relative.to_string_lossy().replace('\\', "/");
+        self.file_history = git::file_log(&root, &relative, 30).unwrap_or_default();
+        self.history_name = relative.rsplit('/').next().map(String::from);
         let untracked = matches!(&self.git_status, Some(Ok(status))
             if status.changes.iter().any(|c| c.path == relative && c.is_untracked()));
+        self.blame = if untracked {
+            Vec::new()
+        } else {
+            git::blame(&root, &relative)
+        };
         if untracked {
             let lines = self
                 .tabs
@@ -834,10 +898,64 @@ impl ForgeRoomApp {
         }
     }
 
+    /// Run `work` on a background thread; the result is shown when it finishes.
+    fn start_job(
+        &mut self,
+        label: &str,
+        work: impl FnOnce(PathBuf) -> Result<String, String> + Send + 'static,
+    ) {
+        if self.git_job.is_some() {
+            self.status = "Another Git operation is still running".into();
+            return;
+        }
+        let Some(root) = self.repo_root() else {
+            return;
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let context = self.egui_ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(work(root));
+            context.request_repaint();
+        });
+        self.git_job = Some(GitJob {
+            label: label.to_string(),
+            receiver,
+        });
+    }
+
+    fn poll_git_job(&mut self, context: &egui::Context) {
+        let Some(job) = &self.git_job else {
+            return;
+        };
+        match job.receiver.try_recv() {
+            Ok(result) => {
+                self.git_job = None;
+                self.status = match result {
+                    Ok(message) => message,
+                    Err(error) => format!("Git: {error}"),
+                };
+                self.refresh_git();
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                context.request_repaint_after(std::time::Duration::from_millis(150));
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.git_job = None,
+        }
+    }
+
+    fn has_upstream(&self) -> bool {
+        matches!(&self.git_status, Some(Ok(status)) if status.upstream.is_some())
+    }
+
     fn git_action(&mut self, action: source_control::Action) {
         use source_control::Action;
         let Some(root) = self.repo_root() else {
             return;
+        };
+        let upstream = self.has_upstream();
+        let (ahead, behind) = match &self.git_status {
+            Some(Ok(status)) => (status.ahead, status.behind),
+            _ => (0, 0),
         };
         let outcome: Result<String, String> = match action {
             Action::None => return,
@@ -856,6 +974,73 @@ impl ForgeRoomApp {
                     self.sc.message.clear();
                     format!("Committed {hash}")
                 })
+            }
+            Action::CommitAndPush => {
+                let message = self.sc.message.trim().to_string();
+                match git::commit(&root, &message) {
+                    Ok(hash) => {
+                        self.sc.message.clear();
+                        self.status = format!("Committed {hash}");
+                        self.refresh_git();
+                        self.start_job("Pushing…", move |root| git::push(&root, upstream));
+                        return;
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            Action::Amend => {
+                let message = self.sc.message.trim().to_string();
+                git::amend(&root, &message).map(|hash| {
+                    self.sc.message.clear();
+                    format!("Amended commit {hash}")
+                })
+            }
+            Action::UndoCommit => git::undo_last_commit(&root)
+                .map(|_| "Undid the last commit (changes kept staged)".into()),
+            Action::DiscardAsk(changes) => {
+                self.pending_discard = Some(changes);
+                return;
+            }
+            Action::Sync => {
+                self.start_job("Syncing changes…", move |root| {
+                    if behind > 0 {
+                        git::pull(&root)?;
+                    }
+                    if ahead > 0 {
+                        git::push(&root, true)?;
+                    }
+                    Ok("Synced".into())
+                });
+                return;
+            }
+            Action::Publish => {
+                self.start_job("Publishing branch…", |root| git::push(&root, false));
+                return;
+            }
+            Action::Pull => {
+                self.start_job("Pulling…", |root| git::pull(&root));
+                return;
+            }
+            Action::Push => {
+                self.start_job("Pushing…", move |root| git::push(&root, upstream));
+                return;
+            }
+            Action::Fetch => {
+                self.start_job("Fetching…", |root| git::fetch(&root));
+                return;
+            }
+            Action::Stash => git::stash_push(&root, ""),
+            Action::StashPop => git::stash_pop(&root, 0),
+            Action::ShowCommit(hash) => {
+                match git::show(&root, &hash) {
+                    Ok(text) => {
+                        let short = &hash[..hash.len().min(7)];
+                        self.tabs
+                            .open_virtual(format!("Commit {short}"), text, "diff");
+                    }
+                    Err(error) => self.status = format!("Cannot show commit: {error}"),
+                }
+                return;
             }
             Action::OpenFile(path) => {
                 self.open_path(root.join(path));
@@ -884,6 +1069,89 @@ impl ForgeRoomApp {
             Err(error) => self.status = format!("Git: {error}"),
         }
         self.refresh_git();
+    }
+
+    /// After a branch switch, re-read open files that have no unsaved edits.
+    fn reload_clean_tabs(&mut self) {
+        for tab in &mut self.tabs.tabs {
+            if tab.doc.is_dirty() || tab.readonly {
+                continue;
+            }
+            if let Some(path) = tab.doc.path().map(std::path::Path::to_path_buf) {
+                let _ = tab.doc.open(path);
+            }
+        }
+    }
+
+    /// Ask before throwing work away, then discard.
+    fn discard_dialog(&mut self, context: &egui::Context) {
+        let Some(changes) = &self.pending_discard else {
+            return;
+        };
+        let untracked = changes.iter().filter(|c| c.is_untracked()).count();
+        let message = if changes.len() == 1 {
+            format!(
+                "Discard changes to \"{}\"? This cannot be undone.",
+                changes[0]
+                    .path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&changes[0].path)
+            )
+        } else {
+            format!(
+                "Discard all {} changed files? This cannot be undone.",
+                changes.len()
+            )
+        };
+        let note =
+            (untracked > 0).then(|| format!("{untracked} untracked file(s) will be deleted."));
+        let mut choice: Option<bool> = None;
+        let modal = egui::Modal::new(egui::Id::unique("discard-dialog")).show(context, |ui| {
+            ui.set_width(380.0);
+            ui.heading("Discard changes");
+            ui.add_space(6.0);
+            ui.label(message);
+            if let Some(note) = note {
+                ui.label(egui::RichText::new(note).color(theme::text_dim()));
+            }
+            ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                let discard = egui::Button::new(
+                    egui::RichText::new("Discard")
+                        .strong()
+                        .color(egui::Color32::WHITE),
+                )
+                .fill(egui::Color32::from_rgb(190, 70, 70));
+                if ui.add(discard).clicked() {
+                    choice = Some(true);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(false);
+                }
+            });
+        });
+        if modal.should_close() && choice.is_none() {
+            choice = Some(false);
+        }
+        let Some(confirmed) = choice else {
+            return;
+        };
+        let changes = self.pending_discard.take().unwrap_or_default();
+        if confirmed && let Some(root) = self.repo_root() {
+            let mut failed = None;
+            for change in &changes {
+                if let Err(error) = git::discard(&root, change) {
+                    failed = Some(error);
+                    break;
+                }
+            }
+            self.status = match failed {
+                Some(error) => format!("Git: {error}"),
+                None => "Discarded changes".into(),
+            };
+            self.refresh_git();
+        }
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -918,7 +1186,15 @@ impl ForgeRoomApp {
                     source_control::Repo::NoRepository
                 } else {
                     match &self.git_status {
-                        Some(Ok(status)) => source_control::Repo::Ready(status),
+                        Some(Ok(status)) => source_control::Repo::Ready(source_control::View {
+                            status,
+                            commits: &self.graph_commits,
+                            rows: &self.graph_rows,
+                            history: &self.file_history,
+                            history_name: self.history_name.as_deref(),
+                            stashes: self.stash_count,
+                            busy: self.git_job.as_ref().map(|job| job.label.as_str()),
+                        }),
                         Some(Err(error)) => source_control::Repo::Error(error),
                         None => source_control::Repo::NoRepository,
                     }
@@ -1049,6 +1325,12 @@ impl ForgeRoomApp {
         let current_line = self.cursor.0 - 1;
         let mut cursor_index = None;
         let hunks = self.hunks.clone();
+        let blame_line = if self.blame_enabled {
+            self.blame.get(self.cursor.0 - 1).cloned()
+        } else {
+            None
+        };
+        let mut blame_click: Option<String> = None;
         let select = self.pending_select.take();
         let find_matches = if self.find.open {
             self.find.matches.clone()
@@ -1061,6 +1343,7 @@ impl ForgeRoomApp {
             return;
         };
         let readonly = tab.readonly;
+        let tab_dirty = tab.doc.is_dirty();
         let id = egui::Id::unique(("editor", tab.id));
         let extension = tab.syntax.clone().unwrap_or_else(|| {
             tab.doc
@@ -1206,6 +1489,47 @@ impl ForgeRoomApp {
                             break;
                         }
                         let current = line == current_line;
+                        if current
+                            && !tab_dirty
+                            && let Some(info) = &blame_line
+                        {
+                            let text = if info.is_uncommitted() {
+                                "You · Uncommitted changes".to_string()
+                            } else {
+                                format!(
+                                    "{}, {} · {}",
+                                    info.author,
+                                    room_state::ago(room_state::now(), info.time.max(0) as u64),
+                                    info.summary
+                                )
+                            };
+                            let galley = painter.layout_no_wrap(
+                                text,
+                                egui::FontId::proportional(12.5),
+                                theme::mix(theme::bg_editor(), theme::text(), 0.38),
+                            );
+                            let at = egui::pos2(
+                                output.galley_pos.x + placed.rect().right() + 36.0,
+                                top + (height - galley.size().y) / 2.0,
+                            );
+                            let area = egui::Rect::from_min_size(at, galley.size());
+                            painter.galley(at, galley, theme::text_dim());
+                            if !info.is_uncommitted()
+                                && ui
+                                    .interact(
+                                        area,
+                                        ui.scope_id().with("blame-annotation"),
+                                        egui::Sense::click(),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{} \u{2022} {}",
+                                        info.author, info.summary
+                                    ))
+                                    .clicked()
+                            {
+                                blame_click = Some(info.hash.clone());
+                            }
+                        }
                         if let Some(hunk) = hunks.iter().find(|hunk| hunk.covers(line + 1)) {
                             let x = gutter.right() - 7.0;
                             let (color, bar) = match hunk.kind {
@@ -1258,6 +1582,9 @@ impl ForgeRoomApp {
                     cursor_index = output.cursor_range.map(|range| range.primary.index.0);
                 });
             });
+        if let Some(hash) = blame_click {
+            self.git_action(source_control::Action::ShowCommit(hash));
+        }
         if let (Some(index), Some(tab)) = (cursor_index, self.tabs.tabs.get(self.tabs.active)) {
             self.cursor = position::line_col(tab.doc.text(), index);
         }
@@ -1353,18 +1680,27 @@ impl ForgeRoomApp {
                 let (rect, icon) =
                     ui.allocate_exact_size(egui::vec2(14.0, 16.0), egui::Sense::click());
                 icons::branch(ui.painter(), rect, theme::status_text());
-                let mut text = branch;
-                if let Some(Ok(status)) = &self.git_status
-                    && (status.ahead > 0 || status.behind > 0)
-                {
-                    text = format!("{text}  \u{2191}{} \u{2193}{}", status.ahead, status.behind);
-                }
+                let text = branch;
+                let (ahead, behind) = match &self.git_status {
+                    Some(Ok(status)) => (status.ahead, status.behind),
+                    _ => (0, 0),
+                };
                 let label = ui.add(
                     egui::Label::new(egui::RichText::new(text).color(theme::status_text()))
                         .sense(egui::Sense::click()),
                 );
-                if icon.clicked() || label.on_hover_text("Open Source Control").clicked() {
-                    self.switch_view(SidebarView::SourceControl);
+                if icon.clicked() || label.on_hover_text("Switch branch").clicked() {
+                    self.run_command(Command::SwitchBranch, false);
+                }
+                for (count, up) in [(behind, false), (ahead, true)] {
+                    if count > 0 {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
+                        icons::arrow(ui.painter(), rect.center(), up, theme::status_text());
+                        ui.label(
+                            egui::RichText::new(count.to_string()).color(theme::status_text()),
+                        );
+                    }
                 }
                 ui.add_space(10.0);
             }
@@ -1571,6 +1907,25 @@ impl eframe::App for ForgeRoomApp {
             self.find_intent(intent);
         }
         match palette::show(&context, &mut self.palette) {
+            Some(palette::Outcome::Checkout { name, remote }) => {
+                if let Some(root) = self.repo_root() {
+                    self.status = match git::checkout(&root, &name, remote) {
+                        Ok(()) => format!("Switched to {name}"),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                    self.reload_clean_tabs();
+                }
+            }
+            Some(palette::Outcome::CreateBranch(name)) => {
+                if let Some(root) = self.repo_root() {
+                    self.status = match git::create_branch(&root, &name) {
+                        Ok(()) => format!("Created and switched to {name}"),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                }
+            }
             Some(palette::Outcome::Run(command)) => self.run_command(command, false),
             Some(palette::Outcome::Open(path)) => self.open_path(path),
             Some(palette::Outcome::GoToLine(line)) => self.goto_line(line),
@@ -1590,6 +1945,8 @@ impl eframe::App for ForgeRoomApp {
             None => {}
         }
 
+        self.poll_git_job(&context);
+        self.discard_dialog(&context);
         self.pending_dialog(&context);
         self.update_title(&context);
     }

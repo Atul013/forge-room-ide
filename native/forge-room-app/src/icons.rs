@@ -142,3 +142,14 @@ pub fn search(painter: &Painter, rect: Rect, color: Color32) {
         Stroke::new(2.0, color),
     );
 }
+
+/// Small vertical arrow (push/pull counts), drawn because the font lacks the glyph.
+pub fn arrow(painter: &Painter, center: Pos2, up: bool, color: Color32) {
+    let stroke = Stroke::new(1.5, color);
+    let direction = if up { -1.0 } else { 1.0 };
+    let tip = center + egui::vec2(0.0, direction * 5.5);
+    let tail = center - egui::vec2(0.0, direction * 5.0);
+    painter.line_segment([tail, tip], stroke);
+    painter.line_segment([tip, tip + egui::vec2(-3.2, -direction * 3.4)], stroke);
+    painter.line_segment([tip, tip + egui::vec2(3.2, -direction * 3.4)], stroke);
+}

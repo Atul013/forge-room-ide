@@ -53,6 +53,11 @@ Single place for the state of the native app and its installer. Shared agent han
   - Search in Files (Ctrl+Shift+F): background search that cancels when you keep typing, skips `.git`, `target`, `node_modules` and binary or large files, highlights the match in each result, click to open at the line.
   - 44 unit tests in the app.
 - **Integrated terminal (done, verified with a real shell):** Ctrl+` opens a resizable bottom panel running PowerShell in the project folder over a real Windows pseudo-console (`portable-pty`) with a VT emulator (`vt100`): colors, cursor, arrow keys, Ctrl+C, paste, resize, restart after exit. Needed an answer to ConPTY's cursor-position query before any output appears. Known gaps: one terminal only (no tabs/splits), no scrollback UI, no mouse selection/copy, no shell picker.
+- **Full Source Control and built-in GitLens features (done, verified on a demo project with a real remote):**
+  - VS Code parity: Sync Changes (pull then push) and Publish Branch with background network jobs, Pull/Push/Fetch, Commit and Commit & Push, amend, undo last commit, stash and pop, discard per file or all (with confirmation), branch switcher (status bar branch) with create-branch and remote checkout, ahead/behind in the status bar.
+  - GitLens-style: commit graph with lanes, merges, branch/remote/tag labels and the HEAD ring (click a commit for its full diff), file history for the open file, inline current-line blame (author, time, summary; click for the commit; toggle with the palette command), commit detail tabs.
+  - Remote operations tested against a local bare repository in the unit tests (publish, push, fetch, behind/ahead, pull); 54 unit tests.
+  - Not yet: line history, tag/remote/contributor trees, merge-conflict resolution UI, stash list view, blame hover card (a tooltip shows today), rebase/cherry-pick, credential prompts beyond what Git Credential Manager shows.
 - Logo embedded in the exe (`build.rs`, `assets/forge-room.ico`).
 - Toolchain: Rust 1.99.1 (eframe 0.37 deps need 1.95+).
 
@@ -61,7 +66,7 @@ Single place for the state of the native app and its installer. Shared agent han
 1. ~~**IDE shell**~~ done.
 2. **Editor core:** ~~line numbers, syntax highlighting, current-line highlight~~ done; find/replace and go to line now done; still to do: bracket matching, indent guides, minimap.
 3. ~~Command palette, quick open, find in files~~ done.
-4. ~~Git status, diff, stage, commit~~ done; still to do: discard changes, branches (switch/create), push/pull/fetch with credentials, stash, history/blame. **Terminal:** ~~integrated terminal~~ done.
+4. ~~Git status, diff, stage, commit~~ done; discard, branches, push/pull/fetch, stash, history, blame and the commit graph are now done; still to do: line history, conflict resolution, rebase, tags/remotes views. **Terminal:** ~~integrated terminal~~ done.
 5. **Port the features that lived on `main` (Electron/Code OSS era, now rebuilt natively on `forge-room-core`):**
    - **Forge Room Studio:** the six themes (Neon Ronin, Starship Deck, Moss Shrine, Ink & Ember, Paper Studio, Signal Guard high contrast), custom palette, profiles import/export.
    - **Team Lobby:** ~~rooms, participants, tasks, handoffs, evidence, activity~~ done as a native view on `forge-room-core`; still to do: realtime sharing between machines (relay/invites, presence), chat, anchored comments, shared diffs. Not portable as-is: ACP/MCP clients, webview panels and VS Code API workspace tools (they need Code OSS or Node).

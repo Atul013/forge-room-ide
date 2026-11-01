@@ -80,6 +80,10 @@ pub fn new_room(workspace_name: &str, user_name: &str) -> RoomState {
     )
 }
 
+pub fn now() -> u64 {
+    forge_room_core::now_epoch_seconds()
+}
+
 pub fn local_user_name() -> String {
     std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))

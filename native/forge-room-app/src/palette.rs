@@ -2,7 +2,7 @@
 //! commands, `:` jumps to a line.
 
 use crate::commands::{self, Command};
-use crate::{fuzzy, search, theme};
+use crate::{fuzzy, git, search, theme};
 use eframe::egui::{self, Align2, Key, Modifiers, RichText, Sense};
 use std::path::{Path, PathBuf};
 
@@ -14,9 +14,13 @@ pub struct Palette {
     files: Vec<String>,
     root: Option<PathBuf>,
     focus: bool,
+    /// When set, the box lists branches instead of files and commands.
+    branches: Option<Vec<git::Branch>>,
 }
 
 pub enum Outcome {
+    Checkout { name: String, remote: bool },
+    CreateBranch(String),
     Run(Command),
     Open(PathBuf),
     GoToLine(usize),
@@ -47,6 +51,14 @@ impl Palette {
                 .unwrap_or_default();
             self.root = root.map(Path::to_path_buf);
         }
+    }
+
+    pub fn open_branches(&mut self, branches: Vec<git::Branch>) {
+        self.query.clear();
+        self.selected = 0;
+        self.open = true;
+        self.focus = true;
+        self.branches = Some(branches);
     }
 
     pub fn open_goto(&mut self) {
@@ -84,36 +96,49 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
 
     // Rows for the current query.
     enum Row {
+        NewBranch(String),
+        Branch(usize),
         Command(Command, &'static str, &'static str),
         File(usize),
         Line(usize),
         Hint(&'static str),
     }
-    let rows: Vec<Row> = match kind(&palette.query) {
-        Kind::Commands(text) => {
-            let titles: Vec<&str> = commands::ALL.iter().map(|(_, title, _)| *title).collect();
-            fuzzy::rank(text, &titles, 14)
-                .into_iter()
-                .map(|index| {
-                    let (command, title, keys) = commands::ALL[index];
-                    Row::Command(command, title, keys)
-                })
-                .collect()
+    let rows: Vec<Row> = if let Some(branches) = &palette.branches {
+        let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
+        let query = palette.query.trim();
+        let mut rows = Vec::new();
+        if !query.is_empty() && !names.contains(&query) {
+            rows.push(Row::NewBranch(query.to_string()));
         }
-        Kind::Files(text) => {
-            if palette.files.is_empty() {
-                vec![Row::Hint("Open a folder to search its files")]
-            } else {
-                fuzzy::rank(text, &palette.files, 14)
+        rows.extend(fuzzy::rank(query, &names, 14).into_iter().map(Row::Branch));
+        rows
+    } else {
+        match kind(&palette.query) {
+            Kind::Commands(text) => {
+                let titles: Vec<&str> = commands::ALL.iter().map(|(_, title, _)| *title).collect();
+                fuzzy::rank(text, &titles, 14)
                     .into_iter()
-                    .map(Row::File)
+                    .map(|index| {
+                        let (command, title, keys) = commands::ALL[index];
+                        Row::Command(command, title, keys)
+                    })
                     .collect()
             }
+            Kind::Files(text) => {
+                if palette.files.is_empty() {
+                    vec![Row::Hint("Open a folder to search its files")]
+                } else {
+                    fuzzy::rank(text, &palette.files, 14)
+                        .into_iter()
+                        .map(Row::File)
+                        .collect()
+                }
+            }
+            Kind::Line(text) => match text.parse::<usize>() {
+                Ok(line) if line > 0 => vec![Row::Line(line)],
+                _ => vec![Row::Hint("Type a line number to jump to")],
+            },
         }
-        Kind::Line(text) => match text.parse::<usize>() {
-            Ok(line) if line > 0 => vec![Row::Line(line)],
-            _ => vec![Row::Hint("Type a line number to jump to")],
-        },
     };
     let count = rows.len();
     palette.selected = palette.selected.min(count.saturating_sub(1));
@@ -177,6 +202,42 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                         let y = rect.center().y;
                         let painter = ui.painter();
                         match row {
+                            Row::NewBranch(name) => {
+                                painter.text(
+                                    egui::pos2(rect.left() + 10.0, y),
+                                    Align2::LEFT_CENTER,
+                                    format!("Create new branch \"{name}\""),
+                                    egui::FontId::proportional(13.5),
+                                    theme::accent(),
+                                );
+                            }
+                            Row::Branch(index) => {
+                                let branch =
+                                    palette.branches.as_ref().and_then(|list| list.get(*index));
+                                if let Some(branch) = branch {
+                                    painter.text(
+                                        egui::pos2(rect.left() + 10.0, y),
+                                        Align2::LEFT_CENTER,
+                                        &branch.name,
+                                        egui::FontId::proportional(13.5),
+                                        theme::text(),
+                                    );
+                                    let tag = if branch.current {
+                                        "current branch"
+                                    } else if branch.remote {
+                                        "remote"
+                                    } else {
+                                        ""
+                                    };
+                                    painter.text(
+                                        egui::pos2(rect.right() - 10.0, y),
+                                        Align2::RIGHT_CENTER,
+                                        tag,
+                                        egui::FontId::proportional(12.0),
+                                        theme::text_dim(),
+                                    );
+                                }
+                            }
                             Row::Command(_, title, keys) => {
                                 painter.text(
                                     egui::pos2(rect.left() + 10.0, y),
@@ -249,6 +310,20 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
 
     if let Some(index) = clicked.or(enter.then_some(palette.selected)) {
         match rows.get(index) {
+            Some(Row::NewBranch(name)) => outcome = Some(Outcome::CreateBranch(name.clone())),
+            Some(Row::Branch(branch_index)) => {
+                if let Some(branch) = palette
+                    .branches
+                    .as_ref()
+                    .and_then(|list| list.get(*branch_index))
+                    && !branch.current
+                {
+                    outcome = Some(Outcome::Checkout {
+                        name: branch.name.clone(),
+                        remote: branch.remote,
+                    });
+                }
+            }
             Some(Row::Command(command, _, _)) => outcome = Some(Outcome::Run(*command)),
             Some(Row::File(file_index)) => {
                 if let Some(root) = &palette.root {
@@ -264,6 +339,7 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
     }
     if close {
         palette.open = false;
+        palette.branches = None;
     }
     outcome
 }
