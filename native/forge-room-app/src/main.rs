@@ -104,10 +104,13 @@ impl eframe::App for ForgeRoomApp {
             self.save();
         }
 
+        let bar_frame = egui::Frame::new()
+            .fill(egui::Color32::from_rgb(28, 29, 31))
+            .inner_margin(egui::Margin::symmetric(14, 8));
+
         egui::Panel::top("title_bar")
-            .frame(egui::Frame::new().fill(egui::Color32::from_rgb(28, 29, 31)))
+            .frame(bar_frame)
             .show(ui, |ui| {
-                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.heading(egui::RichText::new(APP_NAME).color(egui::Color32::WHITE));
                     ui.separator();
@@ -119,11 +122,10 @@ impl eframe::App for ForgeRoomApp {
                         ui.label(egui::RichText::new("Unsaved").color(ACCENT));
                     }
                 });
-                ui.add_space(8.0);
             });
 
         egui::Panel::bottom("status_bar")
-            .frame(egui::Frame::new().fill(egui::Color32::from_rgb(28, 29, 31)))
+            .frame(bar_frame)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(&self.status);
@@ -133,38 +135,54 @@ impl eframe::App for ForgeRoomApp {
                 });
             });
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let path_label = ui.label("File path");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.path_input)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("Absolute or working-directory-relative path"),
-                )
-                .labelled_by(path_label.id);
-                if ui.button("Open").clicked() {
-                    self.open_path();
-                }
-                if ui
-                    .add_enabled(
-                        !self.path_input.trim().is_empty(),
-                        egui::Button::new("Save"),
-                    )
-                    .clicked()
-                {
-                    self.save();
-                }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().inner_margin(egui::Margin::same(14)))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let path_label = ui.label("File path");
+                    // Right-to-left so the buttons keep their space and the
+                    // path box fills whatever remains.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_enabled(
+                                !self.path_input.trim().is_empty(),
+                                egui::Button::new("Save"),
+                            )
+                            .clicked()
+                        {
+                            self.save();
+                        }
+                        if ui.button("Open").clicked() {
+                            self.open_path();
+                        }
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.path_input)
+                                .desired_width(ui.available_width())
+                                .hint_text("Absolute or working-directory-relative path"),
+                        )
+                        .labelled_by(path_label.id);
+                    });
+                });
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(6.0);
+                egui::ScrollArea::both()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        let rows = (ui.available_height()
+                            / ui.text_style_height(&egui::TextStyle::Monospace))
+                        .floor() as usize;
+                        ui.add(
+                            egui::TextEdit::multiline(self.document.text_mut())
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(rows.max(10))
+                                .lock_focus(true)
+                                .frame(egui::Frame::NONE)
+                                .hint_text("Open a UTF-8 text file to begin editing"),
+                        );
+                    });
             });
-            ui.separator();
-            ui.add_sized(
-                ui.available_size(),
-                egui::TextEdit::multiline(self.document.text_mut())
-                    .code_editor()
-                    .desired_width(f32::INFINITY)
-                    .lock_focus(true)
-                    .hint_text("Open a UTF-8 text file to begin editing"),
-            );
-        });
     }
 }
 

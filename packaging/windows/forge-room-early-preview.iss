@@ -7,6 +7,11 @@
 #ifndef AppVersion
   #define AppVersion "0.109.0-alpha.1"
 #endif
+; build-ember.ps1 compiles this as the install/uninstall engine (suffix "-engine") inside the
+; branded setup host. It is also usable on its own as a plain Inno installer.
+#ifndef InstallerSuffix
+  #define InstallerSuffix ""
+#endif
 
 [Setup]
 AppId={{AFA3E0AF-AD68-47D2-8593-8B17A4A3F2CE}
@@ -24,13 +29,11 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.22000
 OutputDir={#OutputDir}
-OutputBaseFilename=Forge-Room-Early-Preview-{#AppVersion}-windows-x64-setup
+OutputBaseFilename=Forge-Room-Early-Preview-{#AppVersion}-windows-x64-setup{#InstallerSuffix}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 WizardSizePercent=100
-WizardImageFile=installer-side.png
-WizardSmallImageFile=installer-small.png
 SetupIconFile=installer.ico
 LicenseFile={#PackageDir}\LICENSE-MIT.txt
 InfoBeforeFile={#PackageDir}\EARLY_PREVIEW_NOTES.md
@@ -61,6 +64,10 @@ Source: "{#PackageDir}\THIRD_PARTY_LICENSES.html"; DestDir: "{app}"; Flags: igno
 [Icons]
 Name: "{group}\Forge Room Early Preview"; Filename: "{app}\forge-room-early-preview.exe"; WorkingDir: "{userdocs}"
 Name: "{autodesktop}\Forge Room Early Preview"; Filename: "{app}\forge-room-early-preview.exe"; WorkingDir: "{userdocs}"; Tasks: desktopicon
+
+[UninstallDelete]
+; Copy of the branded setup kept in the app folder to show the themed uninstaller.
+Type: files; Name: "{app}\forge-room-uninstall.exe"
 
 [Run]
 Filename: "{app}\forge-room-early-preview.exe"; Description: "Launch Forge Room Early Preview"; Flags: nowait postinstall skipifsilent

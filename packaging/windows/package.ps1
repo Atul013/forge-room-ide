@@ -65,21 +65,9 @@ $installedBytes = (Get-ChildItem $package -Recurse -File | Measure-Object Length
 $portable = "$package.zip"
 Compress-Archive -Path "$package\*" -DestinationPath $portable -CompressionLevel Optimal
 
-$sideSvg = Join-Path $PSScriptRoot "installer-side.svg"
-$smallSvg = Join-Path $PSScriptRoot "installer-small.svg"
-& magick $sideSvg (Join-Path $PSScriptRoot "installer-side.png")
-& magick $smallSvg (Join-Path $PSScriptRoot "installer-small.png")
-& magick -background none -density 256 $smallSvg -define icon:auto-resize=256,128,64,48,32,16 (Join-Path $PSScriptRoot "installer.ico")
-
-$isccCandidates = @(
-    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
-)
-$iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $iscc) { throw "Inno Setup 6 compiler is not installed" }
-$iss = Join-Path $PSScriptRoot "forge-room-early-preview.iss"
-& $iscc "/DPackageDir=$package" "/DOutputDir=$artifacts" "/DAppVersion=$Version" $iss
-if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed with exit code $LASTEXITCODE" }
+# Branded setup: WPF host embedding the Inno engine (see build-ember.ps1).
+& (Join-Path $PSScriptRoot "build-ember.ps1") -PackageDir $package -OutputDir $artifacts -Version $Version
+if ($LASTEXITCODE -ne 0) { throw "Ember installer build failed with exit code $LASTEXITCODE" }
 
 $installer = Join-Path $artifacts "Forge-Room-Early-Preview-$Version-windows-x64-setup.exe"
 if (-not (Test-Path $installer)) { throw "Expected installer was not produced: $installer" }
