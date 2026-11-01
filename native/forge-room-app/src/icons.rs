@@ -128,3 +128,17 @@ pub fn room(painter: &Painter, rect: Rect, color: Color32) {
     }
     painter.add(egui::Shape::line(shoulders, stroke));
 }
+
+/// Magnifying glass for the Search view.
+pub fn search(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.6, color);
+    let center = egui::pos2(rect.center().x - 2.0, rect.center().y - 2.0);
+    painter.circle_stroke(center, 6.5, stroke);
+    painter.line_segment(
+        [
+            center + egui::vec2(4.8, 4.8),
+            center + egui::vec2(10.0, 10.0),
+        ],
+        Stroke::new(2.0, color),
+    );
+}

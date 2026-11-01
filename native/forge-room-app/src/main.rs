@@ -1,13 +1,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod commands;
 mod document;
 mod explorer;
+mod find;
+mod find_bar;
+mod fuzzy;
 mod git;
 mod gutter;
 mod icons;
+mod palette;
 mod position;
 mod room_state;
 mod rooms;
+mod search;
+mod search_view;
 mod settings;
 mod source_control;
 mod syntax;
@@ -16,6 +23,7 @@ mod theme;
 mod theme_gallery;
 mod workspace;
 
+use commands::Command;
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 use std::{fs, path::PathBuf};
 use tabs::{Tabs, normalize};
@@ -72,6 +80,7 @@ enum Pending {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum SidebarView {
     Explorer,
+    Search,
     SourceControl,
     Room,
 }
@@ -102,6 +111,13 @@ struct ForgeRoomApp {
     hunks_tab: Option<u64>,
     gallery: theme_gallery::Gallery,
     room: rooms::RoomView,
+    palette: palette::Palette,
+    search: search_view::SearchView,
+    find: find_bar::FindState,
+    /// Character range to select (and scroll to) in the active editor on the next frame.
+    pending_select: Option<(usize, usize)>,
+    last_find_query: String,
+    reselect_find: bool,
 }
 
 /// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
@@ -161,6 +177,12 @@ impl ForgeRoomApp {
             hunks_tab: None,
             gallery: theme_gallery::Gallery::default(),
             room: rooms::RoomView::default(),
+            palette: palette::Palette::default(),
+            search: search_view::SearchView::default(),
+            find: find_bar::FindState::default(),
+            pending_select: None,
+            last_find_query: String::new(),
+            reselect_find: false,
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -177,6 +199,7 @@ impl ForgeRoomApp {
             self.refresh_git();
             let root = self.repo_root();
             self.room.load_for(root.as_deref());
+            self.search.reset();
             self.status = format!("Opened folder {}", path.display());
             return;
         }
@@ -256,11 +279,147 @@ impl ForgeRoomApp {
 
     // ---- UI ----------------------------------------------------------------------------
 
+    /// Run any palette/menu/shortcut command. `palette_mode` only matters for `GoToLine`, where
+    /// the bool selects the command palette instead of the "Go to line" prompt.
+    fn run_command(&mut self, command: Command, palette_mode: bool) {
+        match command {
+            Command::NewFile => self.new_file(),
+            Command::OpenFile => self.open_file_dialog(),
+            Command::OpenFolder => self.open_folder_dialog(),
+            Command::Save => self.save_active(false),
+            Command::SaveAs => self.save_active(true),
+            Command::CloseTab => {
+                if !self.tabs.tabs.is_empty() {
+                    self.request_close(self.tabs.active);
+                }
+            }
+            Command::NextTab => {
+                self.tabs.next();
+                self.focus_editor = true;
+            }
+            Command::ToggleSidebar => self.show_sidebar = !self.show_sidebar,
+            Command::ShowExplorer => self.switch_view(SidebarView::Explorer),
+            Command::ShowSourceControl => self.switch_view(SidebarView::SourceControl),
+            Command::ShowRoom => self.switch_view(SidebarView::Room),
+            Command::ShowSearch => {
+                self.view = SidebarView::Search;
+                self.show_sidebar = true;
+                self.search.focus_input();
+            }
+            Command::ColorTheme => self.gallery.open(),
+            Command::GitRefresh => self.refresh_git(),
+            Command::Find => self.find.show_bar(false),
+            Command::Replace => self.find.show_bar(true),
+            Command::QuickOpen => {
+                let root = self.repo_root();
+                self.palette.open_files(root.as_deref());
+            }
+            Command::GoToLine if palette_mode => self.palette.open_commands(),
+            Command::GoToLine => self.palette.open_goto(),
+            Command::ToggleTerminal => self.status = "Terminal is not available yet".into(),
+        }
+    }
+
+    fn select_range(&mut self, range: std::ops::Range<usize>) {
+        self.pending_select = Some((range.start, range.end));
+    }
+
+    fn goto_line(&mut self, line: usize) {
+        if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
+            let start = find::line_start(tab.doc.text(), line);
+            self.pending_select = Some((start, start));
+            self.focus_editor = true;
+        }
+    }
+
+    /// Keep the match list current and, when the query changes, jump to the first match.
+    fn refresh_find(&mut self) {
+        if !self.find.open {
+            return;
+        }
+        let Some(tab) = self.tabs.tabs.get(self.tabs.active) else {
+            return;
+        };
+        let cursor = find::line_start(tab.doc.text(), self.cursor.0) + self.cursor.1 - 1;
+        self.find.refresh(tab.id, tab.doc.text(), cursor);
+        let query_changed = self.find.query != self.last_find_query;
+        if query_changed || self.reselect_find {
+            self.last_find_query = self.find.query.clone();
+            self.reselect_find = false;
+            if let Some(range) = self
+                .find
+                .current
+                .and_then(|i| self.find.matches.get(i))
+                .cloned()
+            {
+                self.select_range(range);
+            }
+        }
+    }
+
+    fn find_intent(&mut self, intent: find_bar::Intent) {
+        use find_bar::Intent;
+        match intent {
+            Intent::Next | Intent::Previous => {
+                if let Some(range) = self.find.step(matches!(intent, Intent::Next)) {
+                    self.select_range(range);
+                }
+            }
+            Intent::Close => {
+                self.find.open = false;
+                self.focus_editor = true;
+            }
+            Intent::ReplaceOne => {
+                let range = self
+                    .find
+                    .current
+                    .and_then(|i| self.find.matches.get(i))
+                    .cloned();
+                if let (Some(range), Some(tab)) = (range, self.tabs.tabs.get_mut(self.tabs.active))
+                    && !tab.readonly
+                {
+                    let replaced =
+                        find::replace_range(tab.doc.text(), range, &self.find.replacement);
+                    *tab.doc.text_mut() = replaced;
+                    self.reselect_find = true;
+                }
+            }
+            Intent::ReplaceAll => {
+                let count = self.find.matches.len();
+                if let Some(tab) = self.tabs.tabs.get_mut(self.tabs.active)
+                    && !tab.readonly
+                {
+                    let replaced = find::replace_all(
+                        tab.doc.text(),
+                        &self.find.matches,
+                        &self.find.replacement,
+                    );
+                    *tab.doc.text_mut() = replaced;
+                    self.status = format!("Replaced {count} occurrence(s)");
+                }
+            }
+        }
+    }
+
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
         let command = Modifiers::COMMAND;
         let command_shift = Modifiers::COMMAND | Modifiers::SHIFT;
         // Most specific first, so Ctrl+Shift+S is not taken by Ctrl+S.
-        if shortcut(ui, command_shift, Key::S) {
+        if shortcut(ui, command_shift, Key::P) {
+            self.run_command(Command::GoToLine, true);
+        } else if shortcut(ui, command_shift, Key::F) {
+            self.run_command(Command::ShowSearch, false);
+        } else if shortcut(ui, command, Key::P) {
+            self.run_command(Command::QuickOpen, false);
+        } else if shortcut(ui, command, Key::F) {
+            self.run_command(Command::Find, false);
+        } else if shortcut(ui, command, Key::H) {
+            self.run_command(Command::Replace, false);
+        } else if shortcut(ui, command, Key::G) {
+            self.run_command(Command::GoToLine, false);
+        } else if shortcut(ui, command, Key::Backtick) {
+            self.run_command(Command::ToggleTerminal, false);
+        } else if shortcut(ui, command_shift, Key::S) {
             self.save_active(true);
         } else if shortcut(ui, command_shift, Key::G) {
             self.switch_view(SidebarView::SourceControl);
@@ -339,12 +498,43 @@ impl ForgeRoomApp {
                     ui.close();
                 }
             });
+            ui.menu_button("Edit", |ui| {
+                for (label, keys, command) in [
+                    ("Find", "Ctrl+F", Command::Find),
+                    ("Replace", "Ctrl+H", Command::Replace),
+                    ("Go to Line…", "Ctrl+G", Command::GoToLine),
+                    ("Go to File…", "Ctrl+P", Command::QuickOpen),
+                ] {
+                    if ui
+                        .add(egui::Button::new(label).shortcut_text(keys))
+                        .clicked()
+                    {
+                        self.run_command(command, false);
+                        ui.close();
+                    }
+                }
+            });
             ui.menu_button("View", |ui| {
+                if ui
+                    .add(egui::Button::new("Command Palette…").shortcut_text("Ctrl+Shift+P"))
+                    .clicked()
+                {
+                    self.run_command(Command::GoToLine, true);
+                    ui.close();
+                }
+                ui.separator();
                 if ui
                     .add(egui::Button::new("Explorer").shortcut_text("Ctrl+Shift+E"))
                     .clicked()
                 {
                     self.switch_view(SidebarView::Explorer);
+                    ui.close();
+                }
+                if ui
+                    .add(egui::Button::new("Search").shortcut_text("Ctrl+Shift+F"))
+                    .clicked()
+                {
+                    self.run_command(Command::ShowSearch, false);
                     ui.close();
                 }
                 if ui
@@ -402,6 +592,7 @@ impl ForgeRoomApp {
         let badge = self.change_count();
         for (view, tip) in [
             (SidebarView::Explorer, "Explorer (Ctrl+Shift+E)"),
+            (SidebarView::Search, "Search (Ctrl+Shift+F)"),
             (SidebarView::SourceControl, "Source Control (Ctrl+Shift+G)"),
             (SidebarView::Room, "Room (Ctrl+Shift+R)"),
         ] {
@@ -426,13 +617,14 @@ impl ForgeRoomApp {
             let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 24.0));
             match view {
                 SidebarView::Explorer => icons::explorer(painter, icon_rect, color),
+                SidebarView::Search => icons::search(painter, icon_rect, color),
                 SidebarView::SourceControl => icons::branch(painter, icon_rect, color),
                 SidebarView::Room => icons::room(painter, icon_rect, color),
             }
             let count = match view {
                 SidebarView::SourceControl => badge,
                 SidebarView::Room => self.room.open_task_count(),
-                SidebarView::Explorer => 0,
+                SidebarView::Explorer | SidebarView::Search => 0,
             };
             if count > 0 {
                 let center = egui::pos2(rect.right() - 12.0, rect.top() + 14.0);
@@ -574,6 +766,22 @@ impl ForgeRoomApp {
         ui.set_min_width(ui.available_width());
         match self.view {
             SidebarView::Explorer => self.explorer_view(ui),
+            SidebarView::Search => {
+                let root = self.repo_root();
+                if let search_view::Action::Open {
+                    path,
+                    line,
+                    column,
+                    length,
+                } = self.search.show(ui, root.as_deref())
+                {
+                    self.open_path(path);
+                    if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
+                        let start = find::line_start(tab.doc.text(), line) + column - 1;
+                        self.pending_select = Some((start, start + length));
+                    }
+                }
+            }
             SidebarView::Room => {
                 let has_workspace = self.workspace.is_some();
                 self.room.show(ui, has_workspace);
@@ -716,6 +924,13 @@ impl ForgeRoomApp {
         let current_line = self.cursor.0 - 1;
         let mut cursor_index = None;
         let hunks = self.hunks.clone();
+        let select = self.pending_select.take();
+        let find_matches = if self.find.open {
+            self.find.matches.clone()
+        } else {
+            Vec::new()
+        };
+        let find_current = self.find.current;
         let Some(tab) = self.tabs.active_tab() else {
             self.welcome(ui);
             return;
@@ -766,6 +981,19 @@ impl ForgeRoomApp {
                             )));
                         state.store(ui.ctx(), id);
                     }
+                    let mut scroll_to = None;
+                    if let Some((start, end)) = select {
+                        let mut state =
+                            egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::two(
+                                egui::text::CCursor::new(start),
+                                egui::text::CCursor::new(end),
+                            )));
+                        state.store(ui.ctx(), id);
+                        scroll_to = Some(start);
+                    }
                     let output = egui::TextEdit::multiline(tab.doc.text_mut())
                         .id(id)
                         .font(font_id.clone())
@@ -779,6 +1007,64 @@ impl ForgeRoomApp {
                         .show(ui);
                     if focus {
                         output.response.request_focus();
+                    }
+
+                    // Find matches, painted over the text with a soft wash.
+                    {
+                        let clip = ui.clip_rect();
+                        let origin = output.galley_pos.to_vec2();
+                        for (index, range) in find_matches.iter().enumerate() {
+                            let start = output
+                                .galley
+                                .pos_from_cursor(egui::text::CCursor::new(range.start));
+                            let end = output
+                                .galley
+                                .pos_from_cursor(egui::text::CCursor::new(range.end));
+                            let top = start.top() + origin.y;
+                            if top + start.height() < clip.top() {
+                                continue;
+                            }
+                            if top > clip.bottom() {
+                                break;
+                            }
+                            if (start.top() - end.top()).abs() > 1.0 {
+                                continue; // a match never spans rows without wrapping; skip oddities
+                            }
+                            let rect = egui::Rect::from_min_max(
+                                egui::pos2(start.left() + origin.x, top),
+                                egui::pos2(end.left() + origin.x, top + start.height()),
+                            );
+                            let current = find_current == Some(index);
+                            let wash = theme::accent();
+                            ui.painter().rect_filled(
+                                rect,
+                                2.0,
+                                egui::Color32::from_rgba_unmultiplied(
+                                    wash.r(),
+                                    wash.g(),
+                                    wash.b(),
+                                    if current { 120 } else { 55 },
+                                ),
+                            );
+                            if current {
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    2.0,
+                                    egui::Stroke::new(1.0, theme::accent()),
+                                    egui::epaint::StrokeKind::Outside,
+                                );
+                            }
+                        }
+                        if let Some(start) = scroll_to {
+                            let rect = output
+                                .galley
+                                .pos_from_cursor(egui::text::CCursor::new(start))
+                                .translate(origin);
+                            ui.scroll_to_rect(
+                                rect.expand2(egui::vec2(60.0, 80.0)),
+                                Some(egui::Align::Center),
+                            );
+                        }
                     }
 
                     // Gutter numbers and current-line highlight, placed from the galley rows so
@@ -1131,6 +1417,20 @@ impl eframe::App for ForgeRoomApp {
                 self.refresh_hunks();
             }
             context.request_repaint_after(std::time::Duration::from_secs(3));
+        }
+
+        if self.search.poll() {
+            context.request_repaint_after(std::time::Duration::from_millis(120));
+        }
+        self.refresh_find();
+        for intent in find_bar::show(&context, &mut self.find) {
+            self.find_intent(intent);
+        }
+        match palette::show(&context, &mut self.palette) {
+            Some(palette::Outcome::Run(command)) => self.run_command(command, false),
+            Some(palette::Outcome::Open(path)) => self.open_path(path),
+            Some(palette::Outcome::GoToLine(line)) => self.goto_line(line),
+            None => {}
         }
 
         match theme_gallery::show(&context, &mut self.gallery) {

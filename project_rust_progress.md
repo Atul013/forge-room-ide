@@ -47,14 +47,19 @@ Single place for the state of the native app and its installer. Shared agent han
   - Stored privately per project under `%LOCALAPPDATA%\Forge Room Early Previewooms\` (never inside the project folder), using the core's atomic save with backup recovery.
   - Not ported: realtime relay/invites, chat, anchored comments, live document sessions, ACP/MCP agent clients (they need the old Code OSS/Node extension host).
   - 27 unit tests in the app (5 for room helpers), 7 in the core.
+- **Navigation and editing tools (done, verified on screen):**
+  - Command Palette (Ctrl+Shift+P) and Quick Open (Ctrl+P) in one box: plain text finds files, `>` runs commands, `:` jumps to a line; fuzzy ranking, arrow keys, Enter. Edit menu and Go to Line (Ctrl+G).
+  - Find and Replace in the file (Ctrl+F / Ctrl+H): live match highlighting, current match, n of m counter, next/previous, match case, Replace and Replace All.
+  - Search in Files (Ctrl+Shift+F): background search that cancels when you keep typing, skips `.git`, `target`, `node_modules` and binary or large files, highlights the match in each result, click to open at the line.
+  - 44 unit tests in the app.
 - Logo embedded in the exe (`build.rs`, `assets/forge-room.ico`).
 - Toolchain: Rust 1.99.1 (eframe 0.37 deps need 1.95+).
 
 ## Roadmap (in order)
 
 1. ~~**IDE shell**~~ done.
-2. **Editor core:** ~~line numbers, syntax highlighting, current-line highlight~~ done; still to do: find/replace in file, go to line, bracket matching, indent guides, minimap.
-3. **Command palette and search:** Ctrl+Shift+P command palette, Ctrl+P quick open, find in files.
+2. **Editor core:** ~~line numbers, syntax highlighting, current-line highlight~~ done; find/replace and go to line now done; still to do: bracket matching, indent guides, minimap.
+3. ~~Command palette, quick open, find in files~~ done.
 4. ~~Git status, diff, stage, commit~~ done; still to do: discard changes, branches (switch/create), push/pull/fetch with credentials, stash, history/blame. **Terminal:** integrated terminal panel.
 5. **Port the features that lived on `main` (Electron/Code OSS era, now rebuilt natively on `forge-room-core`):**
    - **Forge Room Studio:** the six themes (Neon Ronin, Starship Deck, Moss Shrine, Ink & Ember, Paper Studio, Signal Guard high contrast), custom palette, profiles import/export.
