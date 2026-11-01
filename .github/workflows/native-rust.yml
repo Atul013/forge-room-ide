@@ -26,8 +26,6 @@ permissions:
 jobs:
   verify:
     runs-on: windows-2025
-    permissions:
-      contents: write # only used to publish a pre-release when a v* tag is pushed
     defaults:
       run:
         shell: pwsh
@@ -58,6 +56,8 @@ jobs:
   package-windows:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-2025
+    permissions:
+      contents: write # only used to publish a pre-release when a v* tag is pushed
     permissions:
       contents: read
     defaults:

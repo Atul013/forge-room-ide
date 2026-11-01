@@ -76,6 +76,18 @@ fn main() {
     }
 }
 
+/// Older builds let eframe save the window (maximized flag, zoom) next to the app data, and it
+/// is read back on every start. Delete that file so existing installs open normally.
+fn discard_saved_window_state() {
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let file = PathBuf::from(appdata)
+            .join("forge-room-early-preview")
+            .join("data")
+            .join("app.ron");
+        let _ = fs::remove_file(file);
+    }
+}
+
 fn run() -> eframe::Result {
     let initial_path = std::env::args_os().nth(1).map(PathBuf::from);
     let options = eframe::NativeOptions {
@@ -86,10 +98,13 @@ fn run() -> eframe::Result {
             .with_maximized(false)
             .with_inner_size([1240.0, 780.0])
             .with_min_inner_size([760.0, 480.0]),
-        // A saved window can end up partly under the taskbar; always start centred and fitted.
+        // Always open as a normal, centred window. eframe's saved window state is not used:
+        // it restored a maximized flag from an old session and then fought our own sizing.
         persist_window: false,
+        centered: true,
         ..Default::default()
     };
+    discard_saved_window_state();
     eframe::run_native(
         APP_NAME,
         options,
@@ -209,6 +224,11 @@ fn shortcut(ui: &egui::Ui, modifiers: Modifiers, key: Key) -> bool {
 
 impl ForgeRoomApp {
     fn new(creation_context: &eframe::CreationContext<'_>, initial_path: Option<PathBuf>) -> Self {
+        // The layout is tuned for 1 pixel per point; on a 125% display that means a 0.8 zoom.
+        let native = creation_context.egui_ctx.pixels_per_point();
+        creation_context
+            .egui_ctx
+            .set_zoom_factor((1.0 / native).clamp(0.8, 1.0));
         fonts::install(&creation_context.egui_ctx);
         match settings::load().theme {
             Some(key) if theme::find(&key).is_some() => {
@@ -2275,22 +2295,16 @@ impl ForgeRoomApp {
 }
 
 impl eframe::App for ForgeRoomApp {
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Color32::from_rgb(10, 11, 12).to_normalized_gamma_f32()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
-        // Windows can restore a previous maximized state; always open as a normal window.
-        if context.cumulative_pass_nr() == 3 {
-            context.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
-            context.request_repaint();
-        }
-        if context.cumulative_pass_nr() == 6 {
-            context.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1280.0, 780.0)));
-            context.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(60.0, 30.0)));
-            context.request_repaint();
-        }
         if context.input(|input| input.viewport().close_requested())
             && self.tabs.any_dirty()
             && !self.allow_close
