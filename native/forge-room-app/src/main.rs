@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai_panel;
 mod brand;
 mod commands;
 mod document;
@@ -162,6 +163,7 @@ struct ForgeRoomApp {
     terminal: Option<terminal::Terminal>,
     show_terminal: bool,
     show_right: bool,
+    ai: ai_panel::State,
     right_tab: RightTab,
     terminal_focus_request: bool,
     terminal_has_focus: bool,
@@ -246,7 +248,8 @@ impl ForgeRoomApp {
             terminal: None,
             show_terminal: true,
             show_right: true,
-            right_tab: RightTab::Room,
+            ai: ai_panel::State::default(),
+            right_tab: RightTab::Ai,
             terminal_focus_request: false,
             terminal_has_focus: false,
             terminal_error: None,
@@ -2104,7 +2107,10 @@ impl ForgeRoomApp {
                 let has_workspace = self.workspace.is_some();
                 self.room.show(ui, has_workspace);
             }
-            RightTab::Ai => ai_panel(ui),
+            RightTab::Ai => {
+                let name = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.title());
+                ai_panel::show(ui, &mut self.ai, name.as_deref());
+            }
         }
     }
 
@@ -2492,100 +2498,6 @@ fn underline_tab(
         );
     }
     response
-}
-
-/// The AI Assistant tab. There is no assistant backend yet, so this shows the layout from the
-/// design with every control inert and says so, rather than pretending to answer.
-fn ai_panel(ui: &mut egui::Ui) {
-    ui.add_space(14.0);
-    ui.horizontal(|ui| {
-        ui.add_space(16.0);
-        let (logo, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
-        brand::logo(ui.painter(), logo.center(), 16.0);
-        ui.add_space(6.0);
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            ui.label(
-                egui::RichText::new("Forge Room AI")
-                    .size(15.0)
-                    .family(fonts::semibold())
-                    .color(theme::text()),
-            );
-            ui.label(
-                egui::RichText::new("Agentic coding in your workspace")
-                    .size(12.5)
-                    .color(theme::text_dim()),
-            );
-        });
-    });
-    ui.add_space(14.0);
-    egui::Frame::new()
-        .fill(theme::mix(theme::bg_sidebar(), theme::text(), 0.03))
-        .stroke(egui::Stroke::new(1.0, theme::border()))
-        .corner_radius(10.0)
-        .outer_margin(egui::Margin::symmetric(14, 0))
-        .inner_margin(egui::Margin::same(14))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(
-                egui::RichText::new("How can I help you today?")
-                    .size(16.0)
-                    .family(fonts::semibold())
-                    .color(theme::text()),
-            );
-            ui.add_space(10.0);
-            ui.add_enabled_ui(false, |ui| {
-                let width = (ui.available_width() - 8.0) / 2.0;
-                for pair in [
-                    ["Implement a feature", "Explain this code"],
-                    ["Write tests", "Find and fix issues"],
-                ] {
-                    ui.horizontal(|ui| {
-                        for label in pair {
-                            ui.add(
-                                egui::Button::new(label)
-                                    .corner_radius(8.0)
-                                    .min_size(egui::vec2(width, 34.0)),
-                            );
-                        }
-                    });
-                }
-            });
-        });
-    ui.add_space(14.0);
-    ui.horizontal(|ui| {
-        ui.add_space(18.0);
-        ui.vertical(|ui| {
-            ui.set_max_width(ui.available_width() - 18.0);
-            ui.label(
-                egui::RichText::new("Not connected yet")
-                    .strong()
-                    .color(theme::text()),
-            );
-            ui.label(
-                egui::RichText::new(
-                    "Rooms already track agents and the tasks they own. Running agents from this panel is on the roadmap.",
-                )
-                .color(theme::text_dim()),
-            );
-        });
-    });
-    ui.add_space(14.0);
-    egui::Frame::new()
-        .stroke(egui::Stroke::new(1.0, theme::border()))
-        .corner_radius(10.0)
-        .outer_margin(egui::Margin::symmetric(14, 0))
-        .inner_margin(egui::Margin::same(14))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(
-                egui::RichText::new(
-                    "Ask anything, or use @ to reference files, agents, or Room context…",
-                )
-                .color(theme::mix(theme::bg_sidebar(), theme::text_dim(), 0.7)),
-            );
-            ui.add_space(24.0);
-        });
 }
 
 /// The window backdrop: near-black with a soft red glow in the bottom-left corner and a faint
