@@ -6,6 +6,8 @@ mod git;
 mod gutter;
 mod icons;
 mod position;
+mod room_state;
+mod rooms;
 mod settings;
 mod source_control;
 mod syntax;
@@ -71,6 +73,7 @@ enum Pending {
 enum SidebarView {
     Explorer,
     SourceControl,
+    Room,
 }
 
 enum Choice {
@@ -98,6 +101,7 @@ struct ForgeRoomApp {
     hunks: Vec<git::Hunk>,
     hunks_tab: Option<u64>,
     gallery: theme_gallery::Gallery,
+    room: rooms::RoomView,
 }
 
 /// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
@@ -156,6 +160,7 @@ impl ForgeRoomApp {
             hunks: Vec::new(),
             hunks_tab: None,
             gallery: theme_gallery::Gallery::default(),
+            room: rooms::RoomView::default(),
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -170,6 +175,8 @@ impl ForgeRoomApp {
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
             self.refresh_git();
+            let root = self.repo_root();
+            self.room.load_for(root.as_deref());
             self.status = format!("Opened folder {}", path.display());
             return;
         }
@@ -259,6 +266,8 @@ impl ForgeRoomApp {
             self.switch_view(SidebarView::SourceControl);
         } else if shortcut(ui, command_shift, Key::E) {
             self.switch_view(SidebarView::Explorer);
+        } else if shortcut(ui, command_shift, Key::R) {
+            self.switch_view(SidebarView::Room);
         } else if shortcut(ui, command_shift, Key::O) {
             self.open_folder_dialog();
         } else if shortcut(ui, command, Key::S) {
@@ -345,6 +354,13 @@ impl ForgeRoomApp {
                     self.switch_view(SidebarView::SourceControl);
                     ui.close();
                 }
+                if ui
+                    .add(egui::Button::new("Room").shortcut_text("Ctrl+Shift+R"))
+                    .clicked()
+                {
+                    self.switch_view(SidebarView::Room);
+                    ui.close();
+                }
                 ui.separator();
                 if ui.button("Color Theme…").clicked() {
                     self.gallery.open();
@@ -387,6 +403,7 @@ impl ForgeRoomApp {
         for (view, tip) in [
             (SidebarView::Explorer, "Explorer (Ctrl+Shift+E)"),
             (SidebarView::SourceControl, "Source Control (Ctrl+Shift+G)"),
+            (SidebarView::Room, "Room (Ctrl+Shift+R)"),
         ] {
             let (rect, response) = ui.allocate_exact_size(
                 egui::vec2(ACTIVITY_WIDTH, ACTIVITY_WIDTH),
@@ -410,14 +427,20 @@ impl ForgeRoomApp {
             match view {
                 SidebarView::Explorer => icons::explorer(painter, icon_rect, color),
                 SidebarView::SourceControl => icons::branch(painter, icon_rect, color),
+                SidebarView::Room => icons::room(painter, icon_rect, color),
             }
-            if view == SidebarView::SourceControl && badge > 0 {
+            let count = match view {
+                SidebarView::SourceControl => badge,
+                SidebarView::Room => self.room.open_task_count(),
+                SidebarView::Explorer => 0,
+            };
+            if count > 0 {
                 let center = egui::pos2(rect.right() - 12.0, rect.top() + 14.0);
                 painter.circle_filled(center, 8.0, theme::badge());
                 painter.text(
                     center,
                     egui::Align2::CENTER_CENTER,
-                    badge.min(99),
+                    count.min(99),
                     egui::FontId::proportional(10.0),
                     theme::badge_text(),
                 );
@@ -547,8 +570,14 @@ impl ForgeRoomApp {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
+        // Keep the panel width whatever the view; short content must not shrink it.
+        ui.set_min_width(ui.available_width());
         match self.view {
             SidebarView::Explorer => self.explorer_view(ui),
+            SidebarView::Room => {
+                let has_workspace = self.workspace.is_some();
+                self.room.show(ui, has_workspace);
+            }
             SidebarView::SourceControl => {
                 let repo = if self.workspace.is_none() {
                     source_control::Repo::NoFolder

@@ -41,6 +41,12 @@ Single place for the state of the native app and its installer. Shared agent han
   - Whole UI is themed at runtime (panels, bars, tabs, badges, status bar), including a light theme; syntax colors come from each theme's own token rules through a custom highlighter.
   - View > Color Theme: gallery of preview cards, live apply, Keep or Cancel; choice saved to `%LOCALAPPDATA%\Forge Room Early Preview\settings.json` (kept across updates).
   - Tests check every theme still meets 4.5:1 text contrast. 22 unit tests total.
+- **Rooms ported from Team Lobby (done, verified by driving the real exe):**
+  - Room view (Ctrl+Shift+R, people icon with an open-task badge): create a room per project, people and coding agents (agents must have a human owner), tasks with owner, "done when" criteria and dependencies, Start/Complete/Back/Reopen, handoff request and host approval, evidence, activity feed, "Acting as" selector.
+  - All rules (who may update, dependency gates, completion needs every criterion, host-only reopen/approve) come from `forge-room-core`; the view only draws state and forwards intents, and shows the core's error messages.
+  - Stored privately per project under `%LOCALAPPDATA%\Forge Room Early Previewooms\` (never inside the project folder), using the core's atomic save with backup recovery.
+  - Not ported: realtime relay/invites, chat, anchored comments, live document sessions, ACP/MCP agent clients (they need the old Code OSS/Node extension host).
+  - 27 unit tests in the app (5 for room helpers), 7 in the core.
 - Logo embedded in the exe (`build.rs`, `assets/forge-room.ico`).
 - Toolchain: Rust 1.99.1 (eframe 0.37 deps need 1.95+).
 
@@ -52,7 +58,7 @@ Single place for the state of the native app and its installer. Shared agent han
 4. ~~Git status, diff, stage, commit~~ done; still to do: discard changes, branches (switch/create), push/pull/fetch with credentials, stash, history/blame. **Terminal:** integrated terminal panel.
 5. **Port the features that lived on `main` (Electron/Code OSS era, now rebuilt natively on `forge-room-core`):**
    - **Forge Room Studio:** the six themes (Neon Ronin, Starship Deck, Moss Shrine, Ink & Ember, Paper Studio, Signal Guard high contrast), custom palette, profiles import/export.
-   - **Team Lobby:** rooms, participants (humans and agents), tasks with ownership/dependencies/acceptance, handoffs, evidence, activity trail. The domain model is already in `forge-room-core`; the work is a native Rooms view. Not portable as-is: ACP/MCP clients, webview panels and VS Code API workspace tools (they need Code OSS or Node).
+   - **Team Lobby:** ~~rooms, participants, tasks, handoffs, evidence, activity~~ done as a native view on `forge-room-core`; still to do: realtime sharing between machines (relay/invites, presence), chat, anchored comments, shared diffs. Not portable as-is: ACP/MCP clients, webview panels and VS Code API workspace tools (they need Code OSS or Node).
 6. **Extensions (declarative only):** install color themes, TextMate grammars, snippets and icon themes from Open VSX. Microsoft's Marketplace terms exclude non-Microsoft editors, and extensions that run JavaScript need a Node extension host, which this app deliberately does not have.
 7. Later: LSP (diagnostics, completion, go to definition), settings and keybindings, themes, session restore, multi-cursor, split editors, extension story, Room/collaboration UI from the product spec.
 

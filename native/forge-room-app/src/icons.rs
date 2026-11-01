@@ -106,3 +106,25 @@ pub fn branch(painter: &Painter, rect: Rect, color: Color32) {
         painter.circle_stroke(center, 2.0, stroke);
     }
 }
+
+/// Two people (head and shoulders) for the Room view.
+pub fn room(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.5, color);
+    let front = egui::pos2(rect.center().x - 3.0, rect.top() + rect.height() * 0.34);
+    painter.circle_stroke(front, 4.2, stroke);
+    painter.circle_stroke(
+        egui::pos2(rect.center().x + 6.5, rect.top() + rect.height() * 0.28),
+        3.2,
+        Stroke::new(1.3, color),
+    );
+    let base = rect.bottom() - 1.5;
+    let mut shoulders = Vec::new();
+    for step in 0..=8 {
+        let t = step as f32 / 8.0 * std::f32::consts::PI;
+        shoulders.push(egui::pos2(
+            rect.center().x - 3.0 - t.cos() * 8.0,
+            base - t.sin() * 7.0,
+        ));
+    }
+    painter.add(egui::Shape::line(shoulders, stroke));
+}
