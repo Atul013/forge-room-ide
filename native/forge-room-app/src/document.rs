@@ -47,6 +47,15 @@ pub struct DocumentSession {
 }
 
 impl DocumentSession {
+    /// A document that is not backed by a file (for example a diff view); never dirty.
+    pub fn with_text(text: String) -> Self {
+        Self {
+            path: None,
+            saved_text: text.clone(),
+            text,
+        }
+    }
+
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }

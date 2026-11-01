@@ -159,7 +159,7 @@ fn row(
 }
 
 /// Tint for a file icon by extension, so file types are easy to tell apart at a glance.
-fn file_color(name: &str) -> Color32 {
+pub fn file_color(name: &str) -> Color32 {
     match name.rsplit('.').next().unwrap_or("") {
         "rs" => Color32::from_rgb(222, 150, 110),
         "md" | "txt" => Color32::from_rgb(110, 170, 225),

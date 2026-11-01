@@ -2,9 +2,11 @@
 
 mod document;
 mod explorer;
+mod git;
 mod gutter;
 mod icons;
 mod position;
+mod source_control;
 mod tabs;
 mod theme;
 mod workspace;
@@ -63,6 +65,12 @@ enum Pending {
     Quit,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SidebarView {
+    Explorer,
+    SourceControl,
+}
+
 enum Choice {
     Save,
     Discard,
@@ -80,6 +88,38 @@ struct ForgeRoomApp {
     cursor: (usize, usize),
     last_title: String,
     branch: Option<String>,
+    view: SidebarView,
+    git_status: Option<Result<git::Status, String>>,
+    is_repo: bool,
+    sc: source_control::State,
+    last_git: std::time::Instant,
+    hunks: Vec<git::Hunk>,
+    hunks_tab: Option<u64>,
+}
+
+/// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
+fn diff_job(text: &str, font_id: &egui::FontId) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    for line in text.split_inclusive('\n') {
+        let mut format = egui::TextFormat::simple(font_id.clone(), theme::TEXT);
+        if line.starts_with("+++")
+            || line.starts_with("---")
+            || line.starts_with("diff ")
+            || line.starts_with("index ")
+        {
+            format.color = theme::TEXT_DIM;
+        } else if line.starts_with('+') {
+            format.color = egui::Color32::from_rgb(140, 210, 145);
+            format.background = egui::Color32::from_rgba_unmultiplied(87, 166, 74, 34);
+        } else if line.starts_with('-') {
+            format.color = egui::Color32::from_rgb(245, 130, 135);
+            format.background = egui::Color32::from_rgba_unmultiplied(229, 83, 75, 34);
+        } else if line.starts_with("@@") {
+            format.color = egui::Color32::from_rgb(110, 170, 225);
+        }
+        job.append(line, 0.0, format);
+    }
+    job
 }
 
 fn shortcut(ui: &egui::Ui, modifiers: Modifiers, key: Key) -> bool {
@@ -100,6 +140,13 @@ impl ForgeRoomApp {
             cursor: (1, 1),
             last_title: String::new(),
             branch: None,
+            view: SidebarView::Explorer,
+            git_status: None,
+            is_repo: false,
+            sc: source_control::State::default(),
+            last_git: std::time::Instant::now(),
+            hunks: Vec::new(),
+            hunks_tab: None,
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -112,11 +159,8 @@ impl ForgeRoomApp {
     fn open_path(&mut self, path: PathBuf) {
         if path.is_dir() {
             self.workspace = Some(Workspace::new(normalize(&path)));
-            self.branch = self
-                .workspace
-                .as_ref()
-                .and_then(|workspace| workspace::git_branch(&workspace.root));
             self.show_sidebar = true;
+            self.refresh_git();
             self.status = format!("Opened folder {}", path.display());
             return;
         }
@@ -167,6 +211,7 @@ impl ForgeRoomApp {
         match result {
             Ok(()) => {
                 self.status = format!("Saved {title}");
+                self.refresh_git();
                 true
             }
             Err(error) => {
@@ -201,6 +246,10 @@ impl ForgeRoomApp {
         // Most specific first, so Ctrl+Shift+S is not taken by Ctrl+S.
         if shortcut(ui, command_shift, Key::S) {
             self.save_active(true);
+        } else if shortcut(ui, command_shift, Key::G) {
+            self.switch_view(SidebarView::SourceControl);
+        } else if shortcut(ui, command_shift, Key::E) {
+            self.switch_view(SidebarView::Explorer);
         } else if shortcut(ui, command_shift, Key::O) {
             self.open_folder_dialog();
         } else if shortcut(ui, command, Key::S) {
@@ -274,6 +323,21 @@ impl ForgeRoomApp {
             });
             ui.menu_button("View", |ui| {
                 if ui
+                    .add(egui::Button::new("Explorer").shortcut_text("Ctrl+Shift+E"))
+                    .clicked()
+                {
+                    self.switch_view(SidebarView::Explorer);
+                    ui.close();
+                }
+                if ui
+                    .add(egui::Button::new("Source Control").shortcut_text("Ctrl+Shift+G"))
+                    .clicked()
+                {
+                    self.switch_view(SidebarView::SourceControl);
+                    ui.close();
+                }
+                ui.separator();
+                if ui
                     .add(egui::Button::new("Toggle Sidebar").shortcut_text("Ctrl+B"))
                     .clicked()
                 {
@@ -284,37 +348,212 @@ impl ForgeRoomApp {
         });
     }
 
-    fn activity_bar(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ACTIVITY_WIDTH, ACTIVITY_WIDTH),
-            egui::Sense::click(),
-        );
-        let active = self.show_sidebar;
-        let color = if active || response.hovered() {
-            theme::TEXT
+    fn switch_view(&mut self, view: SidebarView) {
+        if self.view == view && self.show_sidebar {
+            self.show_sidebar = false;
         } else {
-            theme::TEXT_DIM
-        };
-        let painter = ui.painter();
-        if active {
-            painter.rect_filled(
-                egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
-                0.0,
-                theme::ACCENT,
-            );
-        }
-        icons::explorer(
-            painter,
-            egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 24.0)),
-            color,
-        );
-        if response.on_hover_text("Explorer (Ctrl+B)").clicked() {
-            self.show_sidebar = !self.show_sidebar;
+            self.view = view;
+            self.show_sidebar = true;
+            if view == SidebarView::SourceControl {
+                self.refresh_git();
+            }
         }
     }
 
+    fn change_count(&self) -> usize {
+        match &self.git_status {
+            Some(Ok(status)) => status.changes.len(),
+            _ => 0,
+        }
+    }
+
+    fn activity_bar(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+        let badge = self.change_count();
+        for (view, tip) in [
+            (SidebarView::Explorer, "Explorer (Ctrl+Shift+E)"),
+            (SidebarView::SourceControl, "Source Control (Ctrl+Shift+G)"),
+        ] {
+            let (rect, response) = ui.allocate_exact_size(
+                egui::vec2(ACTIVITY_WIDTH, ACTIVITY_WIDTH),
+                egui::Sense::click(),
+            );
+            let active = self.show_sidebar && self.view == view;
+            let color = if active || response.hovered() {
+                theme::TEXT
+            } else {
+                theme::TEXT_DIM
+            };
+            let painter = ui.painter();
+            if active {
+                painter.rect_filled(
+                    egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
+                    0.0,
+                    theme::ACCENT,
+                );
+            }
+            let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 24.0));
+            match view {
+                SidebarView::Explorer => icons::explorer(painter, icon_rect, color),
+                SidebarView::SourceControl => icons::branch(painter, icon_rect, color),
+            }
+            if view == SidebarView::SourceControl && badge > 0 {
+                let center = egui::pos2(rect.right() - 12.0, rect.top() + 14.0);
+                painter.circle_filled(center, 8.0, theme::ACCENT);
+                painter.text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    badge.min(99),
+                    egui::FontId::proportional(10.0),
+                    egui::Color32::WHITE,
+                );
+            }
+            if response.on_hover_text(tip).clicked() {
+                self.switch_view(view);
+            }
+        }
+    }
+
+    // ---- Version control ---------------------------------------------------------------
+
+    fn repo_root(&self) -> Option<PathBuf> {
+        self.workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone())
+    }
+
+    /// Re-read `git status` and the change markers for the active file.
+    fn refresh_git(&mut self) {
+        self.last_git = std::time::Instant::now();
+        let Some(root) = self.repo_root() else {
+            self.git_status = None;
+            self.is_repo = false;
+            self.branch = None;
+            self.hunks.clear();
+            return;
+        };
+        self.is_repo = git::is_repo(&root);
+        if !self.is_repo {
+            self.git_status = Some(Err("not a repository".into()));
+            self.branch = None;
+            self.hunks.clear();
+            return;
+        }
+        let result = git::status(&root);
+        self.branch = match &result {
+            Ok(status) => status
+                .branch
+                .clone()
+                .or_else(|| workspace::git_branch(&root)),
+            Err(_) => workspace::git_branch(&root),
+        };
+        self.git_status = Some(result);
+        self.refresh_hunks();
+    }
+
+    fn refresh_hunks(&mut self) {
+        self.hunks_tab = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.id);
+        self.hunks.clear();
+        let (Some(root), Some(path)) = (self.repo_root(), self.tabs.active_path()) else {
+            return;
+        };
+        let Ok(relative) = path.strip_prefix(&root) else {
+            return;
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let untracked = matches!(&self.git_status, Some(Ok(status))
+            if status.changes.iter().any(|c| c.path == relative && c.is_untracked()));
+        if untracked {
+            let lines = self
+                .tabs
+                .tabs
+                .get(self.tabs.active)
+                .map(|tab| gutter::line_count(tab.doc.text()))
+                .unwrap_or(0);
+            self.hunks.push(git::Hunk {
+                kind: git::HunkKind::Added,
+                start: 1,
+                len: lines,
+            });
+        } else {
+            self.hunks = git::file_hunks(&root, &relative);
+        }
+    }
+
+    fn git_action(&mut self, action: source_control::Action) {
+        use source_control::Action;
+        let Some(root) = self.repo_root() else {
+            return;
+        };
+        let outcome: Result<String, String> = match action {
+            Action::None => return,
+            Action::Refresh => {
+                self.refresh_git();
+                return;
+            }
+            Action::Init => {
+                git::run(&root, &["init"]).map(|_| "Initialized a Git repository".into())
+            }
+            Action::Stage(paths) => git::stage(&root, &paths).map(|_| String::new()),
+            Action::Unstage(paths) => git::unstage(&root, &paths).map(|_| String::new()),
+            Action::Commit => {
+                let message = self.sc.message.trim().to_string();
+                git::commit(&root, &message).map(|hash| {
+                    self.sc.message.clear();
+                    format!("Committed {hash}")
+                })
+            }
+            Action::OpenFile(path) => {
+                self.open_path(root.join(path));
+                return;
+            }
+            Action::ShowDiff { path, staged } => {
+                match git::diff(&root, &path, staged) {
+                    Ok(text) if text.trim().is_empty() => self.open_path(root.join(&path)),
+                    Ok(text) => {
+                        let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+                        let label = if staged {
+                            format!("{name} (staged)")
+                        } else {
+                            format!("{name} (changes)")
+                        };
+                        self.tabs.open_virtual(label, text, "diff");
+                    }
+                    Err(error) => self.status = format!("Cannot show diff: {error}"),
+                }
+                return;
+            }
+        };
+        match outcome {
+            Ok(message) if !message.is_empty() => self.status = message,
+            Ok(_) => {}
+            Err(error) => self.status = format!("Git: {error}"),
+        }
+        self.refresh_git();
+    }
+
     fn sidebar(&mut self, ui: &mut egui::Ui) {
+        match self.view {
+            SidebarView::Explorer => self.explorer_view(ui),
+            SidebarView::SourceControl => {
+                let repo = if self.workspace.is_none() {
+                    source_control::Repo::NoFolder
+                } else if !self.is_repo {
+                    source_control::Repo::NoRepository
+                } else {
+                    match &self.git_status {
+                        Some(Ok(status)) => source_control::Repo::Ready(status),
+                        Some(Err(error)) => source_control::Repo::Error(error),
+                        None => source_control::Repo::NoRepository,
+                    }
+                };
+                let action = source_control::show(ui, &mut self.sc, repo);
+                self.git_action(action);
+            }
+        }
+    }
+
+    fn explorer_view(&mut self, ui: &mut egui::Ui) {
         let active = self.tabs.active_path().map(|path| path.to_path_buf());
         match explorer::show(ui, &mut self.workspace, active.as_deref()) {
             explorer::Action::None => {}
@@ -324,10 +563,7 @@ impl ForgeRoomApp {
                 if let Some(workspace) = self.workspace.as_mut() {
                     workspace.refresh();
                 }
-                self.branch = self
-                    .workspace
-                    .as_ref()
-                    .and_then(|workspace| workspace::git_branch(&workspace.root));
+                self.refresh_git();
             }
         }
     }
@@ -440,17 +676,20 @@ impl ForgeRoomApp {
             ui.fonts_mut(|fonts| (fonts.row_height(&font_id), fonts.glyph_width(&font_id, '0')));
         let current_line = self.cursor.0 - 1;
         let mut cursor_index = None;
+        let hunks = self.hunks.clone();
         let Some(tab) = self.tabs.active_tab() else {
             self.welcome(ui);
             return;
         };
+        let readonly = tab.readonly;
         let id = egui::Id::unique(("editor", tab.id));
-        let extension = tab
-            .doc
-            .path()
-            .and_then(|path| path.extension())
-            .map(|extension| extension.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "txt".into());
+        let extension = tab.syntax.clone().unwrap_or_else(|| {
+            tab.doc
+                .path()
+                .and_then(|path| path.extension())
+                .map(|extension| extension.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "txt".into())
+        });
         let code_theme = CodeTheme::from_style(ui.style());
         let line_count = gutter::line_count(tab.doc.text());
         let gutter_width = gutter::gutter_digits(line_count) as f32 * char_width + 30.0;
@@ -470,8 +709,11 @@ impl ForgeRoomApp {
                     let mut layouter = |ui: &egui::Ui,
                                         text: &dyn egui::TextBuffer,
                                         _wrap_width: f32| {
-                        let mut job =
-                            highlight(ui.ctx(), ui.style(), &code_theme, text.as_str(), &extension);
+                        let mut job = if extension == "diff" {
+                            diff_job(text.as_str(), &font_id)
+                        } else {
+                            highlight(ui.ctx(), ui.style(), &code_theme, text.as_str(), &extension)
+                        };
                         job.wrap.max_width = f32::INFINITY; // no soft wrap, so gutter numbers match rows
                         ui.fonts_mut(|fonts| fonts.layout_job(job))
                     };
@@ -495,6 +737,7 @@ impl ForgeRoomApp {
                         .desired_width(f32::INFINITY)
                         .desired_rows(rows.max(10))
                         .lock_focus(true)
+                        .interactive(!readonly)
                         .layouter(&mut layouter)
                         .show(ui);
                     if focus {
@@ -515,6 +758,33 @@ impl ForgeRoomApp {
                             break;
                         }
                         let current = line == current_line;
+                        if let Some(hunk) = hunks.iter().find(|hunk| hunk.covers(line + 1)) {
+                            let x = gutter.right() - 7.0;
+                            let (color, bar) = match hunk.kind {
+                                git::HunkKind::Added => (
+                                    egui::Color32::from_rgb(87, 166, 74),
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(x, top),
+                                        egui::pos2(x + 3.0, top + height),
+                                    ),
+                                ),
+                                git::HunkKind::Modified => (
+                                    egui::Color32::from_rgb(79, 152, 214),
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(x, top),
+                                        egui::pos2(x + 3.0, top + height),
+                                    ),
+                                ),
+                                git::HunkKind::Deleted => (
+                                    egui::Color32::from_rgb(229, 83, 75),
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(x - 2.0, top - 1.5),
+                                        egui::pos2(x + 6.0, top + 1.5),
+                                    ),
+                                ),
+                            };
+                            painter.rect_filled(bar, 1.0, color);
+                        }
                         if current {
                             painter.rect_filled(
                                 egui::Rect::from_min_max(
@@ -631,11 +901,23 @@ impl ForgeRoomApp {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if let Some(branch) = &self.branch {
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(14.0, 16.0), egui::Sense::hover());
+            if let Some(branch) = self.branch.clone() {
+                let (rect, icon) =
+                    ui.allocate_exact_size(egui::vec2(14.0, 16.0), egui::Sense::click());
                 icons::branch(ui.painter(), rect, theme::TEXT);
-                ui.label(egui::RichText::new(branch).color(theme::TEXT));
+                let mut text = branch;
+                if let Some(Ok(status)) = &self.git_status
+                    && (status.ahead > 0 || status.behind > 0)
+                {
+                    text = format!("{text}  \u{2191}{} \u{2193}{}", status.ahead, status.behind);
+                }
+                let label = ui.add(
+                    egui::Label::new(egui::RichText::new(text).color(theme::TEXT))
+                        .sense(egui::Sense::click()),
+                );
+                if icon.clicked() || label.on_hover_text("Open Source Control").clicked() {
+                    self.switch_view(SidebarView::SourceControl);
+                }
                 ui.add_space(10.0);
             }
             ui.label(egui::RichText::new(&self.status).color(theme::TEXT_DIM));
@@ -803,6 +1085,16 @@ impl eframe::App for ForgeRoomApp {
                 }
                 self.editor(ui);
             });
+
+        let active_id = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.id);
+        if self.workspace.is_some() {
+            if self.last_git.elapsed() >= std::time::Duration::from_secs(3) {
+                self.refresh_git();
+            } else if self.hunks_tab != active_id {
+                self.refresh_hunks();
+            }
+            context.request_repaint_after(std::time::Duration::from_secs(3));
+        }
 
         self.pending_dialog(&context);
         self.update_title(&context);

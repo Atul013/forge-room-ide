@@ -7,11 +7,18 @@ pub struct Tab {
     untitled: Option<u32>,
     /// True until the editor has placed the cursor at the start of the document.
     pub fresh: bool,
+    /// Read-only generated view (such as a diff) instead of a file.
+    pub readonly: bool,
+    label: Option<String>,
+    /// Syntax name used for highlighting when there is no file extension.
+    pub syntax: Option<String>,
 }
 
 impl Tab {
     pub fn title(&self) -> String {
-        if let Some(name) = self.doc.file_name() {
+        if let Some(label) = &self.label {
+            label.clone()
+        } else if let Some(name) = self.doc.file_name() {
             name
         } else {
             format!("Untitled-{}", self.untitled.unwrap_or(1))
@@ -64,6 +71,9 @@ impl Tabs {
             doc: DocumentSession::default(),
             untitled: Some(self.next_untitled),
             fresh: true,
+            readonly: false,
+            label: None,
+            syntax: None,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -87,10 +97,39 @@ impl Tabs {
             doc,
             untitled: None,
             fresh: true,
+            readonly: false,
+            label: None,
+            syntax: None,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
         Ok(())
+    }
+
+    /// Show generated read-only text in a tab, reusing the tab with the same label.
+    pub fn open_virtual(&mut self, label: String, text: String, syntax: &str) {
+        let doc = DocumentSession::with_text(text);
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.label.as_deref() == Some(label.as_str()))
+        {
+            self.tabs[index].doc = doc;
+            self.tabs[index].fresh = true;
+            self.active = index;
+            return;
+        }
+        let tab = Tab {
+            id: self.take_id(),
+            doc,
+            untitled: None,
+            fresh: true,
+            readonly: true,
+            label: Some(label),
+            syntax: Some(syntax.to_string()),
+        };
+        self.tabs.push(tab);
+        self.active = self.tabs.len() - 1;
     }
 
     pub fn close(&mut self, index: usize) {

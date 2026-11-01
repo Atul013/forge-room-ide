@@ -31,6 +31,11 @@ Single place for the state of the native app and its installer. Shared agent han
   - Syntax highlighting per file extension (syntect via egui_extras), line-number gutter aligned to the real text layout, current-line highlight, no soft wrap with horizontal scroll, cursor starts at 1:1.
   - Breadcrumb path bar under the tabs; Git branch in the status bar (read from `.git/HEAD`); file-type colored icons in the explorer.
   - 13 unit tests; rustfmt, clippy `-D warnings` and the cargo-about license gate pass locally.
+- **Version control (done, verified against real Git repositories):**
+  - Source Control view (Ctrl+Shift+G) with commit box (Ctrl+Enter), staged and unstaged groups, per-file and bulk stage/unstage, change count badge on the activity bar, clickable branch with ahead/behind in the status bar.
+  - Click a change to open a read-only, green/red colored diff tab; "Initialize Repository" for plain folders.
+  - Gutter change markers (added, modified, deleted) in the editor; refreshes every 3 s, on save and on tab switch.
+  - Uses the `git` command line (like VS Code); a clear message appears when git is missing. 16 unit tests including real-repo stage/commit/diff.
 - Logo embedded in the exe (`build.rs`, `assets/forge-room.ico`).
 - Toolchain: Rust 1.99.1 (eframe 0.37 deps need 1.95+).
 
@@ -39,8 +44,12 @@ Single place for the state of the native app and its installer. Shared agent han
 1. ~~**IDE shell**~~ done.
 2. **Editor core:** ~~line numbers, syntax highlighting, current-line highlight~~ done; still to do: find/replace in file, go to line, bracket matching, indent guides, minimap.
 3. **Command palette and search:** Ctrl+Shift+P command palette, Ctrl+P quick open, find in files.
-4. **Terminal and Git:** integrated terminal panel, Git status/diff gutter in the explorer and status bar.
-5. Later: LSP (diagnostics, completion, go to definition), settings and keybindings, themes, session restore, multi-cursor, split editors, extension story, Room/collaboration UI from the product spec.
+4. ~~Git status, diff, stage, commit~~ done; still to do: discard changes, branches (switch/create), push/pull/fetch with credentials, stash, history/blame. **Terminal:** integrated terminal panel.
+5. **Port the features that lived on `main` (Electron/Code OSS era, now rebuilt natively on `forge-room-core`):**
+   - **Forge Room Studio:** the six themes (Neon Ronin, Starship Deck, Moss Shrine, Ink & Ember, Paper Studio, Signal Guard high contrast), custom palette, profiles import/export.
+   - **Team Lobby:** rooms, participants (humans and agents), tasks with ownership/dependencies/acceptance, handoffs, evidence, activity trail. The domain model is already in `forge-room-core`; the work is a native Rooms view. Not portable as-is: ACP/MCP clients, webview panels and VS Code API workspace tools (they need Code OSS or Node).
+6. **Extensions (declarative only):** install color themes, TextMate grammars, snippets and icon themes from Open VSX. Microsoft's Marketplace terms exclude non-Microsoft editors, and extensions that run JavaScript need a Node extension host, which this app deliberately does not have.
+7. Later: LSP (diagnostics, completion, go to definition), settings and keybindings, themes, session restore, multi-cursor, split editors, extension story, Room/collaboration UI from the product spec.
 
 ## Status log
 
