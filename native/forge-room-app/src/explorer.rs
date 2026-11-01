@@ -16,7 +16,7 @@ enum Kind {
     File,
 }
 
-const ROW_HEIGHT: f32 = 26.0;
+const ROW_HEIGHT: f32 = 24.0;
 
 pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option<&Path>) -> Action {
     let mut action = Action::None;
@@ -26,7 +26,7 @@ pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option
         ui.add_space(14.0);
         ui.label(
             RichText::new("Explorer")
-                .size(16.0)
+                .size(14.5)
                 .family(crate::fonts::semibold())
                 .color(theme::text()),
         );
@@ -139,11 +139,7 @@ fn row(
             file_color(label),
         ),
     }
-    let font = if bold {
-        FontId::proportional(13.0)
-    } else {
-        FontId::proportional(14.0)
-    };
+    let font = FontId::proportional(13.0);
     let color = if selected || bold {
         theme::text()
     } else {

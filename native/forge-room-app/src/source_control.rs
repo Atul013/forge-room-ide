@@ -100,7 +100,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo, compact: bool) -> 
         ui.add_space(14.0);
         ui.label(
             RichText::new("Source Control")
-                .size(16.0)
+                .size(14.5)
                 .family(crate::fonts::semibold())
                 .color(theme::text()),
         );

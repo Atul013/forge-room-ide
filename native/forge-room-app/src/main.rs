@@ -35,7 +35,7 @@ use tabs::{Tabs, normalize};
 use workspace::Workspace;
 
 const APP_NAME: &str = "Forge Room Early Preview";
-const TAB_HEIGHT: f32 = 38.0;
+const TAB_HEIGHT: f32 = 42.0;
 const TITLE_HEIGHT: f32 = 46.0;
 const ACTIVITY_WIDTH: f32 = 64.0;
 
@@ -457,7 +457,9 @@ impl ForgeRoomApp {
             for label in ["Output", "Problems", "Debug Console", "Ports"] {
                 underline_tab(ui, label, false, false, None).on_hover_text("Coming soon");
             }
-            if let Some(terminal) = &self.terminal {
+            if ui.available_width() > 760.0
+                && let Some(terminal) = &self.terminal
+            {
                 ui.add_space(10.0);
                 ui.label(
                     egui::RichText::new(&terminal.shell)
@@ -2303,7 +2305,7 @@ impl eframe::App for ForgeRoomApp {
         let bar = |fill| {
             egui::Frame::new()
                 .fill(fill)
-                .inner_margin(egui::Margin::symmetric(14, 10))
+                .inner_margin(egui::Margin::symmetric(14, 8))
         };
 
         // Flat panels separated by hairline dividers, as in the reference.
@@ -2330,7 +2332,7 @@ impl eframe::App for ForgeRoomApp {
 
         if self.show_sidebar {
             egui::Panel::left("sidebar")
-                .default_size(300.0)
+                .default_size(250.0)
                 .size_range(180.0..=560.0)
                 .resizable(true)
                 .frame(card(theme::bg_sidebar()))
@@ -2339,7 +2341,7 @@ impl eframe::App for ForgeRoomApp {
 
         if self.show_right {
             egui::Panel::right("right-dock")
-                .default_size(360.0)
+                .default_size(364.0)
                 .size_range(280.0..=640.0)
                 .resizable(true)
                 .frame(card(theme::bg_sidebar()))
@@ -2349,7 +2351,7 @@ impl eframe::App for ForgeRoomApp {
         if self.show_terminal {
             egui::Panel::bottom("terminal")
                 .resizable(true)
-                .default_size(250.0)
+                .default_size(200.0)
                 .size_range(120.0..=720.0)
                 .frame(card(theme::bg_editor()).inner_margin(egui::Margin {
                     left: 0,
