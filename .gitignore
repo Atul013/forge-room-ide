@@ -2,6 +2,7 @@
 **/node_modules/
 **/dist/
 **/out/
+**/target/
 **/.DS_Store
 Thumbs.db
 
@@ -23,3 +24,6 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# Local build outputs, downloaded tools and generated installers
+artifacts/

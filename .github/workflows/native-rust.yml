@@ -1,0 +1,88 @@
+# A ref update with this path triggers the full Windows artifact job.
+name: Native Rust slice
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "native/**"
+      - "docs/native/**"
+      - "packaging/**"
+      - ".github/workflows/native-rust.yml"
+  push:
+    branches:
+      - "codex/native-early-preview"
+    paths:
+      - "native/**"
+      - "docs/native/**"
+      - "packaging/**"
+      - ".github/workflows/native-rust.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --manifest-path native/forge-room-core/Cargo.toml -- --check
+      - name: Resolve locked dependencies
+        run: cargo generate-lockfile --manifest-path native/forge-room-core/Cargo.toml
+      - name: Check
+        run: cargo check --locked --manifest-path native/forge-room-core/Cargo.toml
+      - name: Test
+        run: cargo test --locked --manifest-path native/forge-room-core/Cargo.toml
+      - name: Clippy
+        run: cargo clippy --locked --manifest-path native/forge-room-core/Cargo.toml --all-targets -- -D warnings
+      - name: Graphical shell check
+        run: cargo check --locked --manifest-path native/forge-room-app/Cargo.toml
+      - name: Graphical shell format
+        run: cargo fmt --manifest-path native/forge-room-app/Cargo.toml -- --check
+      - name: Graphical shell tests
+        run: cargo test --locked --manifest-path native/forge-room-app/Cargo.toml
+      - name: Graphical shell clippy
+        run: cargo clippy --locked --manifest-path native/forge-room-app/Cargo.toml --all-targets -- -D warnings
+
+  package-windows:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned license report generator
+        run: cargo install --locked --features cli cargo-about --version 0.9.2
+      - name: Build native Windows release
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc --manifest-path native/forge-room-app/Cargo.toml
+      - name: Build portable archive, installer and checksums
+        id: package
+        run: ./packaging/windows/package.ps1
+      - name: Verify silent install and uninstall; record headless launch probe
+        run: ./packaging/windows/verify.ps1
+      - name: Upload Forge Room Early Preview artifacts
+        if: always() && steps.package.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64
+          path: |
+            artifacts/windows-x64/Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64.zip
+            artifacts/windows-x64/Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64-setup.exe
+            artifacts/windows-x64/SHA256SUMS.txt
+            artifacts/windows-x64/BUILD_METRICS.json
+            artifacts/windows-x64/LAUNCH_SMOKE.json
+            artifacts/windows-x64/INSTALL_VERIFY.json
+            artifacts/windows-x64/STARTUP_ERROR.log
+          if-no-files-found: error
+          retention-days: 14
