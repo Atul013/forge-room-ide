@@ -7,6 +7,7 @@ pub enum Action {
     OpenFile(PathBuf),
     OpenFolder,
     Refresh,
+    NewFile,
 }
 
 #[derive(Clone, Copy)]
@@ -15,7 +16,7 @@ enum Kind {
     File,
 }
 
-const ROW_HEIGHT: f32 = 22.0;
+const ROW_HEIGHT: f32 = 26.0;
 
 pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option<&Path>) -> Action {
     let mut action = Action::None;
@@ -24,15 +25,18 @@ pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option
     ui.horizontal(|ui| {
         ui.add_space(14.0);
         ui.label(
-            RichText::new("EXPLORER")
-                .size(11.0)
-                .strong()
-                .color(theme::text_dim()),
+            RichText::new("Explorer")
+                .size(16.0)
+                .family(crate::fonts::semibold())
+                .color(theme::text()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
-            if workspace.is_some() && ui.small_button("Refresh").clicked() {
+            if workspace.is_some() && icons::icon_button(ui, "Refresh", icons::refresh).clicked() {
                 action = Action::Refresh;
+            }
+            if icons::icon_button(ui, "New file (Ctrl+N)", icons::new_file).clicked() {
+                action = Action::NewFile;
             }
         });
     });
@@ -61,7 +65,7 @@ pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option
         .show(ui, |ui| {
             let root = workspace.root.clone();
             let open = workspace.is_expanded(&root);
-            let title = workspace.name().to_uppercase();
+            let title = workspace.name();
             if row(ui, 0, &title, Kind::Dir { open }, false, true).clicked() {
                 workspace.toggle(&root);
             }
@@ -112,10 +116,11 @@ fn row(
         return response;
     }
     let painter = ui.painter();
+    let pill = rect.shrink2(egui::vec2(8.0, 1.0));
     if selected {
-        painter.rect_filled(rect, 0.0, theme::list_active());
+        painter.rect_filled(pill, 6.0, theme::overlay(26));
     } else if response.hovered() {
-        painter.rect_filled(rect, 0.0, theme::overlay(12));
+        painter.rect_filled(pill, 6.0, theme::overlay(12));
     }
     let x = rect.left() + 10.0 + depth as f32 * 14.0;
     let y = rect.center().y;
@@ -135,9 +140,9 @@ fn row(
         ),
     }
     let font = if bold {
-        FontId::proportional(12.0)
-    } else {
         FontId::proportional(13.0)
+    } else {
+        FontId::proportional(14.0)
     };
     let color = if selected || bold {
         theme::text()

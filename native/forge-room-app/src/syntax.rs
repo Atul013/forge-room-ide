@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn rust_keywords_get_the_theme_keyword_color() {
-        let theme = theme::find("ink-ember").unwrap();
+        let theme = theme::current();
         let job = highlight("fn main() {}\n", "rs", &egui::FontId::monospace(14.0));
         // `fn` is the first section and must use a keyword rule color from the theme.
         let first = job.sections.first().unwrap();

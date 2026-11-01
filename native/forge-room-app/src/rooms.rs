@@ -130,6 +130,21 @@ impl RoomView {
         self.store = Some(store);
     }
 
+    /// Room name plus how many people and agents are in it, for the title and status bars.
+    pub fn summary(&self) -> Option<(String, usize, usize)> {
+        let state = self.state.as_ref()?;
+        let agents = state
+            .participants
+            .iter()
+            .filter(|person| person.role == forge_room_core::Role::Agent)
+            .count();
+        Some((
+            self.workspace_name.clone(),
+            state.participants.len() - agents,
+            agents,
+        ))
+    }
+
     pub fn open_task_count(&self) -> usize {
         self.state
             .as_ref()

@@ -1,7 +1,7 @@
 //! The Source Control sidebar, modelled on VS Code's: commit box, Sync/Publish, staged and
 //! unstaged lists, the commit graph and the history of the open file (GitLens-style).
 
-use crate::{explorer, git, graph, room_state, theme};
+use crate::{git, graph, room_state, theme};
 use eframe::egui::{self, Align2, Color32, FontId, Rect, RichText, Sense, Stroke};
 
 pub struct State {
@@ -81,32 +81,34 @@ pub fn letter_color(letter: char) -> Color32 {
 
 fn lane_color(lane: usize) -> Color32 {
     let p = theme::current().palette;
+    // Calm, varied lane colors; the accent is kept for the branch label, not every line.
     [
-        p.accent,
         p.function,
-        p.string,
-        p.keyword,
-        p.type_color,
         p.number,
+        p.string,
+        p.type_color,
+        p.keyword,
+        p.accent,
     ][lane % 6]
 }
 
-pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo) -> Action {
+pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo, compact: bool) -> Action {
     let mut action = Action::None;
 
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         ui.add_space(14.0);
         ui.label(
-            RichText::new("SOURCE CONTROL")
-                .size(11.0)
-                .strong()
-                .color(theme::text_dim()),
+            RichText::new("Source Control")
+                .size(16.0)
+                .family(crate::fonts::semibold())
+                .color(theme::text()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
             if let Repo::Ready(view) = &repo {
-                ui.menu_button("…", |ui| {
+                let more = crate::icons::icon_button(ui, "More actions", crate::icons::more);
+                egui::Popup::menu(&more).show(|ui| {
                     for (label, next) in [
                         ("Pull", Action::Pull),
                         ("Push", Action::Push),
@@ -140,7 +142,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo) -> Action {
                     }
                 });
             }
-            if !matches!(repo, Repo::NoFolder) && ui.small_button("Refresh").clicked() {
+            if !matches!(repo, Repo::NoFolder)
+                && crate::icons::icon_button(ui, "Refresh", crate::icons::refresh).clicked()
+            {
                 action = Action::Refresh;
             }
         });
@@ -168,7 +172,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo) -> Action {
             });
         }
         Repo::Ready(view) => {
-            if let Some(next) = ready(ui, state, &view) {
+            if let Some(next) = ready(ui, state, &view, compact) {
                 action = next;
             }
         }
@@ -189,7 +193,7 @@ fn empty_state(ui: &mut egui::Ui, title: &str, detail: &str) {
     });
 }
 
-fn ready(ui: &mut egui::Ui, state: &mut State, view: &View) -> Option<Action> {
+fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Option<Action> {
     let mut action = None;
     let status = view.status;
     let staged: Vec<&git::Change> = status.changes.iter().filter(|c| c.is_staged()).collect();
@@ -200,7 +204,7 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View) -> Option<Action> {
         .show(ui, |ui| {
             let editor = egui::TextEdit::multiline(&mut state.message)
                 .hint_text("Message (Ctrl+Enter to commit)")
-                .desired_rows(3)
+                .desired_rows(if compact { 1 } else { 3 })
                 .desired_width(f32::INFINITY)
                 .margin(egui::Margin::symmetric(10, 8));
             let response = ui.add(editor);
@@ -221,7 +225,13 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View) -> Option<Action> {
                         .fill(theme::button())
                         .corner_radius(6.0)
                         .min_size(egui::vec2((ui.available_width() - 32.0).max(80.0), 30.0));
-                if (ui.add_enabled(can_commit, button).clicked() || (submit && can_commit))
+                let hint = if can_commit {
+                    "Commit the staged changes"
+                } else {
+                    "Stage changes and write a message first"
+                };
+                if ((ui.add(button).on_hover_text(hint).clicked() && can_commit)
+                    || (submit && can_commit))
                     && action.is_none()
                 {
                     action = Some(Action::Commit);
@@ -303,6 +313,9 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View) -> Option<Action> {
                 action = Some(next);
             }
 
+            if compact {
+                return;
+            }
             // Commit graph.
             ui.add_space(6.0);
             group_header(ui, "GRAPH", &mut state.graph_open, view.commits.len());
@@ -340,14 +353,10 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View) -> Option<Action> {
 }
 
 fn sync_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let accent = theme::accent();
     ui.add(
-        egui::Button::new(RichText::new(text).strong().color(theme::text()))
-            .fill(theme::mix(theme::bg_sidebar(), accent, 0.30))
-            .stroke(Stroke::new(
-                1.0,
-                theme::mix(theme::bg_sidebar(), accent, 0.7),
-            ))
+        egui::Button::new(RichText::new(text).color(theme::text()))
+            .fill(theme::mix(theme::bg_sidebar(), theme::text(), 0.04))
+            .stroke(Stroke::new(1.0, theme::border()))
             .corner_radius(6.0)
             .min_size(egui::vec2(ui.available_width(), 30.0)),
     )
@@ -575,14 +584,19 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
     if hovered {
         painter.rect_filled(rect, 0.0, theme::overlay(10));
     }
-    crate::icons::file(
-        painter,
-        Rect::from_center_size(egui::pos2(rect.left() + 22.0, y), egui::vec2(10.0, 13.0)),
-        explorer::file_color(name),
+    // Status letter as a small badge on the left, like the design.
+    let badge = Rect::from_center_size(egui::pos2(rect.left() + 26.0, y), egui::vec2(20.0, 20.0));
+    painter.rect_filled(badge, 5.0, letter_color(letter).gamma_multiply(0.18));
+    painter.text(
+        badge.center(),
+        Align2::CENTER_CENTER,
+        letter,
+        FontId::proportional(12.0),
+        letter_color(letter),
     );
     let name_galley = painter.layout_no_wrap(
         name.to_string(),
-        FontId::proportional(13.0),
+        FontId::proportional(13.5),
         if letter == 'D' {
             theme::text_dim()
         } else {
@@ -590,7 +604,7 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
         },
     );
     let name_width = name_galley.size().x;
-    let text_left = rect.left() + 38.0;
+    let text_left = rect.left() + 46.0;
     let reserved = if staged { 44.0 } else { 68.0 };
     let clip = Rect::from_min_max(rect.min, egui::pos2(rect.right() - reserved, rect.bottom()));
     let text_painter = painter.with_clip_rect(clip);
@@ -613,14 +627,6 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
         if let Some(discard) = &discard_response {
             discard_icon(painter, discard_rect, discard.hovered());
         }
-    } else {
-        painter.text(
-            egui::pos2(rect.right() - 20.0, y),
-            Align2::CENTER_CENTER,
-            letter,
-            FontId::proportional(12.0),
-            letter_color(letter),
-        );
     }
 
     if stage_response

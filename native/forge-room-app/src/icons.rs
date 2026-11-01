@@ -62,21 +62,6 @@ pub fn file(painter: &Painter, rect: Rect, color: Color32) {
     );
 }
 
-/// Two stacked pages: the "Explorer" glyph for the activity bar.
-pub fn explorer(painter: &Painter, rect: Rect, color: Color32) {
-    let back = Rect::from_min_size(
-        rect.min + egui::vec2(rect.width() * 0.22, 0.0),
-        egui::vec2(rect.width() * 0.62, rect.height() * 0.72),
-    );
-    let front = Rect::from_min_size(
-        rect.min + egui::vec2(0.0, rect.height() * 0.24),
-        egui::vec2(rect.width() * 0.62, rect.height() * 0.76),
-    );
-    painter.rect_stroke(back, 1.5, Stroke::new(1.5, color), StrokeKind::Inside);
-    painter.rect_filled(front, 1.5, crate::theme::bg_activity());
-    painter.rect_stroke(front, 1.5, Stroke::new(1.5, color), StrokeKind::Inside);
-}
-
 pub fn close_cross(painter: &Painter, center: Pos2, color: Color32) {
     let stroke = Stroke::new(1.3, color);
     let d = 3.2;
@@ -152,4 +137,131 @@ pub fn arrow(painter: &Painter, center: Pos2, up: bool, color: Color32) {
     painter.line_segment([tail, tip], stroke);
     painter.line_segment([tip, tip + egui::vec2(-3.2, -direction * 3.4)], stroke);
     painter.line_segment([tip, tip + egui::vec2(3.2, -direction * 3.4)], stroke);
+}
+
+/// A flat 26px icon button: no frame until hovered, dim until hovered.
+pub fn icon_button(
+    ui: &mut egui::Ui,
+    tooltip: &str,
+    draw: impl FnOnce(&Painter, Pos2, Color32),
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::click());
+    let hovered = response.hovered();
+    if hovered {
+        ui.painter()
+            .rect_filled(rect, 6.0, crate::theme::overlay(18));
+    }
+    let color = if hovered {
+        crate::theme::text()
+    } else {
+        crate::theme::text_dim()
+    };
+    draw(ui.painter(), rect.center(), color);
+    response.on_hover_text(tooltip)
+}
+
+/// Circular arrow for "Refresh".
+pub fn refresh(painter: &Painter, center: Pos2, color: Color32) {
+    let stroke = Stroke::new(1.5, color);
+    let mut points = Vec::new();
+    for step in 0..=14 {
+        let angle = -0.6 + step as f32 / 14.0 * 5.0;
+        points.push(center + egui::vec2(angle.cos() * 6.0, angle.sin() * 6.0));
+    }
+    painter.add(egui::Shape::line(points, stroke));
+    let tip = center + egui::vec2((-0.6_f32).cos() * 6.0, (-0.6_f32).sin() * 6.0);
+    painter.line_segment([tip, tip + egui::vec2(-1.0, -4.5)], stroke);
+    painter.line_segment([tip, tip + egui::vec2(-4.8, -0.5)], stroke);
+}
+
+/// Three dots for "More actions".
+pub fn more(painter: &Painter, center: Pos2, color: Color32) {
+    for offset in [-6.0, 0.0, 6.0] {
+        painter.circle_filled(center + egui::vec2(offset, 0.0), 1.6, color);
+    }
+}
+
+/// Play triangle for Run/Debug.
+pub fn play(painter: &Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let points = vec![
+        c + egui::vec2(-5.0, -8.0),
+        c + egui::vec2(7.0, 0.0),
+        c + egui::vec2(-5.0, 8.0),
+        c + egui::vec2(-5.0, -8.0),
+    ];
+    painter.add(egui::Shape::line(points, Stroke::new(1.5, color)));
+}
+
+/// Puzzle-like block for Extensions.
+pub fn extensions(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.5, color);
+    let body = Rect::from_center_size(rect.center() + egui::vec2(0.0, 1.5), egui::vec2(15.0, 15.0));
+    painter.rect_stroke(body, 3.0, stroke, StrokeKind::Inside);
+    painter.circle_stroke(body.center_top() + egui::vec2(0.0, -1.5), 2.8, stroke);
+    painter.circle_stroke(body.right_center() + egui::vec2(1.5, 0.0), 2.8, stroke);
+}
+
+/// Four-point sparkle for the AI entry.
+pub fn sparkle(painter: &Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let (r, k) = (9.0, 2.2);
+    let points = vec![
+        c + egui::vec2(0.0, -r),
+        c + egui::vec2(k, -k),
+        c + egui::vec2(r, 0.0),
+        c + egui::vec2(k, k),
+        c + egui::vec2(0.0, r),
+        c + egui::vec2(-k, k),
+        c + egui::vec2(-r, 0.0),
+        c + egui::vec2(-k, -k),
+        c + egui::vec2(0.0, -r),
+    ];
+    painter.add(egui::Shape::line(points, Stroke::new(1.4, color)));
+}
+
+/// Terminal window with a prompt for the Terminal entry.
+pub fn terminal(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.5, color);
+    let frame = Rect::from_center_size(rect.center(), egui::vec2(18.0, 15.0));
+    painter.rect_stroke(frame, 2.5, stroke, StrokeKind::Inside);
+    let c = frame.center();
+    painter.line_segment(
+        [c + egui::vec2(-4.5, -2.5), c + egui::vec2(-1.5, 0.0)],
+        stroke,
+    );
+    painter.line_segment(
+        [c + egui::vec2(-1.5, 0.0), c + egui::vec2(-4.5, 2.5)],
+        stroke,
+    );
+    painter.line_segment([c + egui::vec2(1.0, 3.0), c + egui::vec2(4.5, 3.0)], stroke);
+}
+
+/// A plus sign.
+pub fn plus(painter: &Painter, center: Pos2, color: Color32) {
+    let stroke = Stroke::new(1.5, color);
+    painter.line_segment(
+        [
+            center + egui::vec2(-5.0, 0.0),
+            center + egui::vec2(5.0, 0.0),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            center + egui::vec2(0.0, -5.0),
+            center + egui::vec2(0.0, 5.0),
+        ],
+        stroke,
+    );
+}
+
+/// A page with a plus, for "New File".
+pub fn new_file(painter: &Painter, center: Pos2, color: Color32) {
+    file(
+        painter,
+        Rect::from_center_size(center + egui::vec2(-1.0, 0.0), egui::vec2(12.0, 15.0)),
+        color,
+    );
+    plus(painter, center + egui::vec2(5.0, 5.0), color);
 }

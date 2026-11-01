@@ -1,6 +1,21 @@
 {
  "themes": [
   {
+   "id": "Forge Room",
+   "name": "Forge Room",
+   "mood": "Installer black",
+   "description": "Neutral near-black with a single restrained red accent, matching the Forge Room installer.",
+   "mode": "dark",
+   "colors": [
+    "#121314",
+    "#C74C45",
+    "#8DBBCB",
+    "#E7A86F"
+   ],
+   "art": "forge",
+   "key": "forge-room"
+  },
+  {
    "id": "Forge Room Â· Neon Ronin",
    "name": "Neon Ronin",
    "mood": "Anime after dark",

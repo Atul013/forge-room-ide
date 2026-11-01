@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 
-pub const DEFAULT_THEME: &str = "ink-ember";
+pub const DEFAULT_THEME: &str = "forge-room";
 
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
@@ -17,7 +17,6 @@ pub struct Palette {
     pub title_bar: Color32,
     pub status_bar: Color32,
     pub status_text: Color32,
-    pub tab_idle: Color32,
     pub border: Color32,
     pub text: Color32,
     pub text_dim: Color32,
@@ -104,7 +103,8 @@ struct TokenSettings {
 }
 
 const CATALOG: &str = include_str!("../themes/catalog.json");
-const FILES: [(&str, &str); 6] = [
+const FILES: [(&str, &str); 7] = [
+    ("forge-room", include_str!("../themes/forge-room.json")),
     ("neon-ronin", include_str!("../themes/neon-ronin.json")),
     (
         "starship-deck",
@@ -185,7 +185,6 @@ fn build(entry: &CatalogEntry, file: &ThemeFile) -> Theme {
         title_bar: get("titleBar.activeBackground").unwrap_or(bg_activity),
         status_bar: get("statusBar.background").unwrap_or(bg_activity),
         status_text: get("statusBar.foreground").unwrap_or(text),
-        tab_idle: get("tab.inactiveBackground").unwrap_or(bg_sidebar),
         border: get("panel.border")
             .or_else(|| get("tab.border"))
             .unwrap_or_else(|| mix(bg_editor, text, 0.12)),
@@ -288,7 +287,7 @@ pub fn apply(context: &egui::Context) {
     } else {
         egui::Visuals::light()
     };
-    visuals.panel_fill = p.bg_editor;
+    visuals.panel_fill = glass_of(&p, p.bg_activity, 0x99);
     visuals.window_fill = p.bg_sidebar;
     visuals.extreme_bg_color = p.input_bg;
     visuals.faint_bg_color = mix(p.bg_editor, p.text, 0.04);
@@ -304,13 +303,33 @@ pub fn apply(context: &egui::Context) {
     visuals.widgets.hovered.bg_fill = mix(p.bg_sidebar, p.text, 0.15);
     visuals.widgets.active.weak_bg_fill = p.button;
     visuals.widgets.active.bg_fill = p.button;
+    // Installer-style controls: quiet fills, 1px hairlines, generous rounding.
+    let rounding = egui::CornerRadius::same(6);
+    for widget in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        widget.corner_radius = rounding;
+    }
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, mix(p.bg_sidebar, p.text, 0.10));
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, mix(p.bg_sidebar, p.text, 0.28));
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, p.accent);
+    visuals.window_corner_radius = egui::CornerRadius::same(10);
+    visuals.menu_corner_radius = egui::CornerRadius::same(8);
     context.set_visuals(visuals);
 
     context.all_styles_mut(|style| {
         style.text_styles.insert(
             TextStyle::Monospace,
-            FontId::new(14.0, FontFamily::Monospace),
+            FontId::new(14.5, FontFamily::Monospace),
         );
+        style.text_styles.insert(
+            TextStyle::Heading,
+            FontId::new(22.0, crate::fonts::semibold()),
+        );
+        style.spacing.button_padding = egui::vec2(12.0, 6.0);
         style
             .text_styles
             .insert(TextStyle::Body, FontId::new(13.5, FontFamily::Proportional));
@@ -329,6 +348,16 @@ pub fn status_dim() -> Color32 {
 }
 
 /// A highlight/hover wash that works on dark and light themes.
+/// `color` made see-through so the window's acrylic backdrop shows through. Light themes stay
+/// opaque: frosted glass over a dark blur only suits dark palettes.
+pub fn glass(color: Color32, alpha: u8) -> Color32 {
+    if current().palette.dark {
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+    } else {
+        color
+    }
+}
+
 pub fn overlay(alpha: u8) -> Color32 {
     if current().palette.dark {
         Color32::from_rgba_unmultiplied(255, 255, 255, alpha)
@@ -350,7 +379,6 @@ accessors!(
     title_bar,
     status_bar,
     status_text,
-    tab_idle,
     border,
     text,
     text_dim,
@@ -363,6 +391,14 @@ accessors!(
     line_highlight,
     line_number,
 );
+
+fn glass_of(p: &Palette, color: Color32, alpha: u8) -> Color32 {
+    if p.dark {
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+    } else {
+        color
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -381,13 +417,14 @@ mod tests {
     }
 
     #[test]
-    fn all_six_studio_themes_load_with_syntax_rules() {
+    fn all_bundled_themes_load_with_syntax_rules() {
         let themes = all();
-        assert_eq!(themes.len(), 6);
+        assert_eq!(themes.len(), 7);
         let keys: Vec<&str> = themes.iter().map(|t| t.key.as_str()).collect();
         assert_eq!(
             keys,
             [
+                "forge-room",
                 "neon-ronin",
                 "starship-deck",
                 "moss-shrine",

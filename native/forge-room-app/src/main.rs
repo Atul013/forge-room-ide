@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod brand;
 mod commands;
 mod document;
 mod explorer;
 mod find;
 mod find_bar;
+mod fonts;
 mod fuzzy;
 mod git;
 mod graph;
@@ -32,8 +34,33 @@ use tabs::{Tabs, normalize};
 use workspace::Workspace;
 
 const APP_NAME: &str = "Forge Room Early Preview";
-const TAB_HEIGHT: f32 = 34.0;
-const ACTIVITY_WIDTH: f32 = 48.0;
+const TAB_HEIGHT: f32 = 38.0;
+const TITLE_HEIGHT: f32 = 46.0;
+const ACTIVITY_WIDTH: f32 = 64.0;
+
+#[derive(Clone, Copy)]
+enum RailIcon {
+    Play,
+    Extensions,
+}
+
+/// One entry of the navigation rail on the left.
+#[derive(Clone, Copy)]
+enum Rail {
+    View(SidebarView),
+    Terminal,
+    Room,
+    Ai,
+    /// Shown in the design but not built yet: drawn dim and inert.
+    Soon(RailIcon),
+}
+
+/// Tabs of the dock on the right.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RightTab {
+    Ai,
+    Room,
+}
 
 fn main() {
     if let Err(error) = run() {
@@ -54,8 +81,12 @@ fn run() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_app_id("forge-room-early-preview")
             .with_title(APP_NAME)
-            .with_inner_size([1280.0, 800.0])
+            .with_decorations(false)
+            .with_maximized(false)
+            .with_inner_size([1240.0, 780.0])
             .with_min_inner_size([760.0, 480.0]),
+        // A saved window can end up partly under the taskbar; always start centred and fitted.
+        persist_window: false,
         ..Default::default()
     };
     eframe::run_native(
@@ -130,6 +161,8 @@ struct ForgeRoomApp {
     room: rooms::RoomView,
     terminal: Option<terminal::Terminal>,
     show_terminal: bool,
+    show_right: bool,
+    right_tab: RightTab,
     terminal_focus_request: bool,
     terminal_has_focus: bool,
     terminal_error: Option<String>,
@@ -174,6 +207,7 @@ fn shortcut(ui: &egui::Ui, modifiers: Modifiers, key: Key) -> bool {
 
 impl ForgeRoomApp {
     fn new(creation_context: &eframe::CreationContext<'_>, initial_path: Option<PathBuf>) -> Self {
+        fonts::install(&creation_context.egui_ctx);
         match settings::load().theme {
             Some(key) if theme::find(&key).is_some() => {
                 theme::set(&creation_context.egui_ctx, &key)
@@ -210,7 +244,9 @@ impl ForgeRoomApp {
             gallery: theme_gallery::Gallery::default(),
             room: rooms::RoomView::default(),
             terminal: None,
-            show_terminal: false,
+            show_terminal: true,
+            show_right: true,
+            right_tab: RightTab::Room,
             terminal_focus_request: false,
             terminal_has_focus: false,
             terminal_error: None,
@@ -412,34 +448,31 @@ impl ForgeRoomApp {
         let mut restart = false;
         let mut close = false;
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(12.0);
-            ui.label(
-                egui::RichText::new("TERMINAL")
-                    .size(11.0)
-                    .strong()
-                    .color(theme::text_dim()),
-            );
+            underline_tab(ui, "Terminal", true, true, None);
+            for label in ["Output", "Problems", "Debug Console", "Ports"] {
+                underline_tab(ui, label, false, false, None).on_hover_text("Coming soon");
+            }
             if let Some(terminal) = &self.terminal {
+                ui.add_space(10.0);
                 ui.label(
                     egui::RichText::new(&terminal.shell)
-                        .size(11.5)
+                        .size(12.0)
                         .color(theme::text_dim()),
                 );
             }
             if exited {
+                ui.add_space(10.0);
                 ui.label(
                     egui::RichText::new("process exited")
-                        .size(11.5)
+                        .size(12.0)
                         .color(theme::text_dim()),
                 );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
-                if ui
-                    .small_button("×")
-                    .on_hover_text("Hide terminal (Ctrl+`)")
-                    .clicked()
-                {
+                if icons::icon_button(ui, "Hide terminal (Ctrl+`)", icons::close_cross).clicked() {
                     close = true;
                 }
                 if (exited || self.terminal.is_none()) && ui.small_button("Restart").clicked() {
@@ -457,6 +490,61 @@ impl ForgeRoomApp {
             self.terminal = None;
             self.ensure_terminal();
             self.terminal_focus_request = true;
+        }
+        if ui.available_width() > 640.0
+            && let Some(Ok(status)) = &self.git_status
+            && let Some(branch) = &status.branch
+        {
+            egui::Panel::right("branch-card")
+                .exact_size(290.0)
+                .resizable(false)
+                .frame(egui::Frame::new().inner_margin(egui::Margin::same(10)))
+                .show(ui, |ui| {
+                    egui::Frame::new()
+                        .stroke(egui::Stroke::new(1.0, theme::border()))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(
+                                egui::RichText::new("Current Branch")
+                                    .size(13.5)
+                                    .color(theme::text()),
+                            );
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(16.0, 16.0),
+                                    egui::Sense::hover(),
+                                );
+                                icons::branch(ui.painter(), rect, theme::text_dim());
+                                ui.label(egui::RichText::new(branch).color(theme::text()));
+                            });
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                for (label, count, up) in [
+                                    ("Ahead", status.ahead, true),
+                                    ("Behind", status.behind, false),
+                                ] {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(12.0, 16.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    icons::arrow(
+                                        ui.painter(),
+                                        rect.center(),
+                                        up,
+                                        theme::text_dim(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("{label} {count}"))
+                                            .color(theme::text_dim()),
+                                    );
+                                    ui.add_space(8.0);
+                                }
+                            });
+                        });
+                });
         }
         let request = std::mem::take(&mut self.terminal_focus_request);
         match self.terminal.as_mut() {
@@ -612,8 +700,200 @@ impl ForgeRoomApp {
         }
     }
 
+    /// Custom title bar: brand and menus on the left, the command palette pill in the middle,
+    /// window controls on the right. The empty space drags the window.
+    fn title_bar(&mut self, ui: &mut egui::Ui) {
+        let bar = ui.max_rect();
+        let drag = ui.interact(
+            bar,
+            ui.scope_id().with("title-drag"),
+            egui::Sense::click_and_drag(),
+        );
+        if drag.drag_started_by(egui::PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+        if drag.double_clicked() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        }
+        ui.painter().line_segment(
+            [bar.left_bottom(), bar.right_bottom()],
+            egui::Stroke::new(1.0, theme::border()),
+        );
+
+        // Command palette pill, centred on the whole bar.
+        let pill = egui::Rect::from_center_size(
+            egui::pos2(bar.center().x, bar.center().y),
+            egui::vec2((bar.width() * 0.34).clamp(200.0, 460.0), 30.0),
+        );
+        let pill_response = ui.interact(
+            pill,
+            ui.scope_id().with("title-palette"),
+            egui::Sense::click(),
+        );
+        let painter = ui.painter();
+        painter.rect_filled(
+            pill,
+            9.0,
+            if pill_response.hovered() {
+                theme::mix(theme::bg_editor(), theme::text(), 0.07)
+            } else {
+                theme::mix(theme::bg_editor(), theme::text(), 0.03)
+            },
+        );
+        painter.rect_stroke(
+            pill,
+            9.0,
+            egui::Stroke::new(1.0, theme::border()),
+            egui::StrokeKind::Inside,
+        );
+        icons::search(
+            painter,
+            egui::Rect::from_center_size(
+                egui::pos2(pill.left() + 20.0, pill.center().y),
+                egui::vec2(14.0, 14.0),
+            ),
+            theme::text_dim(),
+        );
+        painter.text(
+            egui::pos2(pill.left() + 36.0, pill.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Command Palette (Ctrl+Shift+P)",
+            egui::FontId::proportional(13.5),
+            theme::text_dim(),
+        );
+        if pill_response.clicked() {
+            self.run_command(Command::GoToLine, true);
+        }
+
+        if bar.width() > 980.0 {
+            let room_pill = egui::Rect::from_min_size(
+                egui::pos2(pill.right() + 16.0, pill.top()),
+                egui::vec2(230.0, 30.0),
+            );
+            let response = ui.interact(
+                room_pill,
+                ui.scope_id().with("title-room"),
+                egui::Sense::click(),
+            );
+            let painter = ui.painter();
+            let lit = self.show_right && self.right_tab == RightTab::Room;
+            painter.rect_filled(
+                room_pill,
+                9.0,
+                if lit {
+                    theme::mix(theme::bg_editor(), theme::accent(), 0.18)
+                } else if response.hovered() {
+                    theme::mix(theme::bg_editor(), theme::text(), 0.07)
+                } else {
+                    theme::mix(theme::bg_editor(), theme::text(), 0.03)
+                },
+            );
+            painter.rect_stroke(
+                room_pill,
+                9.0,
+                egui::Stroke::new(
+                    1.0,
+                    if lit {
+                        theme::mix(theme::bg_editor(), theme::accent(), 0.6)
+                    } else {
+                        theme::border()
+                    },
+                ),
+                egui::StrokeKind::Inside,
+            );
+            icons::room(
+                painter,
+                egui::Rect::from_center_size(
+                    egui::pos2(room_pill.left() + 22.0, room_pill.center().y),
+                    egui::vec2(18.0, 18.0),
+                ),
+                theme::text(),
+            );
+            let name = match self.room.summary() {
+                Some((name, _, _)) => format!("Room: {name}"),
+                None => "Room".to_string(),
+            };
+            painter.text(
+                egui::pos2(room_pill.left() + 40.0, room_pill.center().y),
+                egui::Align2::LEFT_CENTER,
+                name,
+                egui::FontId::proportional(13.5),
+                theme::text(),
+            );
+            if response
+                .on_hover_text("Show or hide the Room panel")
+                .clicked()
+            {
+                self.show_dock(RightTab::Room);
+            }
+        }
+
+        ui.horizontal_centered(|ui| {
+            ui.add_space(14.0);
+            let (logo, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
+            brand::logo(ui.painter(), logo.center(), 11.5);
+            ui.add_space(4.0);
+            // The design has no menu strip: File, Edit and View live under the brand name.
+            ui.menu_button(
+                egui::RichText::new("Forge Room")
+                    .size(16.0)
+                    .family(fonts::semibold())
+                    .color(theme::text()),
+                |ui| self.menu_bar(ui),
+            );
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                for (kind, tip) in [(0, "Close"), (1, "Maximize"), (2, "Minimize")] {
+                    let (rect, response) = ui
+                        .allocate_exact_size(egui::vec2(46.0, TITLE_HEIGHT), egui::Sense::click());
+                    let hovered = response.hovered();
+                    if hovered {
+                        let fill = if kind == 0 {
+                            egui::Color32::from_rgb(196, 43, 28)
+                        } else {
+                            theme::overlay(20)
+                        };
+                        ui.painter().rect_filled(rect, 0.0, fill);
+                    }
+                    let color = if hovered && kind == 0 {
+                        egui::Color32::WHITE
+                    } else {
+                        theme::text()
+                    };
+                    let c = rect.center();
+                    let stroke = egui::Stroke::new(1.2, color);
+                    let painter = ui.painter();
+                    match kind {
+                        0 => icons::close_cross(painter, c, color),
+                        1 => {
+                            let square = egui::Rect::from_center_size(c, egui::vec2(10.0, 10.0));
+                            painter.rect_stroke(square, 1.0, stroke, egui::StrokeKind::Inside);
+                        }
+                        _ => {
+                            painter.line_segment(
+                                [c + egui::vec2(-5.0, 0.0), c + egui::vec2(5.0, 0.0)],
+                                stroke,
+                            );
+                        }
+                    }
+                    if response.on_hover_text(tip).clicked() {
+                        let command = match kind {
+                            0 => egui::ViewportCommand::Close,
+                            1 => egui::ViewportCommand::Maximized(!maximized),
+                            _ => egui::ViewportCommand::Minimized(true),
+                        };
+                        ui.ctx().send_viewport_cmd(command);
+                    }
+                }
+            });
+        });
+    }
+
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
+        {
             ui.menu_button("File", |ui| {
                 let items: [(&str, &str); 3] = [
                     ("New File", "Ctrl+N"),
@@ -737,10 +1017,23 @@ impl ForgeRoomApp {
                     ui.close();
                 }
             });
-        });
+        }
+    }
+
+    fn show_dock(&mut self, tab: RightTab) {
+        if self.show_right && self.right_tab == tab {
+            self.show_right = false;
+        } else {
+            self.show_right = true;
+            self.right_tab = tab;
+        }
     }
 
     fn switch_view(&mut self, view: SidebarView) {
+        if view == SidebarView::Room {
+            self.show_dock(RightTab::Room);
+            return;
+        }
         if self.view == view && self.show_sidebar {
             self.show_sidebar = false;
         } else {
@@ -760,58 +1053,115 @@ impl ForgeRoomApp {
     }
 
     fn activity_bar(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
+        ui.add_space(12.0);
         let badge = self.change_count();
-        for (view, tip) in [
-            (SidebarView::Explorer, "Explorer (Ctrl+Shift+E)"),
-            (SidebarView::Search, "Search (Ctrl+Shift+F)"),
-            (SidebarView::SourceControl, "Source Control (Ctrl+Shift+G)"),
-            (SidebarView::Room, "Room (Ctrl+Shift+R)"),
-        ] {
-            let (rect, response) = ui.allocate_exact_size(
-                egui::vec2(ACTIVITY_WIDTH, ACTIVITY_WIDTH),
-                egui::Sense::click(),
-            );
-            let active = self.show_sidebar && self.view == view;
-            let color = if active || response.hovered() {
-                theme::text()
-            } else {
-                theme::text_dim()
-            };
-            let painter = ui.painter();
-            if active {
-                painter.rect_filled(
-                    egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
-                    0.0,
-                    theme::accent(),
-                );
-            }
-            let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 24.0));
-            match view {
-                SidebarView::Explorer => icons::explorer(painter, icon_rect, color),
-                SidebarView::Search => icons::search(painter, icon_rect, color),
-                SidebarView::SourceControl => icons::branch(painter, icon_rect, color),
-                SidebarView::Room => icons::room(painter, icon_rect, color),
-            }
-            let count = match view {
-                SidebarView::SourceControl => badge,
-                SidebarView::Room => self.room.open_task_count(),
-                SidebarView::Explorer | SidebarView::Search => 0,
-            };
-            if count > 0 {
-                let center = egui::pos2(rect.right() - 12.0, rect.top() + 14.0);
-                painter.circle_filled(center, 8.0, theme::badge());
-                painter.text(
-                    center,
-                    egui::Align2::CENTER_CENTER,
-                    count.min(99),
-                    egui::FontId::proportional(10.0),
-                    theme::badge_text(),
-                );
-            }
-            if response.on_hover_text(tip).clicked() {
-                self.switch_view(view);
-            }
+        let items: [(Rail, &str); 8] = [
+            (Rail::View(SidebarView::Explorer), "Explorer (Ctrl+Shift+E)"),
+            (Rail::View(SidebarView::Search), "Search (Ctrl+Shift+F)"),
+            (
+                Rail::View(SidebarView::SourceControl),
+                "Source Control (Ctrl+Shift+G)",
+            ),
+            (Rail::Soon(RailIcon::Play), "Run/Debug: coming soon"),
+            (Rail::Soon(RailIcon::Extensions), "Extensions: coming soon"),
+            (Rail::Ai, "AI Assistant"),
+            (Rail::Terminal, "Terminal (Ctrl+`)"),
+            (Rail::Room, "Room (Ctrl+Shift+R)"),
+        ];
+        for (item, tip) in items {
+            ui.horizontal(|ui| {
+                ui.add_space((ACTIVITY_WIDTH - 44.0) / 2.0);
+                let soon = matches!(item, Rail::Soon(_));
+                let sense = if soon {
+                    egui::Sense::hover()
+                } else {
+                    egui::Sense::click()
+                };
+                let (rect, response) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), sense);
+                let active = match item {
+                    Rail::View(view) => self.show_sidebar && self.view == view,
+                    Rail::Terminal => self.show_terminal,
+                    Rail::Room => self.show_right && self.right_tab == RightTab::Room,
+                    Rail::Ai => self.show_right && self.right_tab == RightTab::Ai,
+                    Rail::Soon(_) => false,
+                };
+                let hovered = response.hovered() && !soon;
+                let painter = ui.painter();
+                if active && matches!(item, Rail::Room) {
+                    painter.rect_filled(
+                        rect,
+                        10.0,
+                        theme::mix(theme::bg_activity(), theme::accent(), 0.25),
+                    );
+                    painter.rect_stroke(
+                        rect,
+                        10.0,
+                        egui::Stroke::new(
+                            1.0,
+                            theme::mix(theme::bg_activity(), theme::accent(), 0.65),
+                        ),
+                        egui::StrokeKind::Inside,
+                    );
+                } else if active {
+                    painter.rect_filled(rect, 10.0, theme::overlay(20));
+                } else if hovered {
+                    painter.rect_filled(rect, 10.0, theme::overlay(10));
+                }
+                let color = if soon {
+                    theme::mix(theme::bg_activity(), theme::text_dim(), 0.55)
+                } else if active || hovered {
+                    theme::text()
+                } else {
+                    theme::text_dim()
+                };
+                let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 22.0));
+                match item {
+                    Rail::View(SidebarView::Explorer) => icons::folder(
+                        painter,
+                        egui::Rect::from_center_size(icon_rect.center(), egui::vec2(18.0, 14.0)),
+                        color,
+                    ),
+                    Rail::View(SidebarView::Search) => icons::search(painter, icon_rect, color),
+                    Rail::View(SidebarView::SourceControl) => {
+                        icons::branch(painter, icon_rect, color)
+                    }
+                    Rail::View(SidebarView::Room) | Rail::Room => {
+                        icons::room(painter, icon_rect, color)
+                    }
+                    Rail::Soon(RailIcon::Play) => icons::play(painter, icon_rect, color),
+                    Rail::Soon(RailIcon::Extensions) => {
+                        icons::extensions(painter, icon_rect, color)
+                    }
+                    Rail::Ai => icons::sparkle(painter, icon_rect, color),
+                    Rail::Terminal => icons::terminal(painter, icon_rect, color),
+                }
+                let count = match item {
+                    Rail::View(SidebarView::SourceControl) => badge,
+                    Rail::Room => self.room.open_task_count(),
+                    _ => 0,
+                };
+                if count > 0 {
+                    let center = egui::pos2(rect.right() - 4.0, rect.top() + 6.0);
+                    painter.circle_filled(center, 8.0, theme::badge());
+                    painter.text(
+                        center,
+                        egui::Align2::CENTER_CENTER,
+                        count.min(99),
+                        egui::FontId::proportional(10.5),
+                        theme::badge_text(),
+                    );
+                }
+                if response.on_hover_text(tip).clicked() {
+                    match item {
+                        Rail::View(view) => self.switch_view(view),
+                        Rail::Terminal => self.run_command(Command::ToggleTerminal, false),
+                        Rail::Room => self.show_dock(RightTab::Room),
+                        Rail::Ai => self.show_dock(RightTab::Ai),
+                        Rail::Soon(_) => {}
+                    }
+                }
+            });
         }
     }
 
@@ -1158,7 +1508,22 @@ impl ForgeRoomApp {
         // Keep the panel width whatever the view; short content must not shrink it.
         ui.set_min_width(ui.available_width());
         match self.view {
-            SidebarView::Explorer => self.explorer_view(ui),
+            SidebarView::Explorer => {
+                // Like the design: the file tree on top, a compact Source Control below it.
+                if self.workspace.is_some() && self.is_repo {
+                    egui::Panel::bottom("sidebar-scm")
+                        .resizable(true)
+                        .default_size(330.0)
+                        .size_range(170.0..=620.0)
+                        .frame(
+                            egui::Frame::new()
+                                .fill(theme::bg_sidebar())
+                                .stroke(egui::Stroke::new(1.0, theme::border())),
+                        )
+                        .show(ui, |ui| self.source_control_view(ui, true));
+                }
+                self.explorer_view(ui);
+            }
             SidebarView::Search => {
                 let root = self.repo_root();
                 if let search_view::Action::Open {
@@ -1179,30 +1544,32 @@ impl ForgeRoomApp {
                 let has_workspace = self.workspace.is_some();
                 self.room.show(ui, has_workspace);
             }
-            SidebarView::SourceControl => {
-                let repo = if self.workspace.is_none() {
-                    source_control::Repo::NoFolder
-                } else if !self.is_repo {
-                    source_control::Repo::NoRepository
-                } else {
-                    match &self.git_status {
-                        Some(Ok(status)) => source_control::Repo::Ready(source_control::View {
-                            status,
-                            commits: &self.graph_commits,
-                            rows: &self.graph_rows,
-                            history: &self.file_history,
-                            history_name: self.history_name.as_deref(),
-                            stashes: self.stash_count,
-                            busy: self.git_job.as_ref().map(|job| job.label.as_str()),
-                        }),
-                        Some(Err(error)) => source_control::Repo::Error(error),
-                        None => source_control::Repo::NoRepository,
-                    }
-                };
-                let action = source_control::show(ui, &mut self.sc, repo);
-                self.git_action(action);
-            }
+            SidebarView::SourceControl => self.source_control_view(ui, false),
         }
+    }
+
+    fn source_control_view(&mut self, ui: &mut egui::Ui, compact: bool) {
+        let repo = if self.workspace.is_none() {
+            source_control::Repo::NoFolder
+        } else if !self.is_repo {
+            source_control::Repo::NoRepository
+        } else {
+            match &self.git_status {
+                Some(Ok(status)) => source_control::Repo::Ready(source_control::View {
+                    status,
+                    commits: &self.graph_commits,
+                    rows: &self.graph_rows,
+                    history: &self.file_history,
+                    history_name: self.history_name.as_deref(),
+                    stashes: self.stash_count,
+                    busy: self.git_job.as_ref().map(|job| job.label.as_str()),
+                }),
+                Some(Err(error)) => source_control::Repo::Error(error),
+                None => source_control::Repo::NoRepository,
+            }
+        };
+        let action = source_control::show(ui, &mut self.sc, repo, compact);
+        self.git_action(action);
     }
 
     fn explorer_view(&mut self, ui: &mut egui::Ui) {
@@ -1211,6 +1578,7 @@ impl ForgeRoomApp {
             explorer::Action::None => {}
             explorer::Action::OpenFile(path) => self.open_path(path),
             explorer::Action::OpenFolder => self.open_folder_dialog(),
+            explorer::Action::NewFile => self.new_file(),
             explorer::Action::Refresh => {
                 if let Some(workspace) = self.workspace.as_mut() {
                     workspace.refresh();
@@ -1225,10 +1593,11 @@ impl ForgeRoomApp {
         ui.painter().rect_filled(
             egui::Rect::from_min_size(bar.min, egui::vec2(bar.width(), TAB_HEIGHT)),
             0.0,
-            theme::tab_idle(),
+            theme::bg_editor(),
         );
         let mut activate = None;
         let mut close = None;
+        let mut new_tab = false;
 
         egui::ScrollArea::horizontal()
             .auto_shrink([false, true])
@@ -1241,10 +1610,10 @@ impl ForgeRoomApp {
                         let title = tab.title();
                         let galley = ui.painter().layout_no_wrap(
                             title,
-                            egui::FontId::proportional(13.0),
+                            egui::FontId::proportional(14.0),
                             theme::text(),
                         );
-                        let width = (galley.size().x + 52.0).max(104.0);
+                        let width = (galley.size().x + 56.0).max(110.0);
                         let (rect, response) = ui.allocate_exact_size(
                             egui::vec2(width, TAB_HEIGHT),
                             egui::Sense::click(),
@@ -1261,25 +1630,23 @@ impl ForgeRoomApp {
                         let hovered = response.hovered() || close_response.hovered();
 
                         let painter = ui.painter();
-                        let fill = if is_active {
-                            theme::bg_editor()
-                        } else if hovered {
-                            theme::mix(theme::tab_idle(), theme::text(), 0.06)
-                        } else {
-                            theme::tab_idle()
-                        };
-                        painter.rect_filled(rect, 0.0, fill);
+                        if hovered && !is_active {
+                            painter.rect_filled(
+                                rect.shrink2(egui::vec2(2.0, 5.0)),
+                                7.0,
+                                theme::overlay(10),
+                            );
+                        }
                         if is_active {
                             painter.rect_filled(
-                                egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 2.0)),
-                                0.0,
+                                egui::Rect::from_min_max(
+                                    egui::pos2(rect.left() + 8.0, rect.bottom() - 2.0),
+                                    egui::pos2(rect.right() - 8.0, rect.bottom()),
+                                ),
+                                1.0,
                                 theme::accent(),
                             );
                         }
-                        painter.line_segment(
-                            [rect.right_top(), rect.right_bottom()],
-                            egui::Stroke::new(1.0, theme::border()),
-                        );
                         let text_color = if is_active {
                             theme::text()
                         } else {
@@ -1305,9 +1672,16 @@ impl ForgeRoomApp {
                             activate = Some(index);
                         }
                     }
+                    ui.add_space(6.0);
+                    if icons::icon_button(ui, "New file (Ctrl+N)", icons::plus).clicked() {
+                        new_tab = true;
+                    }
                 });
             });
 
+        if new_tab {
+            self.new_file();
+        }
         if let Some(index) = activate {
             self.tabs.active = index;
             self.focus_editor = true;
@@ -1640,38 +2014,98 @@ impl ForgeRoomApp {
     }
 
     fn welcome(&mut self, ui: &mut egui::Ui) {
-        ui.vertical_centered(|ui| {
-            ui.add_space((ui.available_height() * 0.26).max(24.0));
-            ui.label(
-                egui::RichText::new("Forge Room")
-                    .size(30.0)
-                    .color(theme::text()),
+        let area = ui.available_rect_before_wrap();
+        brand::welcome_backdrop(&ui.painter_at(area), area);
+        let center_x = area.center().x;
+        let top = area.top() + (area.height() * 0.2).max(40.0);
+        let painter = ui.painter_at(area);
+        brand::logo(&painter, egui::pos2(center_x, top + 36.0), 34.0);
+        brand::wordmark(&painter, egui::pos2(center_x, top + 104.0), 26.0);
+        painter.text(
+            egui::pos2(center_x, top + 134.0),
+            egui::Align2::CENTER_CENTER,
+            "E A R L Y   P R E V I E W",
+            egui::FontId::proportional(11.5),
+            theme::text_dim(),
+        );
+
+        let width = 320.0;
+        let mut y = top + 178.0;
+        let entries: [(&str, &str, bool); 3] = [
+            ("New File", "Ctrl+N", false),
+            ("Open File…", "Ctrl+O", false),
+            ("Open Folder…", "Ctrl+Shift+O", true),
+        ];
+        for (index, (label, keys, primary)) in entries.iter().enumerate() {
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(center_x - width / 2.0, y),
+                egui::vec2(width, 38.0),
             );
-            ui.label(egui::RichText::new("Early Preview").color(theme::text_dim()));
-            ui.add_space(24.0);
-            let size = egui::vec2(240.0, 32.0);
-            let entries: [(&str, &str); 3] = [
-                ("New File", "Ctrl+N"),
-                ("Open File…", "Ctrl+O"),
-                ("Open Folder…", "Ctrl+Shift+O"),
-            ];
-            for (index, (label, keys)) in entries.iter().enumerate() {
-                if ui
-                    .add(
-                        egui::Button::new(*label)
-                            .shortcut_text(*keys)
-                            .min_size(size),
-                    )
-                    .clicked()
-                {
-                    match index {
-                        0 => self.new_file(),
-                        1 => self.open_file_dialog(),
-                        _ => self.open_folder_dialog(),
-                    }
+            let mut button = egui::Button::new(egui::RichText::new(*label).color(if *primary {
+                theme::button_text()
+            } else {
+                theme::text()
+            }))
+            .shortcut_text(*keys)
+            .corner_radius(6.0);
+            if *primary {
+                button = button.fill(theme::button()).stroke(egui::Stroke::NONE);
+            }
+            if ui.put(rect, button).clicked() {
+                match index {
+                    0 => self.new_file(),
+                    1 => self.open_file_dialog(),
+                    _ => self.open_folder_dialog(),
                 }
             }
+            y += 46.0;
+        }
+        painter.text(
+            egui::pos2(center_x, y + 22.0),
+            egui::Align2::CENTER_CENTER,
+            "Ctrl+Shift+P  Command Palette      Ctrl+P  Go to File",
+            egui::FontId::proportional(12.0),
+            theme::text_dim(),
+        );
+    }
+
+    fn right_dock(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.add_space(8.0);
+            for (tab, label, icon) in [
+                (
+                    RightTab::Ai,
+                    "AI Assistant",
+                    icons::sparkle as fn(&egui::Painter, egui::Rect, egui::Color32),
+                ),
+                (RightTab::Room, "Room", icons::room),
+            ] {
+                if underline_tab(ui, label, self.right_tab == tab, true, Some(icon)).clicked() {
+                    self.right_tab = tab;
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(6.0);
+                if icons::icon_button(ui, "Hide panel", icons::close_cross).clicked() {
+                    self.show_right = false;
+                }
+            });
         });
+        ui.painter().line_segment(
+            [
+                egui::pos2(ui.max_rect().left(), ui.cursor().top()),
+                egui::pos2(ui.max_rect().right(), ui.cursor().top()),
+            ],
+            egui::Stroke::new(1.0, theme::border()),
+        );
+        match self.right_tab {
+            RightTab::Room => {
+                let has_workspace = self.workspace.is_some();
+                self.room.show(ui, has_workspace);
+            }
+            RightTab::Ai => ai_panel(ui),
+        }
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -1708,10 +2142,25 @@ impl ForgeRoomApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let dim = |text: String| egui::RichText::new(text).color(theme::status_dim());
                 ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()));
+                ui.add_space(6.0);
                 if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
                     ui.label(dim(position::line_ending(tab.doc.text()).to_string()));
                     ui.label(dim("UTF-8".to_string()));
                     ui.label(dim(format!("Ln {}, Col {}", self.cursor.0, self.cursor.1)));
+                }
+                if let Some((name, people, agents)) = self.room.summary() {
+                    ui.add_space(18.0);
+                    ui.label(dim(format!("{people} members • {agents} agents")));
+                    let (dot, _) =
+                        ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
+                    ui.painter().circle_filled(
+                        dot.center(),
+                        3.5,
+                        egui::Color32::from_rgb(110, 200, 120),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("Room: {name}")).color(theme::status_text()),
+                    );
                 }
             });
         });
@@ -1818,8 +2267,22 @@ impl ForgeRoomApp {
 }
 
 impl eframe::App for ForgeRoomApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        egui::Color32::from_rgb(10, 11, 12).to_normalized_gamma_f32()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
+        // Windows can restore a previous maximized state; always open as a normal window.
+        if context.cumulative_pass_nr() == 3 {
+            context.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+            context.request_repaint();
+        }
+        if context.cumulative_pass_nr() == 6 {
+            context.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1280.0, 780.0)));
+            context.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(60.0, 30.0)));
+            context.request_repaint();
+        }
         if context.input(|input| input.viewport().close_requested())
             && self.tabs.any_dirty()
             && !self.allow_close
@@ -1831,56 +2294,76 @@ impl eframe::App for ForgeRoomApp {
             self.handle_shortcuts(ui);
         }
 
+        paint_backdrop(ui);
+
         let bar = |fill| {
             egui::Frame::new()
-                .fill(fill)
-                .inner_margin(egui::Margin::symmetric(8, 3))
+                .fill(theme::glass(fill, 0xCC))
+                .inner_margin(egui::Margin::symmetric(14, 10))
         };
 
+        // Panels are rounded cards on the darkest background, with small gaps between them.
+        let card = |fill| {
+            egui::Frame::new()
+                .fill(theme::glass(fill, 0xEA))
+                .corner_radius(12.0)
+                .stroke(egui::Stroke::new(1.0, theme::border()))
+                .outer_margin(egui::Margin::same(3))
+        };
+
+        if self.show_terminal && self.terminal.is_none() && self.terminal_error.is_none() {
+            self.ensure_terminal();
+        }
+
         egui::Panel::top("menu")
-            .frame(bar(theme::title_bar()))
-            .show(ui, |ui| self.menu_bar(ui));
+            .frame(egui::Frame::new().fill(theme::glass(theme::title_bar(), 0xC8)))
+            .exact_size(TITLE_HEIGHT)
+            .show(ui, |ui| self.title_bar(ui));
 
         egui::Panel::bottom("status")
             .frame(bar(theme::status_bar()))
             .show(ui, |ui| self.status_bar(ui));
 
-        if self.show_terminal {
-            egui::Panel::bottom("terminal")
-                .resizable(true)
-                .default_size(260.0)
-                .size_range(120.0..=720.0)
-                .frame(
-                    egui::Frame::new()
-                        .fill(theme::bg_editor())
-                        .stroke(egui::Stroke::new(1.0, theme::border()))
-                        .inner_margin(egui::Margin {
-                            left: 0,
-                            right: 0,
-                            top: 4,
-                            bottom: 0,
-                        }),
-                )
-                .show(ui, |ui| self.terminal_panel(ui));
-        }
-
         egui::Panel::left("activity")
             .exact_size(ACTIVITY_WIDTH)
             .resizable(false)
-            .frame(egui::Frame::new().fill(theme::bg_activity()))
+            .frame(egui::Frame::new().fill(theme::glass(theme::bg_activity(), 0xB8)))
             .show(ui, |ui| self.activity_bar(ui));
 
         if self.show_sidebar {
             egui::Panel::left("sidebar")
-                .default_size(270.0)
-                .size_range(160.0..=520.0)
+                .default_size(300.0)
+                .size_range(180.0..=560.0)
                 .resizable(true)
-                .frame(egui::Frame::new().fill(theme::bg_sidebar()))
+                .frame(card(theme::bg_sidebar()))
                 .show(ui, |ui| self.sidebar(ui));
         }
 
+        if self.show_right {
+            egui::Panel::right("right-dock")
+                .default_size(360.0)
+                .size_range(280.0..=640.0)
+                .resizable(true)
+                .frame(card(theme::bg_sidebar()))
+                .show(ui, |ui| self.right_dock(ui));
+        }
+
+        if self.show_terminal {
+            egui::Panel::bottom("terminal")
+                .resizable(true)
+                .default_size(250.0)
+                .size_range(120.0..=720.0)
+                .frame(card(theme::bg_editor()).inner_margin(egui::Margin {
+                    left: 0,
+                    right: 0,
+                    top: 4,
+                    bottom: 0,
+                }))
+                .show(ui, |ui| self.terminal_panel(ui));
+        }
+
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(theme::bg_editor()))
+            .frame(card(theme::bg_editor()))
             .show(ui, |ui| {
                 if !self.tabs.tabs.is_empty() {
                     self.tab_bar(ui);
@@ -1950,4 +2433,198 @@ impl eframe::App for ForgeRoomApp {
         self.pending_dialog(&context);
         self.update_title(&context);
     }
+}
+
+/// A text tab with a red underline when active, as in the editor, dock and terminal headers.
+fn underline_tab(
+    ui: &mut egui::Ui,
+    label: &str,
+    active: bool,
+    enabled: bool,
+    icon: Option<fn(&egui::Painter, egui::Rect, egui::Color32)>,
+) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_string(),
+        egui::FontId::proportional(14.0),
+        theme::text(),
+    );
+    let icon_width = if icon.is_some() { 26.0 } else { 0.0 };
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(galley.size().x + icon_width + 30.0, 36.0), sense);
+    let color = if active || (enabled && response.hovered()) {
+        theme::text()
+    } else if enabled {
+        theme::text_dim()
+    } else {
+        theme::mix(theme::bg_editor(), theme::text_dim(), 0.55)
+    };
+    let painter = ui.painter();
+    let mut x = rect.left() + 15.0;
+    if let Some(icon) = icon {
+        icon(
+            painter,
+            egui::Rect::from_center_size(
+                egui::pos2(x + 8.0, rect.center().y),
+                egui::vec2(16.0, 16.0),
+            ),
+            if active { theme::accent() } else { color },
+        );
+        x += icon_width;
+    }
+    painter.galley(
+        egui::pos2(x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    if active {
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left() + 8.0, rect.bottom() - 2.0),
+                egui::pos2(rect.right() - 8.0, rect.bottom()),
+            ),
+            1.0,
+            theme::accent(),
+        );
+    }
+    response
+}
+
+/// The AI Assistant tab. There is no assistant backend yet, so this shows the layout from the
+/// design with every control inert and says so, rather than pretending to answer.
+fn ai_panel(ui: &mut egui::Ui) {
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let (logo, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+        brand::logo(ui.painter(), logo.center(), 16.0);
+        ui.add_space(6.0);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.label(
+                egui::RichText::new("Forge Room AI")
+                    .size(15.0)
+                    .family(fonts::semibold())
+                    .color(theme::text()),
+            );
+            ui.label(
+                egui::RichText::new("Agentic coding in your workspace")
+                    .size(12.5)
+                    .color(theme::text_dim()),
+            );
+        });
+    });
+    ui.add_space(14.0);
+    egui::Frame::new()
+        .fill(theme::mix(theme::bg_sidebar(), theme::text(), 0.03))
+        .stroke(egui::Stroke::new(1.0, theme::border()))
+        .corner_radius(10.0)
+        .outer_margin(egui::Margin::symmetric(14, 0))
+        .inner_margin(egui::Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new("How can I help you today?")
+                    .size(16.0)
+                    .family(fonts::semibold())
+                    .color(theme::text()),
+            );
+            ui.add_space(10.0);
+            ui.add_enabled_ui(false, |ui| {
+                let width = (ui.available_width() - 8.0) / 2.0;
+                for pair in [
+                    ["Implement a feature", "Explain this code"],
+                    ["Write tests", "Find and fix issues"],
+                ] {
+                    ui.horizontal(|ui| {
+                        for label in pair {
+                            ui.add(
+                                egui::Button::new(label)
+                                    .corner_radius(8.0)
+                                    .min_size(egui::vec2(width, 34.0)),
+                            );
+                        }
+                    });
+                }
+            });
+        });
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        ui.add_space(18.0);
+        ui.vertical(|ui| {
+            ui.set_max_width(ui.available_width() - 18.0);
+            ui.label(
+                egui::RichText::new("Not connected yet")
+                    .strong()
+                    .color(theme::text()),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Rooms already track agents and the tasks they own. Running agents from this panel is on the roadmap.",
+                )
+                .color(theme::text_dim()),
+            );
+        });
+    });
+    ui.add_space(14.0);
+    egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0, theme::border()))
+        .corner_radius(10.0)
+        .outer_margin(egui::Margin::symmetric(14, 0))
+        .inner_margin(egui::Margin::same(14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(
+                    "Ask anything, or use @ to reference files, agents, or Room context…",
+                )
+                .color(theme::mix(theme::bg_sidebar(), theme::text_dim(), 0.7)),
+            );
+            ui.add_space(24.0);
+        });
+}
+
+/// The window backdrop: near-black with a soft red glow in the bottom-left corner and a faint
+/// cool light at the top right. Panels are drawn translucent over it, so it shows as a gentle
+/// frosted-glass tint between and behind them. Light themes keep a plain background.
+fn paint_backdrop(ui: &egui::Ui) {
+    let screen = ui.ctx().content_rect();
+    let painter = ui.painter();
+    if !theme::current().palette.dark {
+        painter.rect_filled(screen, 0.0, theme::bg_activity());
+        return;
+    }
+    painter.rect_filled(screen, 0.0, egui::Color32::from_rgb(10, 11, 12));
+    let accent = theme::accent();
+    let glow = |center: egui::Pos2, radius: f32, color: egui::Color32, peak: u8| {
+        const STEPS: u32 = 26;
+        for step in 0..STEPS {
+            let t = step as f32 / STEPS as f32;
+            let alpha = (peak as f32 / STEPS as f32 * 1.8).max(1.0) as u8;
+            painter.circle_filled(
+                center,
+                radius * (1.0 - t),
+                egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
+            );
+        }
+    };
+    glow(
+        egui::pos2(
+            screen.left() + screen.width() * 0.04,
+            screen.bottom() + 40.0,
+        ),
+        screen.width() * 0.34,
+        accent,
+        60,
+    );
+    glow(
+        egui::pos2(screen.right() - screen.width() * 0.05, screen.top() - 30.0),
+        screen.width() * 0.28,
+        egui::Color32::from_rgb(120, 140, 170),
+        26,
+    );
 }

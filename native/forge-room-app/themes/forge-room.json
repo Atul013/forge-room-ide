@@ -1,0 +1,103 @@
+{
+ "$schema": "vscode://schema/color-theme",
+ "name": "Forge Room",
+ "type": "dark",
+ "colors": {
+  "focusBorder": "#C74C45",
+  "foreground": "#EFEFEE",
+  "descriptionForeground": "#A0A1A5",
+  "disabledForeground": "#6B6D72",
+  "errorForeground": "#E0766F",
+  "editor.background": "#121314",
+  "editor.foreground": "#EFEFEE",
+  "editorLineNumber.foreground": "#5E6065",
+  "editorLineNumber.activeForeground": "#EFEFEE",
+  "editor.selectionBackground": "#C74C4538",
+  "editor.lineHighlightBackground": "#FFFFFF08",
+  "sideBar.background": "#171819",
+  "sideBar.foreground": "#D9D9D7",
+  "activityBar.background": "#0E0F10",
+  "activityBar.foreground": "#EFEFEE",
+  "activityBar.inactiveForeground": "#7A7C81",
+  "activityBarBadge.background": "#C74C45",
+  "activityBarBadge.foreground": "#FFFFFF",
+  "statusBar.background": "#0E0F10",
+  "statusBar.foreground": "#A0A1A5",
+  "titleBar.activeBackground": "#0E0F10",
+  "titleBar.activeForeground": "#EFEFEE",
+  "panel.background": "#121314",
+  "panel.border": "#26272A",
+  "tab.inactiveBackground": "#0E0F10",
+  "tab.border": "#26272A",
+  "button.background": "#C74C45",
+  "button.foreground": "#FFFFFF",
+  "input.background": "#0D0E0F",
+  "input.border": "#34353A",
+  "list.activeSelectionBackground": "#C74C4530",
+  "list.hoverBackground": "#FFFFFF0B"
+ },
+ "tokenColors": [
+  {
+   "scope": [
+    "comment"
+   ],
+   "settings": {
+    "foreground": "#6F7176",
+    "fontStyle": "italic"
+   }
+  },
+  {
+   "scope": [
+    "keyword",
+    "storage"
+   ],
+   "settings": {
+    "foreground": "#E0766F"
+   }
+  },
+  {
+   "scope": [
+    "string"
+   ],
+   "settings": {
+    "foreground": "#D3BE92"
+   }
+  },
+  {
+   "scope": [
+    "constant.numeric",
+    "constant.language"
+   ],
+   "settings": {
+    "foreground": "#E7A86F"
+   }
+  },
+  {
+   "scope": [
+    "entity.name.function",
+    "support.function"
+   ],
+   "settings": {
+    "foreground": "#8DBBCB"
+   }
+  },
+  {
+   "scope": [
+    "entity.name.type",
+    "entity.name.class",
+    "support.type"
+   ],
+   "settings": {
+    "foreground": "#E5C78F"
+   }
+  },
+  {
+   "scope": [
+    "variable"
+   ],
+   "settings": {
+    "foreground": "#E4E4E2"
+   }
+  }
+ ]
+}
