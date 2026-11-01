@@ -166,22 +166,20 @@ impl eframe::App for ForgeRoomApp {
                 ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(6.0);
-                egui::ScrollArea::both()
-                    .auto_shrink(false)
-                    .show(ui, |ui| {
-                        let rows = (ui.available_height()
-                            / ui.text_style_height(&egui::TextStyle::Monospace))
-                        .floor() as usize;
-                        ui.add(
-                            egui::TextEdit::multiline(self.document.text_mut())
-                                .code_editor()
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(rows.max(10))
-                                .lock_focus(true)
-                                .frame(egui::Frame::NONE)
-                                .hint_text("Open a UTF-8 text file to begin editing"),
-                        );
-                    });
+                egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
+                    let rows = (ui.available_height()
+                        / ui.text_style_height(&egui::TextStyle::Monospace))
+                    .floor() as usize;
+                    ui.add(
+                        egui::TextEdit::multiline(self.document.text_mut())
+                            .code_editor()
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(rows.max(10))
+                            .lock_focus(true)
+                            .frame(egui::Frame::NONE)
+                            .hint_text("Open a UTF-8 text file to begin editing"),
+                    );
+                });
             });
     }
 }
