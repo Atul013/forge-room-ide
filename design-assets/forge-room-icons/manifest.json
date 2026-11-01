@@ -1,0 +1,145 @@
+{
+  "viewBox": [
+    0,
+    0,
+    24,
+    24
+  ],
+  "strokeWidth": 1.75,
+  "railOrder": [
+    "explorer",
+    "search",
+    "source-control",
+    "run-debug",
+    "extensions",
+    "ai",
+    "terminal",
+    "room"
+  ],
+  "icons": [
+    {
+      "name": "explorer",
+      "file": "svg/explorer.svg",
+      "symbol": "forge-explorer"
+    },
+    {
+      "name": "search",
+      "file": "svg/search.svg",
+      "symbol": "forge-search"
+    },
+    {
+      "name": "source-control",
+      "file": "svg/source-control.svg",
+      "symbol": "forge-source-control"
+    },
+    {
+      "name": "run-debug",
+      "file": "svg/run-debug.svg",
+      "symbol": "forge-run-debug"
+    },
+    {
+      "name": "extensions",
+      "file": "svg/extensions.svg",
+      "symbol": "forge-extensions"
+    },
+    {
+      "name": "ai",
+      "file": "svg/ai.svg",
+      "symbol": "forge-ai"
+    },
+    {
+      "name": "terminal",
+      "file": "svg/terminal.svg",
+      "symbol": "forge-terminal"
+    },
+    {
+      "name": "room",
+      "file": "svg/room.svg",
+      "symbol": "forge-room"
+    },
+    {
+      "name": "new-file",
+      "file": "svg/new-file.svg",
+      "symbol": "forge-new-file"
+    },
+    {
+      "name": "refresh",
+      "file": "svg/refresh.svg",
+      "symbol": "forge-refresh"
+    },
+    {
+      "name": "more",
+      "file": "svg/more.svg",
+      "symbol": "forge-more"
+    },
+    {
+      "name": "close",
+      "file": "svg/close.svg",
+      "symbol": "forge-close"
+    },
+    {
+      "name": "plus",
+      "file": "svg/plus.svg",
+      "symbol": "forge-plus"
+    },
+    {
+      "name": "chevron-right",
+      "file": "svg/chevron-right.svg",
+      "symbol": "forge-chevron-right"
+    },
+    {
+      "name": "chevron-down",
+      "file": "svg/chevron-down.svg",
+      "symbol": "forge-chevron-down"
+    },
+    {
+      "name": "check",
+      "file": "svg/check.svg",
+      "symbol": "forge-check"
+    },
+    {
+      "name": "arrow-up",
+      "file": "svg/arrow-up.svg",
+      "symbol": "forge-arrow-up"
+    },
+    {
+      "name": "arrow-down",
+      "file": "svg/arrow-down.svg",
+      "symbol": "forge-arrow-down"
+    },
+    {
+      "name": "folder-open",
+      "file": "svg/folder-open.svg",
+      "symbol": "forge-folder-open"
+    },
+    {
+      "name": "file",
+      "file": "svg/file.svg",
+      "symbol": "forge-file"
+    },
+    {
+      "name": "file-json",
+      "file": "svg/file-json.svg",
+      "symbol": "forge-file-json"
+    },
+    {
+      "name": "file-ts",
+      "file": "svg/file-ts.svg",
+      "symbol": "forge-file-ts"
+    },
+    {
+      "name": "commit-dropdown",
+      "file": "svg/commit-dropdown.svg",
+      "symbol": "forge-commit-dropdown"
+    },
+    {
+      "name": "room-active",
+      "file": "svg/room-active.svg",
+      "symbol": "forge-room-active"
+    }
+  ],
+  "aliases": {
+    "room-active": "room",
+    "commit-dropdown": "chevron-down"
+  }
+}

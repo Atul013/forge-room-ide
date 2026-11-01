@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" viewBox="0 0 24 24" fill="none">
+  <symbol id="forge-explorer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7V6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>
+  </symbol>
+  <symbol id="forge-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18.5 10.75a7.75 7.75 0 1 1-15.5 0 7.75 7.75 0 0 1 15.5 0Z"/>
+    <path d="m16.25 16.25 4.75 4.75"/>
+  </symbol>
+  <symbol id="forge-source-control" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 7v10m0-2h6a6 6 0 0 0 6-6"/>
+    <path d="M8 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm0 14a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM20 7a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"/>
+  </symbol>
+  <symbol id="forge-run-debug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 4.75q0-1.5 1.3-.75l12 7a1.15 1.15 0 0 1 0 2l-12 7q-1.3.75-1.3-.75Z"/>
+  </symbol>
+  <symbol id="forge-extensions" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 6H5a2 2 0 0 0-2 2v2.5h1.25a2.25 2.25 0 0 1 0 4.5H3v3a2 2 0 0 0 2 2h3.5v-1.25a2.25 2.25 0 0 1 4.5 0V20h3a2 2 0 0 0 2-2v-3h.75a2.25 2.25 0 0 0 0-4.5H18V8a2 2 0 0 0-2-2h-3.5v-.75a2.25 2.25 0 0 0-4.5 0Z"/>
+  </symbol>
+  <symbol id="forge-ai" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.7 6.3 2.7 8.3 9 9-6.3.7-8.3 2.7-9 9-.7-6.3-2.7-8.3-9-9 6.3-.7 8.3-2.7 9-9Z"/>
+  </symbol>
+  <symbol id="forge-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/>
+    <path d="m7 9 3 3-3 3m6 0h4"/>
+  </symbol>
+  <symbol id="forge-room" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11.75 8a3.25 3.25 0 1 1-6.5 0 3.25 3.25 0 0 1 6.5 0ZM19.5 8.25a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Z"/>
+    <path d="M3 20v-1.5a5.5 5.5 0 0 1 11 0V20Zm13.75-5.75H17a4 4 0 0 1 4 4V20h-3.75"/>
+  </symbol>
+  <symbol id="forge-new-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8l6 6v3M14 3v4a2 2 0 0 0 2 2h4"/>
+    <path d="M18 15v6m-3-3h6"/>
+  </symbol>
+  <symbol id="forge-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20.25 8.4a9 9 0 1 0 0 7.2M20.25 4v4.4h-4.4"/>
+  </symbol>
+  <symbol id="forge-more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12h.01M12 12h.01M19 12h.01"/>
+  </symbol>
+  <symbol id="forge-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m5 5 14 14M19 5 5 19"/>
+  </symbol>
+  <symbol id="forge-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 4v16M4 12h16"/>
+  </symbol>
+  <symbol id="forge-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m9 5 7 7-7 7"/>
+  </symbol>
+  <symbol id="forge-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m5 9 7 7 7-7"/>
+  </symbol>
+  <symbol id="forge-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m4 12.5 5.5 5.5L20 6.5"/>
+  </symbol>
+  <symbol id="forge-arrow-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 21V3M5.5 9.5 12 3l6.5 6.5"/>
+  </symbol>
+  <symbol id="forge-arrow-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3v18m-6.5-6.5L12 21l6.5-6.5"/>
+  </symbol>
+  <symbol id="forge-folder-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 18V6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2"/>
+    <path d="m3 18.5 2.05-6.15Q5.5 11 7 11h12.75q1.5 0 1.05 1.5l-2.05 6.15Q18.3 20 16.8 20H4.5q-2 0-1.5-1.5Z"/>
+  </symbol>
+  <symbol id="forge-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9ZM14 3v4a2 2 0 0 0 2 2h4"/>
+  </symbol>
+  <symbol id="forge-file-json" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8.5 3.5H7a2 2 0 0 0-2 2v3.75Q5 12 3 12q2 0 2 2.75v3.75a2 2 0 0 0 2 2h1.5m7-17H17a2 2 0 0 1 2 2v3.75Q19 12 21 12q-2 0-2 2.75v3.75a2 2 0 0 1-2 2h-1.5"/>
+  </symbol>
+  <symbol id="forge-file-ts" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 5h8M7 5v14"/>
+    <path d="M20.5 7C20.5 5.6 19.2 5 17.5 5H16a3.25 3.25 0 0 0 0 6.5h1.25a3.75 3.75 0 0 1 0 7.5H16c-1.8 0-3-.8-3-2.25"/>
+  </symbol>
+  <symbol id="forge-commit-dropdown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m5 9 7 7 7-7"/>
+  </symbol>
+  <symbol id="forge-room-active" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11.75 8a3.25 3.25 0 1 1-6.5 0 3.25 3.25 0 0 1 6.5 0ZM19.5 8.25a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0Z"/>
+    <path d="M3 20v-1.5a5.5 5.5 0 0 1 11 0V20Zm13.75-5.75H17a4 4 0 0 1 4 4V20h-3.75"/>
+  </symbol>
+</svg>

@@ -9,12 +9,12 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 | Agent  | Owns                                                                 |
 |--------|----------------------------------------------------------------------|
 | Claude | Native app UI `native/forge-room-app/*` AND installer `packaging/windows/*`, `artifacts/installer-redesign/*`, `docs/design/*` (took over from Codex 2026-11-01, Codex out of usage until 9:59 PM) |
-| Codex  | Nothing until it is back; claim files here before editing                 |
+| Codex  | `design-assets/forge-room-icons/*` and `artifacts/forge-room-icons.zip` (standalone SVG icon delivery) |
 | Shared | `native/forge-room-core/*`, `Cargo.lock`, `README.md`: announce here before touching |
 
 ## In progress
 
-- **Codex:** paused (usage limit). Left the installer mid-pivot; see `docs/design/installer-progress.md`.
+- **Codex:** icon delivery complete in `design-assets/forge-room-icons/`; packaged as `artifacts/forge-room-icons.zip`. Installer work remains with Claude.
 - **Claude (Claude Sonnet 5.5, via Claude Code):** installer DONE (install, update, themed uninstall); see `docs/design/installer-progress.md`. Next: turn the native app into a real IDE (not started).
 - **Claude (Claude Sonnet 5.5, via Claude Code):** Native app UI fixes in `native/forge-room-app/src/main.rs`
   (layout clipping, missing margins, Open/Save buttons pushed off-screen).
@@ -25,6 +25,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 - App must stay native Rust (egui/eframe), no Electron/webview.
 
 ## Log (newest first)
+
+- 2026-11-01 Codex: completed 24 path-only icons, symbol sprite, labeled 24/48 px PNG and offline HTML previews. Validated geometry/style/padding, 48 pixel-identical sprite comparisons, and all 34 ZIP members against source bytes. No app source changes.
+
+- 2026-11-01 Codex: started the reference-matched icon delivery; claimed only `design-assets/forge-room-icons/*`, the output ZIP, and temporary render tooling under `artifacts/build-tools/icon-renderer/`.
 
 - 2026-11-01 Claude (Sonnet 5.5): installer finished and committed: update flow (older to newer in place, same version reinstall, downgrade blocked), themed uninstaller, app icon embedded in the exe (`native/forge-room-app/build.rs`), package.ps1 now calls build-ember.ps1, CI path not run. Old Pascal UI and rejected mockups pending deletion (blocked by permissions, user decides).
 
