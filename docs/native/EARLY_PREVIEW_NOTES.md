@@ -4,24 +4,23 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 
 ## Included
 
-- Editor-independent Rust room/task model derived from Team Lobby 0.108.0 policies.
-- Human and owned-agent identity shape.
-- Host/owner task authorization, dependency gates, acceptance confirmations, controlled reopen and handoff.
-- Check/review/handoff evidence plus a bounded attributed activity trail.
-- Private-by-default sharing policy.
-- Offline JSON state with atomic replacement, previous-state backup and recovery from corrupt primary state.
-- CLI workflow for creating a room, adding participants/tasks, changing status, handing off work, recording evidence and listing tasks.
-- Native graphical IDE shell: explorer sidebar with a lazy folder tree, multi-file tabs, menu bar, status bar (line/column, encoding, line endings), native Open/Save dialogs, and unsaved-changes prompts when closing a tab or the window.
-- UTF-8 text open/edit/save with keyboard shortcuts, a high-DPI-aware native window and AccessKit integration. Files over 10 MB and non-UTF-8 files are refused with a message.
-- A per-user installer that updates in place (older version to newer, downgrades blocked) and a themed uninstaller.
+- Native Rust IDE (egui, no Electron or Node): icon navigation rail, Explorer with a lazy folder tree, multi-file tabs with breadcrumbs, command palette and quick open, find/replace, go to line, search in files, syntax highlighting with line numbers, and unsaved-changes prompts.
+- Integrated terminal on a real Windows pseudo-console (PowerShell).
+- Source Control: stage/unstage, commit, amend, undo last commit, discard, stash, branches, Sync/Publish/Pull/Push/Fetch, colored diffs, plus GitLens-style commit graph, file history and inline blame.
+- Rooms: people and coding agents with human owners, tasks with dependencies and acceptance, handoffs, evidence and activity, built on the Rust room/task model derived from Team Lobby 0.108.0 policies. Stored privately per project.
+- Forge Room Studio color themes (Forge Room is the default) and a reference-based redesign with a custom title bar, right dock and bottom panel.
+- AI Assistant panel: layout only. No model is connected, and nothing you type there leaves your computer.
+- A per-user installer that updates in place (older to newer, downgrades blocked) and a themed uninstaller.
 
 ## Missing
 
-- Line numbers, syntax highlighting, find/replace, command palette, find in files, LSP, DAP, Git UI, terminal and task runner.
+- Run/Debug, Extensions, Output, Problems, Debug Console and Ports are placeholders.
+- AI features (model-backed chat, editor actions), LSP and DAP, extensions, a task runner.
+- Merge-conflict UI, rebase, line history, minimap, bracket matching, multi-cursor and split editors.
 - File create/rename/delete in the explorer and detection of files changed on disk while open.
 - Realtime room transport, invitations, encryption and reconnect.
-- Theme/profile UI, accessibility and high-DPI acceptance.
-- Interactive Windows open/edit/save acceptance, upgrade testing and a signed release.
+- Theme/profile import, accessibility and high-DPI acceptance.
+- A signed release.
 
 ## Known limitations
 
