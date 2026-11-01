@@ -6,13 +6,26 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub enum DocumentError {
     NoPath,
+    TooLarge(u64),
     Io(io::Error),
 }
+
+/// Files above this size are refused until the editor can page large files.
+pub const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 
 impl fmt::Display for DocumentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoPath => write!(formatter, "enter a file path first"),
+            Self::NoPath => write!(formatter, "this file has no path yet"),
+            Self::TooLarge(bytes) => write!(
+                formatter,
+                "file is too large for this preview ({:.1} MB, limit {} MB)",
+                *bytes as f64 / 1_048_576.0,
+                MAX_FILE_BYTES / 1_048_576
+            ),
+            Self::Io(error) if error.kind() == io::ErrorKind::InvalidData => {
+                write!(formatter, "not a UTF-8 text file")
+            }
             Self::Io(error) => write!(formatter, "file operation failed: {error}"),
         }
     }
@@ -38,6 +51,17 @@ impl DocumentSession {
         self.path.as_deref()
     }
 
+    pub fn file_name(&self) -> Option<String> {
+        self.path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
     pub fn text_mut(&mut self) -> &mut String {
         &mut self.text
     }
@@ -48,6 +72,10 @@ impl DocumentSession {
 
     pub fn open(&mut self, path: impl Into<PathBuf>) -> Result<(), DocumentError> {
         let path = path.into();
+        let size = fs::metadata(&path)?.len();
+        if size > MAX_FILE_BYTES {
+            return Err(DocumentError::TooLarge(size));
+        }
         let text = fs::read_to_string(&path)?;
         self.path = Some(path);
         self.saved_text.clone_from(&text);

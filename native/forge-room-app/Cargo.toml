@@ -7,6 +7,7 @@ description = "Native graphical Forge Room Early Preview shell"
 
 [dependencies]
 forge-room-core = { package = "forge-room-early-preview", path = "../forge-room-core" }
+rfd = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "default_fonts", "persistence", "wgpu"] }
