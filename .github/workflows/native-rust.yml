@@ -104,4 +104,4 @@ jobs:
             "$dir/BUILD_METRICS.json",
             "$dir/INSTALL_VERIFY.json"
           )
-          gh release create $env:GITHUB_REF_NAME @files --prerelease --verify-tag --title "Forge Room Early Preview $version" --notes-file docs/native/EARLY_PREVIEW_NOTES.md
+          gh release create $env:GITHUB_REF_NAME @files --prerelease --verify-tag --title "Forge Room Developer Preview $version" --notes-file docs/native/EARLY_PREVIEW_NOTES.md

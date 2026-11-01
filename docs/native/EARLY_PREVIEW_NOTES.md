@@ -1,5 +1,7 @@
 # Forge Room Early Preview 0.110.0-alpha.1
 
+**Developer Preview: for developers and testers only.** The public pre-release is still on its way, so expect rough edges, missing features and breaking changes between builds.
+
 This is an early preview of the native Rust IDE: not a beta, unsigned, and Windows 11 x64 only.
 
 ## Included
