@@ -2300,29 +2300,21 @@ impl eframe::App for ForgeRoomApp {
             self.handle_shortcuts(ui);
         }
 
-        paint_backdrop(ui);
-
         let bar = |fill| {
             egui::Frame::new()
-                .fill(theme::glass(fill, 0xCC))
+                .fill(fill)
                 .inner_margin(egui::Margin::symmetric(14, 10))
         };
 
-        // Panels are rounded cards on the darkest background, with small gaps between them.
-        let card = |fill| {
-            egui::Frame::new()
-                .fill(theme::glass(fill, 0xEA))
-                .corner_radius(12.0)
-                .stroke(egui::Stroke::new(1.0, theme::border()))
-                .outer_margin(egui::Margin::same(3))
-        };
+        // Flat panels separated by hairline dividers, as in the reference.
+        let card = |fill| egui::Frame::new().fill(fill);
 
         if self.show_terminal && self.terminal.is_none() && self.terminal_error.is_none() {
             self.ensure_terminal();
         }
 
         egui::Panel::top("menu")
-            .frame(egui::Frame::new().fill(theme::glass(theme::title_bar(), 0xC8)))
+            .frame(egui::Frame::new().fill(theme::title_bar()))
             .exact_size(TITLE_HEIGHT)
             .show(ui, |ui| self.title_bar(ui));
 
@@ -2333,7 +2325,7 @@ impl eframe::App for ForgeRoomApp {
         egui::Panel::left("activity")
             .exact_size(ACTIVITY_WIDTH)
             .resizable(false)
-            .frame(egui::Frame::new().fill(theme::glass(theme::bg_activity(), 0xB8)))
+            .frame(egui::Frame::new().fill(theme::bg_activity()))
             .show(ui, |ui| self.activity_bar(ui));
 
         if self.show_sidebar {
@@ -2498,45 +2490,4 @@ fn underline_tab(
         );
     }
     response
-}
-
-/// The window backdrop: near-black with a soft red glow in the bottom-left corner and a faint
-/// cool light at the top right. Panels are drawn translucent over it, so it shows as a gentle
-/// frosted-glass tint between and behind them. Light themes keep a plain background.
-fn paint_backdrop(ui: &egui::Ui) {
-    let screen = ui.ctx().content_rect();
-    let painter = ui.painter();
-    if !theme::current().palette.dark {
-        painter.rect_filled(screen, 0.0, theme::bg_activity());
-        return;
-    }
-    painter.rect_filled(screen, 0.0, egui::Color32::from_rgb(10, 11, 12));
-    let accent = theme::accent();
-    let glow = |center: egui::Pos2, radius: f32, color: egui::Color32, peak: u8| {
-        const STEPS: u32 = 26;
-        for step in 0..STEPS {
-            let t = step as f32 / STEPS as f32;
-            let alpha = (peak as f32 / STEPS as f32 * 1.8).max(1.0) as u8;
-            painter.circle_filled(
-                center,
-                radius * (1.0 - t),
-                egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
-            );
-        }
-    };
-    glow(
-        egui::pos2(
-            screen.left() + screen.width() * 0.04,
-            screen.bottom() + 40.0,
-        ),
-        screen.width() * 0.34,
-        accent,
-        60,
-    );
-    glow(
-        egui::pos2(screen.right() - screen.width() * 0.05, screen.top() - 30.0),
-        screen.width() * 0.28,
-        egui::Color32::from_rgb(120, 140, 170),
-        26,
-    );
 }

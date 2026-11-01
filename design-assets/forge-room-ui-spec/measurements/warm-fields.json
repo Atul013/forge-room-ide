@@ -1,0 +1,286 @@
+{
+  "criterion": "outside window, R-(G+B)/2 > 12; 8-connected components with area >=50 pixels",
+  "components": [
+    {
+      "bounds_px_pt": [
+        0,
+        0,
+        51,
+        47
+      ],
+      "area_pixels": 1511,
+      "centroid_px_pt": [
+        17.996,
+        18.051
+      ],
+      "peak": {
+        "xy": [
+          13,
+          0
+        ],
+        "hex": "#776663",
+        "rgb": [
+          119,
+          102,
+          99
+        ],
+        "raster_alpha": 1,
+        "source_layer_alpha": null,
+        "patch_5x5_mode": "#766664",
+        "patch_5x5_min": [
+          117,
+          101,
+          99
+        ],
+        "patch_5x5_max": [
+          120,
+          103,
+          101
+        ]
+      },
+      "radius": null,
+      "original_opacity": null
+    },
+    {
+      "bounds_px_pt": [
+        51,
+        0,
+        104,
+        21
+      ],
+      "area_pixels": 1258,
+      "centroid_px_pt": [
+        92.94,
+        7.749
+      ],
+      "peak": {
+        "xy": [
+          86,
+          0
+        ],
+        "hex": "#71615F",
+        "rgb": [
+          113,
+          97,
+          95
+        ],
+        "raster_alpha": 1,
+        "source_layer_alpha": null,
+        "patch_5x5_mode": "#716160",
+        "patch_5x5_min": [
+          112,
+          96,
+          95
+        ],
+        "patch_5x5_max": [
+          113,
+          97,
+          96
+        ]
+      },
+      "radius": null,
+      "original_opacity": null
+    },
+    {
+      "bounds_px_pt": [
+        0,
+        169,
+        28,
+        183
+      ],
+      "area_pixels": 3745,
+      "centroid_px_pt": [
+        12.75,
+        256.732
+      ],
+      "peak": {
+        "xy": [
+          4,
+          200
+        ],
+        "hex": "#341A1A",
+        "rgb": [
+          52,
+          26,
+          26
+        ],
+        "raster_alpha": 1,
+        "source_layer_alpha": null,
+        "patch_5x5_mode": "#331A1A",
+        "patch_5x5_min": [
+          49,
+          25,
+          25
+        ],
+        "patch_5x5_max": [
+          52,
+          27,
+          27
+        ]
+      },
+      "radius": null,
+      "original_opacity": null
+    },
+    {
+      "bounds_px_pt": [
+        0,
+        447,
+        28,
+        40
+      ],
+      "area_pixels": 870,
+      "centroid_px_pt": [
+        14.74,
+        468.769
+      ],
+      "peak": {
+        "xy": [
+          24,
+          466
+        ],
+        "hex": "#3B1B1B",
+        "rgb": [
+          59,
+          27,
+          27
+        ],
+        "raster_alpha": 1,
+        "source_layer_alpha": null,
+        "patch_5x5_mode": "#3A1C1C",
+        "patch_5x5_min": [
+          54,
+          26,
+          26
+        ],
+        "patch_5x5_max": [
+          59,
+          28,
+          29
+        ]
+      },
+      "radius": null,
+      "original_opacity": null
+    },
+    {
+      "bounds_px_pt": [
+        0,
+        620,
+        28,
+        32
+      ],
+      "area_pixels": 821,
+      "centroid_px_pt": [
+        13.664,
+        635.728
+      ],
+      "peak": {
+        "xy": [
+          15,
+          634
+        ],
+        "hex": "#3A1D1E",
+        "rgb": [
+          58,
+          29,
+          30
+        ],
+        "raster_alpha": 1,
+        "source_layer_alpha": null,
+        "patch_5x5_mode": "#3A1E1F",
+        "patch_5x5_min": [
+          54,
+          28,
+          29
+        ],
+        "patch_5x5_max": [
+          58,
+          30,
+          31
+        ]
+      },
+      "radius": null,
+      "original_opacity": null
+    },
+    {
+      "bounds_px_pt": [
+        6,
+        762,
+        22,
+        127
+      ],
+      "area_pixels": 1493,
+      "centroid_px_pt": [
+        18.979,
+        818.732
+      ],
+      "peak": {
+        "xy": [
+          25,
+          807
+        ],
+        "hex": "#332124",
+        "rgb": [
+          51,
+          33,
+          36
+        ],
+        "raster_alpha": 1,
+        "source_layer_alpha": null,
+        "patch_5x5_mode": "#332224",
+        "patch_5x5_min": [
+          45,
+          30,
+          33
+        ],
+        "patch_5x5_max": [
+          52,
+          37,
+          40
+        ]
+      },
+      "radius": null,
+      "original_opacity": null
+    },
+    {
+      "bounds_px_pt": [
+        20,
+        915,
+        103,
+        26
+      ],
+      "area_pixels": 1636,
+      "centroid_px_pt": [
+        73.27,
+        931.224
+      ],
+      "peak": {
+        "xy": [
+          84,
+          929
+        ],
+        "hex": "#331E1F",
+        "rgb": [
+          51,
+          30,
+          31
+        ],
+        "raster_alpha": 1,
+        "source_layer_alpha": null,
+        "patch_5x5_mode": "#2E1C1C",
+        "patch_5x5_min": [
+          44,
+          27,
+          28
+        ],
+        "patch_5x5_max": [
+          52,
+          32,
+          33
+        ]
+      },
+      "radius": null,
+      "original_opacity": null
+    }
+  ],
+  "original_glow_shader_or_blur": "not recoverable"
+}

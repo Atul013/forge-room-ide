@@ -9,12 +9,12 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 | Agent  | Owns                                                                 |
 |--------|----------------------------------------------------------------------|
 | Claude | Native app UI `native/forge-room-app/*` AND installer `packaging/windows/*`, `artifacts/installer-redesign/*`, `docs/design/*` (took over from Codex 2026-11-01, Codex out of usage until 9:59 PM) |
-| Codex  | `design-assets/forge-room-icons/*` and `artifacts/forge-room-icons.zip` (standalone SVG icon delivery) |
+| Codex  | `design-assets/forge-room-icons/*`, `design-assets/forge-room-ui-spec/*`, and their delivery ZIPs under `artifacts/` |
 | Shared | `native/forge-room-core/*`, `Cargo.lock`, `README.md`: announce here before touching |
 
 ## In progress
 
-- **Codex:** icon delivery complete in `design-assets/forge-room-icons/`; packaged as `artifacts/forge-room-icons.zip`. Installer work remains with Claude.
+- **Codex:** screenshot-measured UI handoff complete in `design-assets/forge-room-ui-spec/`; delivery ZIP is `artifacts/forge-room-ui-spec.zip`.
 - **Claude (Claude Sonnet 5.5, via Claude Code):** installer DONE (install, update, themed uninstall); see `docs/design/installer-progress.md`. Next: turn the native app into a real IDE (not started).
 - **Claude (Claude Sonnet 5.5, via Claude Code):** Native app UI fixes in `native/forge-room-app/src/main.rs`
   (layout clipping, missing margins, Open/Save buttons pushed off-screen).
@@ -25,6 +25,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 - App must stay native Rust (egui/eframe), no Electron/webview.
 
 ## Log (newest first)
+
+- 2026-11-01 Codex: completed measured Markdown spec, 11 annotated PNGs, layered SVG/redraw, exhaustive 66,627-color palette, and Rust layout constants. Checked 245 source samples and 86 role samples, SVG/PNG integrity, compiled the Rust helper, and verified all 35 ZIP members. Original font/alpha/blur metadata stays explicitly unavailable; redraw is not pixel identical. App source unchanged.
+
+- 2026-11-01 Codex: started the screenshot-measured Rust/egui handoff; source found in Downloads. Claimed `design-assets/forge-room-ui-spec/*` and its ZIP; no app source edits planned.
 
 - 2026-11-01 Codex: completed 24 path-only icons, symbol sprite, labeled 24/48 px PNG and offline HTML previews. Validated geometry/style/padding, 48 pixel-identical sprite comparisons, and all 34 ZIP members against source bytes. No app source changes.
 

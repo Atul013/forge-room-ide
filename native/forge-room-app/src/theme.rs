@@ -287,7 +287,7 @@ pub fn apply(context: &egui::Context) {
     } else {
         egui::Visuals::light()
     };
-    visuals.panel_fill = glass_of(&p, p.bg_activity, 0x99);
+    visuals.panel_fill = p.bg_editor;
     visuals.window_fill = p.bg_sidebar;
     visuals.extreme_bg_color = p.input_bg;
     visuals.faint_bg_color = mix(p.bg_editor, p.text, 0.04);
@@ -348,16 +348,6 @@ pub fn status_dim() -> Color32 {
 }
 
 /// A highlight/hover wash that works on dark and light themes.
-/// `color` made see-through so the window's acrylic backdrop shows through. Light themes stay
-/// opaque: frosted glass over a dark blur only suits dark palettes.
-pub fn glass(color: Color32, alpha: u8) -> Color32 {
-    if current().palette.dark {
-        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
-    } else {
-        color
-    }
-}
-
 pub fn overlay(alpha: u8) -> Color32 {
     if current().palette.dark {
         Color32::from_rgba_unmultiplied(255, 255, 255, alpha)
@@ -391,14 +381,6 @@ accessors!(
     line_highlight,
     line_number,
 );
-
-fn glass_of(p: &Palette, color: Color32, alpha: u8) -> Color32 {
-    if p.dark {
-        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
-    } else {
-        color
-    }
-}
 
 #[cfg(test)]
 mod tests {

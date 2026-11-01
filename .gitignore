@@ -27,3 +27,9 @@ Thumbs.db
 
 # Local build outputs, downloaded tools and generated installers
 artifacts/
+
+# Bulky inspection output; regenerate with the tools in design-assets/forge-room-ui-spec/tools
+design-assets/forge-room-ui-spec/measurements/crops/
+design-assets/forge-room-ui-spec/measurements/all-colors.csv
+design-assets/forge-room-ui-spec/measurements/redraw-difference.png
+design-assets/forge-room-ui-spec/annotations/
