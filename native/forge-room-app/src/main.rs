@@ -355,7 +355,7 @@ impl ForgeRoomApp {
                         );
                         let close_response = ui.interact(
                             close_rect,
-                            ui.id().with(("tab-close", tab.id)),
+                            ui.scope_id().with(("tab-close", tab.id)),
                             egui::Sense::click(),
                         );
                         let hovered = response.hovered() || close_response.hovered();
@@ -380,7 +380,11 @@ impl ForgeRoomApp {
                             [rect.right_top(), rect.right_bottom()],
                             egui::Stroke::new(1.0, theme::BORDER),
                         );
-                        let text_color = if is_active { theme::TEXT } else { theme::TEXT_DIM };
+                        let text_color = if is_active {
+                            theme::TEXT
+                        } else {
+                            theme::TEXT_DIM
+                        };
                         painter.galley(
                             egui::pos2(rect.left() + 14.0, rect.center().y - galley.size().y / 2.0),
                             galley,
@@ -425,7 +429,7 @@ impl ForgeRoomApp {
             self.welcome(ui);
             return;
         };
-        let id = egui::Id::new(("editor", tab.id));
+        let id = egui::Id::unique(("editor", tab.id));
         egui::ScrollArea::both()
             .id_salt(("scroll", tab.id))
             .auto_shrink(false)
@@ -515,7 +519,10 @@ impl ForgeRoomApp {
                     .get(*index)
                     .map(|tab| tab.title())
                     .unwrap_or_default();
-                (format!("Do you want to save the changes to \"{name}\"?"), "Save")
+                (
+                    format!("Do you want to save the changes to \"{name}\"?"),
+                    "Save",
+                )
             }
             Pending::Quit => {
                 let count = self.tabs.tabs.iter().filter(|t| t.doc.is_dirty()).count();
@@ -527,7 +534,7 @@ impl ForgeRoomApp {
         };
 
         let mut choice = None;
-        let modal = egui::Modal::new(egui::Id::new("pending-dialog")).show(context, |ui| {
+        let modal = egui::Modal::new(egui::Id::unique("pending-dialog")).show(context, |ui| {
             ui.set_width(380.0);
             ui.heading("Unsaved changes");
             ui.add_space(6.0);

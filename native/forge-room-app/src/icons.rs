@@ -1,6 +1,6 @@
 //! Small vector icons drawn with the painter, so the app needs no icon font or image assets.
 
-use eframe::egui::{self, epaint::StrokeKind, Color32, Painter, Pos2, Rect, Stroke};
+use eframe::egui::{self, Color32, Painter, Pos2, Rect, Stroke, epaint::StrokeKind};
 
 pub fn chevron(painter: &Painter, center: Pos2, open: bool, color: Color32) {
     let stroke = Stroke::new(1.4, color);
@@ -22,7 +22,10 @@ pub fn chevron(painter: &Painter, center: Pos2, open: bool, color: Color32) {
 }
 
 pub fn folder(painter: &Painter, rect: Rect, color: Color32) {
-    let tab = Rect::from_min_size(rect.min, egui::vec2(rect.width() * 0.45, rect.height() * 0.28));
+    let tab = Rect::from_min_size(
+        rect.min,
+        egui::vec2(rect.width() * 0.45, rect.height() * 0.28),
+    );
     let body = Rect::from_min_max(
         egui::pos2(rect.min.x, rect.min.y + rect.height() * 0.2),
         rect.max,
@@ -77,6 +80,12 @@ pub fn explorer(painter: &Painter, rect: Rect, color: Color32) {
 pub fn close_cross(painter: &Painter, center: Pos2, color: Color32) {
     let stroke = Stroke::new(1.3, color);
     let d = 3.2;
-    painter.line_segment([center + egui::vec2(-d, -d), center + egui::vec2(d, d)], stroke);
-    painter.line_segment([center + egui::vec2(-d, d), center + egui::vec2(d, -d)], stroke);
+    painter.line_segment(
+        [center + egui::vec2(-d, -d), center + egui::vec2(d, d)],
+        stroke,
+    );
+    painter.line_segment(
+        [center + egui::vec2(-d, d), center + egui::vec2(d, -d)],
+        stroke,
+    );
 }

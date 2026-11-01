@@ -30,9 +30,10 @@ pub fn configure(context: &egui::Context) {
         style
             .text_styles
             .insert(TextStyle::Body, FontId::new(13.5, FontFamily::Proportional));
-        style
-            .text_styles
-            .insert(TextStyle::Button, FontId::new(13.5, FontFamily::Proportional));
+        style.text_styles.insert(
+            TextStyle::Button,
+            FontId::new(13.5, FontFamily::Proportional),
+        );
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     });
 }

@@ -115,7 +115,11 @@ fn row(
     if selected {
         painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(199, 76, 69, 46));
     } else if response.hovered() {
-        painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 12));
+        painter.rect_filled(
+            rect,
+            0.0,
+            Color32::from_rgba_unmultiplied(255, 255, 255, 12),
+        );
     }
     let x = rect.left() + 10.0 + depth as f32 * 14.0;
     let y = rect.center().y;
@@ -144,6 +148,12 @@ fn row(
     } else {
         Color32::from_rgb(205, 206, 208)
     };
-    painter.text(egui::pos2(x + 36.0, y), Align2::LEFT_CENTER, label, font, color);
+    painter.text(
+        egui::pos2(x + 36.0, y),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        color,
+    );
     response
 }
