@@ -52,6 +52,7 @@ Single place for the state of the native app and its installer. Shared agent han
   - Find and Replace in the file (Ctrl+F / Ctrl+H): live match highlighting, current match, n of m counter, next/previous, match case, Replace and Replace All.
   - Search in Files (Ctrl+Shift+F): background search that cancels when you keep typing, skips `.git`, `target`, `node_modules` and binary or large files, highlights the match in each result, click to open at the line.
   - 44 unit tests in the app.
+- **Integrated terminal (done, verified with a real shell):** Ctrl+` opens a resizable bottom panel running PowerShell in the project folder over a real Windows pseudo-console (`portable-pty`) with a VT emulator (`vt100`): colors, cursor, arrow keys, Ctrl+C, paste, resize, restart after exit. Needed an answer to ConPTY's cursor-position query before any output appears. Known gaps: one terminal only (no tabs/splits), no scrollback UI, no mouse selection/copy, no shell picker.
 - Logo embedded in the exe (`build.rs`, `assets/forge-room.ico`).
 - Toolchain: Rust 1.99.1 (eframe 0.37 deps need 1.95+).
 
@@ -60,11 +61,15 @@ Single place for the state of the native app and its installer. Shared agent han
 1. ~~**IDE shell**~~ done.
 2. **Editor core:** ~~line numbers, syntax highlighting, current-line highlight~~ done; find/replace and go to line now done; still to do: bracket matching, indent guides, minimap.
 3. ~~Command palette, quick open, find in files~~ done.
-4. ~~Git status, diff, stage, commit~~ done; still to do: discard changes, branches (switch/create), push/pull/fetch with credentials, stash, history/blame. **Terminal:** integrated terminal panel.
+4. ~~Git status, diff, stage, commit~~ done; still to do: discard changes, branches (switch/create), push/pull/fetch with credentials, stash, history/blame. **Terminal:** ~~integrated terminal~~ done.
 5. **Port the features that lived on `main` (Electron/Code OSS era, now rebuilt natively on `forge-room-core`):**
    - **Forge Room Studio:** the six themes (Neon Ronin, Starship Deck, Moss Shrine, Ink & Ember, Paper Studio, Signal Guard high contrast), custom palette, profiles import/export.
    - **Team Lobby:** ~~rooms, participants, tasks, handoffs, evidence, activity~~ done as a native view on `forge-room-core`; still to do: realtime sharing between machines (relay/invites, presence), chat, anchored comments, shared diffs. Not portable as-is: ACP/MCP clients, webview panels and VS Code API workspace tools (they need Code OSS or Node).
-6. **Extensions (declarative only):** install color themes, TextMate grammars, snippets and icon themes from Open VSX. Microsoft's Marketplace terms exclude non-Microsoft editors, and extensions that run JavaScript need a Node extension host, which this app deliberately does not have.
+6. **Extensions, in the order they are realistic without Node:**
+   1. *Declarative* (themes, TextMate grammars, snippets, icon themes, keybindings) installed from Open VSX `.vsix` files. Pure data, no code runs, fits the current engine (syntect already reads TextMate grammars).
+   2. *Language servers* as a native LSP client (diagnostics, completion, hover, go to definition): covers most of what language extensions actually do, using the servers' own binaries (rust-analyzer, gopls, ...) with no JavaScript host.
+   3. *A Forge extension API in WebAssembly* (the Zed model): new extensions written in Rust or any language that compiles to WASM, sandboxed, no Node.
+   4. *Running existing VS Code JavaScript extensions* would need an embedded JS engine plus a re-implementation of the `vscode` API and the Node modules extensions assume (fs, child_process, net, ...). That is a multi-year compatibility project and brings back the weight this app avoids, so it stays out of scope unless a concrete high-value extension justifies a small opt-in host. Microsoft's Marketplace terms also exclude non-Microsoft editors, so the source would be Open VSX.
 7. Later: LSP (diagnostics, completion, go to definition), settings and keybindings, themes, session restore, multi-cursor, split editors, extension story, Room/collaboration UI from the product spec.
 
 ## Status log

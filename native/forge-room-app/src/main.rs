@@ -19,6 +19,7 @@ mod settings;
 mod source_control;
 mod syntax;
 mod tabs;
+mod terminal;
 mod theme;
 mod theme_gallery;
 mod workspace;
@@ -111,6 +112,12 @@ struct ForgeRoomApp {
     hunks_tab: Option<u64>,
     gallery: theme_gallery::Gallery,
     room: rooms::RoomView,
+    terminal: Option<terminal::Terminal>,
+    show_terminal: bool,
+    terminal_focus_request: bool,
+    terminal_has_focus: bool,
+    terminal_error: Option<String>,
+    egui_ctx: egui::Context,
     palette: palette::Palette,
     search: search_view::SearchView,
     find: find_bar::FindState,
@@ -177,6 +184,12 @@ impl ForgeRoomApp {
             hunks_tab: None,
             gallery: theme_gallery::Gallery::default(),
             room: rooms::RoomView::default(),
+            terminal: None,
+            show_terminal: false,
+            terminal_focus_request: false,
+            terminal_has_focus: false,
+            terminal_error: None,
+            egui_ctx: creation_context.egui_ctx.clone(),
             palette: palette::Palette::default(),
             search: search_view::SearchView::default(),
             find: find_bar::FindState::default(),
@@ -316,7 +329,103 @@ impl ForgeRoomApp {
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
-            Command::ToggleTerminal => self.status = "Terminal is not available yet".into(),
+            Command::ToggleTerminal => {
+                if self.show_terminal && self.terminal_has_focus {
+                    self.show_terminal = false;
+                    self.focus_editor = true;
+                } else {
+                    self.show_terminal = true;
+                    self.terminal_focus_request = true;
+                    self.ensure_terminal();
+                }
+            }
+        }
+    }
+
+    /// Start a shell in the project folder when there is none running.
+    fn ensure_terminal(&mut self) {
+        let running = self.terminal.as_ref().is_some_and(|t| !t.has_exited());
+        if running {
+            return;
+        }
+        let root = self.repo_root();
+        match terminal::Terminal::spawn(&self.egui_ctx, root.as_deref()) {
+            Ok(terminal) => {
+                self.terminal = Some(terminal);
+                self.terminal_error = None;
+            }
+            Err(error) => {
+                self.terminal = None;
+                self.terminal_error = Some(error);
+            }
+        }
+    }
+
+    fn terminal_panel(&mut self, ui: &mut egui::Ui) {
+        let exited = self.terminal.as_ref().is_some_and(|t| t.has_exited());
+        let mut restart = false;
+        let mut close = false;
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new("TERMINAL")
+                    .size(11.0)
+                    .strong()
+                    .color(theme::text_dim()),
+            );
+            if let Some(terminal) = &self.terminal {
+                ui.label(
+                    egui::RichText::new(&terminal.shell)
+                        .size(11.5)
+                        .color(theme::text_dim()),
+                );
+            }
+            if exited {
+                ui.label(
+                    egui::RichText::new("process exited")
+                        .size(11.5)
+                        .color(theme::text_dim()),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(8.0);
+                if ui
+                    .small_button("×")
+                    .on_hover_text("Hide terminal (Ctrl+`)")
+                    .clicked()
+                {
+                    close = true;
+                }
+                if (exited || self.terminal.is_none()) && ui.small_button("Restart").clicked() {
+                    restart = true;
+                }
+            });
+        });
+        if close {
+            self.show_terminal = false;
+            self.terminal_has_focus = false;
+            self.focus_editor = true;
+            return;
+        }
+        if restart {
+            self.terminal = None;
+            self.ensure_terminal();
+            self.terminal_focus_request = true;
+        }
+        let request = std::mem::take(&mut self.terminal_focus_request);
+        match self.terminal.as_mut() {
+            Some(terminal) => self.terminal_has_focus = terminal.show(ui, request),
+            None => {
+                self.terminal_has_focus = false;
+                let message = self
+                    .terminal_error
+                    .clone()
+                    .unwrap_or_else(|| "The terminal is not running.".into());
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(message).color(theme::text_dim()));
+                });
+            }
         }
     }
 
@@ -404,6 +513,15 @@ impl ForgeRoomApp {
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
         let command = Modifiers::COMMAND;
         let command_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        if self.terminal_has_focus {
+            // The shell owns plain Ctrl keys (Ctrl+C, Ctrl+W...); only app-level chords work here.
+            if shortcut(ui, command, Key::Backtick) {
+                self.run_command(Command::ToggleTerminal, false);
+            } else if shortcut(ui, command_shift, Key::P) {
+                self.run_command(Command::GoToLine, true);
+            }
+            return;
+        }
         // Most specific first, so Ctrl+Shift+S is not taken by Ctrl+S.
         if shortcut(ui, command_shift, Key::P) {
             self.run_command(Command::GoToLine, true);
@@ -515,6 +633,13 @@ impl ForgeRoomApp {
                 }
             });
             ui.menu_button("View", |ui| {
+                if ui
+                    .add(egui::Button::new("Terminal").shortcut_text("Ctrl+`"))
+                    .clicked()
+                {
+                    self.run_command(Command::ToggleTerminal, false);
+                    ui.close();
+                }
                 if ui
                     .add(egui::Button::new("Command Palette…").shortcut_text("Ctrl+Shift+P"))
                     .clicked()
@@ -1383,6 +1508,25 @@ impl eframe::App for ForgeRoomApp {
         egui::Panel::bottom("status")
             .frame(bar(theme::status_bar()))
             .show(ui, |ui| self.status_bar(ui));
+
+        if self.show_terminal {
+            egui::Panel::bottom("terminal")
+                .resizable(true)
+                .default_size(260.0)
+                .size_range(120.0..=720.0)
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::bg_editor())
+                        .stroke(egui::Stroke::new(1.0, theme::border()))
+                        .inner_margin(egui::Margin {
+                            left: 0,
+                            right: 0,
+                            top: 4,
+                            bottom: 0,
+                        }),
+                )
+                .show(ui, |ui| self.terminal_panel(ui));
+        }
 
         egui::Panel::left("activity")
             .exact_size(ACTIVITY_WIDTH)
