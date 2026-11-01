@@ -27,7 +27,7 @@ pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option
             RichText::new("EXPLORER")
                 .size(11.0)
                 .strong()
-                .color(theme::TEXT_DIM),
+                .color(theme::text_dim()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
@@ -43,7 +43,7 @@ pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
-                ui.label(RichText::new("You have not opened a folder.").color(theme::TEXT_DIM));
+                ui.label(RichText::new("You have not opened a folder.").color(theme::text_dim()));
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -113,23 +113,19 @@ fn row(
     }
     let painter = ui.painter();
     if selected {
-        painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(199, 76, 69, 46));
+        painter.rect_filled(rect, 0.0, theme::list_active());
     } else if response.hovered() {
-        painter.rect_filled(
-            rect,
-            0.0,
-            Color32::from_rgba_unmultiplied(255, 255, 255, 12),
-        );
+        painter.rect_filled(rect, 0.0, theme::overlay(12));
     }
     let x = rect.left() + 10.0 + depth as f32 * 14.0;
     let y = rect.center().y;
     match kind {
         Kind::Dir { open } => {
-            icons::chevron(painter, egui::pos2(x + 4.0, y), open, theme::TEXT_DIM);
+            icons::chevron(painter, egui::pos2(x + 4.0, y), open, theme::text_dim());
             icons::folder(
                 painter,
                 Rect::from_center_size(egui::pos2(x + 22.0, y), egui::vec2(14.0, 11.0)),
-                theme::TEXT_DIM,
+                theme::text_dim(),
             );
         }
         Kind::File => icons::file(
@@ -144,9 +140,9 @@ fn row(
         FontId::proportional(13.0)
     };
     let color = if selected || bold {
-        theme::TEXT
+        theme::text()
     } else {
-        Color32::from_rgb(205, 206, 208)
+        theme::mix(theme::text(), theme::bg_sidebar(), 0.14)
     };
     painter.text(
         egui::pos2(x + 36.0, y),
@@ -168,6 +164,6 @@ pub fn file_color(name: &str) -> Color32 {
         "js" | "ts" => Color32::from_rgb(235, 215, 95),
         "py" => Color32::from_rgb(110, 165, 215),
         "png" | "ico" | "svg" | "jpg" => Color32::from_rgb(160, 200, 120),
-        _ => theme::TEXT_DIM,
+        _ => theme::text_dim(),
     }
 }

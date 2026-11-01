@@ -6,13 +6,15 @@ mod git;
 mod gutter;
 mod icons;
 mod position;
+mod settings;
 mod source_control;
+mod syntax;
 mod tabs;
 mod theme;
+mod theme_gallery;
 mod workspace;
 
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
-use egui_extras::syntax_highlighting::{CodeTheme, highlight};
 use std::{fs, path::PathBuf};
 use tabs::{Tabs, normalize};
 use workspace::Workspace;
@@ -95,19 +97,20 @@ struct ForgeRoomApp {
     last_git: std::time::Instant,
     hunks: Vec<git::Hunk>,
     hunks_tab: Option<u64>,
+    gallery: theme_gallery::Gallery,
 }
 
 /// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
 fn diff_job(text: &str, font_id: &egui::FontId) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     for line in text.split_inclusive('\n') {
-        let mut format = egui::TextFormat::simple(font_id.clone(), theme::TEXT);
+        let mut format = egui::TextFormat::simple(font_id.clone(), theme::text());
         if line.starts_with("+++")
             || line.starts_with("---")
             || line.starts_with("diff ")
             || line.starts_with("index ")
         {
-            format.color = theme::TEXT_DIM;
+            format.color = theme::text_dim();
         } else if line.starts_with('+') {
             format.color = egui::Color32::from_rgb(140, 210, 145);
             format.background = egui::Color32::from_rgba_unmultiplied(87, 166, 74, 34);
@@ -128,7 +131,12 @@ fn shortcut(ui: &egui::Ui, modifiers: Modifiers, key: Key) -> bool {
 
 impl ForgeRoomApp {
     fn new(creation_context: &eframe::CreationContext<'_>, initial_path: Option<PathBuf>) -> Self {
-        theme::configure(&creation_context.egui_ctx);
+        match settings::load().theme {
+            Some(key) if theme::find(&key).is_some() => {
+                theme::set(&creation_context.egui_ctx, &key)
+            }
+            _ => theme::apply(&creation_context.egui_ctx),
+        }
         let mut app = Self {
             tabs: Tabs::default(),
             workspace: None,
@@ -147,6 +155,7 @@ impl ForgeRoomApp {
             last_git: std::time::Instant::now(),
             hunks: Vec::new(),
             hunks_tab: None,
+            gallery: theme_gallery::Gallery::default(),
         };
         if let Some(path) = initial_path {
             app.open_path(path);
@@ -337,6 +346,11 @@ impl ForgeRoomApp {
                     ui.close();
                 }
                 ui.separator();
+                if ui.button("Color Theme…").clicked() {
+                    self.gallery.open();
+                    ui.close();
+                }
+                ui.separator();
                 if ui
                     .add(egui::Button::new("Toggle Sidebar").shortcut_text("Ctrl+B"))
                     .clicked()
@@ -380,16 +394,16 @@ impl ForgeRoomApp {
             );
             let active = self.show_sidebar && self.view == view;
             let color = if active || response.hovered() {
-                theme::TEXT
+                theme::text()
             } else {
-                theme::TEXT_DIM
+                theme::text_dim()
             };
             let painter = ui.painter();
             if active {
                 painter.rect_filled(
                     egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
                     0.0,
-                    theme::ACCENT,
+                    theme::accent(),
                 );
             }
             let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 24.0));
@@ -399,13 +413,13 @@ impl ForgeRoomApp {
             }
             if view == SidebarView::SourceControl && badge > 0 {
                 let center = egui::pos2(rect.right() - 12.0, rect.top() + 14.0);
-                painter.circle_filled(center, 8.0, theme::ACCENT);
+                painter.circle_filled(center, 8.0, theme::badge());
                 painter.text(
                     center,
                     egui::Align2::CENTER_CENTER,
                     badge.min(99),
                     egui::FontId::proportional(10.0),
-                    egui::Color32::WHITE,
+                    theme::badge_text(),
                 );
             }
             if response.on_hover_text(tip).clicked() {
@@ -573,7 +587,7 @@ impl ForgeRoomApp {
         ui.painter().rect_filled(
             egui::Rect::from_min_size(bar.min, egui::vec2(bar.width(), TAB_HEIGHT)),
             0.0,
-            theme::BG_TAB_IDLE,
+            theme::tab_idle(),
         );
         let mut activate = None;
         let mut close = None;
@@ -590,7 +604,7 @@ impl ForgeRoomApp {
                         let galley = ui.painter().layout_no_wrap(
                             title,
                             egui::FontId::proportional(13.0),
-                            theme::TEXT,
+                            theme::text(),
                         );
                         let width = (galley.size().x + 52.0).max(104.0);
                         let (rect, response) = ui.allocate_exact_size(
@@ -610,28 +624,28 @@ impl ForgeRoomApp {
 
                         let painter = ui.painter();
                         let fill = if is_active {
-                            theme::BG_EDITOR
+                            theme::bg_editor()
                         } else if hovered {
-                            egui::Color32::from_rgb(28, 29, 31)
+                            theme::mix(theme::tab_idle(), theme::text(), 0.06)
                         } else {
-                            theme::BG_TAB_IDLE
+                            theme::tab_idle()
                         };
                         painter.rect_filled(rect, 0.0, fill);
                         if is_active {
                             painter.rect_filled(
                                 egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 2.0)),
                                 0.0,
-                                theme::ACCENT,
+                                theme::accent(),
                             );
                         }
                         painter.line_segment(
                             [rect.right_top(), rect.right_bottom()],
-                            egui::Stroke::new(1.0, theme::BORDER),
+                            egui::Stroke::new(1.0, theme::border()),
                         );
                         let text_color = if is_active {
-                            theme::TEXT
+                            theme::text()
                         } else {
-                            theme::TEXT_DIM
+                            theme::text_dim()
                         };
                         painter.galley(
                             egui::pos2(rect.left() + 14.0, rect.center().y - galley.size().y / 2.0),
@@ -639,16 +653,12 @@ impl ForgeRoomApp {
                             text_color,
                         );
                         if tab.doc.is_dirty() && !hovered {
-                            painter.circle_filled(close_rect.center(), 4.0, theme::TEXT_DIM);
+                            painter.circle_filled(close_rect.center(), 4.0, theme::text_dim());
                         } else if is_active || hovered {
                             if close_response.hovered() {
-                                painter.circle_filled(
-                                    close_rect.center(),
-                                    9.0,
-                                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22),
-                                );
+                                painter.circle_filled(close_rect.center(), 9.0, theme::overlay(22));
                             }
-                            icons::close_cross(painter, close_rect.center(), theme::TEXT);
+                            icons::close_cross(painter, close_rect.center(), theme::text());
                         }
 
                         if close_response.clicked() || response.middle_clicked() {
@@ -690,7 +700,6 @@ impl ForgeRoomApp {
                 .map(|extension| extension.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "txt".into())
         });
-        let code_theme = CodeTheme::from_style(ui.style());
         let line_count = gutter::line_count(tab.doc.text());
         let gutter_width = gutter::gutter_digits(line_count) as f32 * char_width + 30.0;
 
@@ -706,17 +715,16 @@ impl ForgeRoomApp {
                     let (gutter, _) =
                         ui.allocate_exact_size(egui::vec2(gutter_width, 1.0), egui::Sense::hover());
 
-                    let mut layouter = |ui: &egui::Ui,
-                                        text: &dyn egui::TextBuffer,
-                                        _wrap_width: f32| {
-                        let mut job = if extension == "diff" {
-                            diff_job(text.as_str(), &font_id)
-                        } else {
-                            highlight(ui.ctx(), ui.style(), &code_theme, text.as_str(), &extension)
+                    let mut layouter =
+                        |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap_width: f32| {
+                            let mut job = if extension == "diff" {
+                                diff_job(text.as_str(), &font_id)
+                            } else {
+                                syntax::highlight(text.as_str(), &extension, &font_id)
+                            };
+                            job.wrap.max_width = f32::INFINITY; // no soft wrap, so gutter numbers match rows
+                            ui.fonts_mut(|fonts| fonts.layout_job(job))
                         };
-                        job.wrap.max_width = f32::INFINITY; // no soft wrap, so gutter numbers match rows
-                        ui.fonts_mut(|fonts| fonts.layout_job(job))
-                    };
                     if tab.fresh {
                         // egui starts a new editor with the cursor at the end; VS Code starts at 1:1.
                         tab.fresh = false;
@@ -792,7 +800,7 @@ impl ForgeRoomApp {
                                     egui::pos2(clip.right().max(gutter.right()), top + height),
                                 ),
                                 0.0,
-                                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 9),
+                                theme::line_highlight(),
                             );
                         }
                         painter.text(
@@ -801,9 +809,9 @@ impl ForgeRoomApp {
                             line + 1,
                             font_id.clone(),
                             if current {
-                                theme::TEXT
+                                theme::text()
                             } else {
-                                egui::Color32::from_rgb(92, 94, 100)
+                                theme::line_number()
                             },
                         );
                     }
@@ -851,12 +859,12 @@ impl ForgeRoomApp {
                     let last = parts.len().saturating_sub(1);
                     for (index, part) in parts.iter().enumerate() {
                         if index > 0 {
-                            ui.label(egui::RichText::new("\u{203a}").color(theme::TEXT_DIM));
+                            ui.label(egui::RichText::new("\u{203a}").color(theme::text_dim()));
                         }
                         let color = if index == last {
-                            theme::TEXT
+                            theme::text()
                         } else {
-                            theme::TEXT_DIM
+                            theme::text_dim()
                         };
                         ui.label(egui::RichText::new(part).size(12.5).color(color));
                     }
@@ -870,9 +878,9 @@ impl ForgeRoomApp {
             ui.label(
                 egui::RichText::new("Forge Room")
                     .size(30.0)
-                    .color(theme::TEXT),
+                    .color(theme::text()),
             );
-            ui.label(egui::RichText::new("Early Preview").color(theme::TEXT_DIM));
+            ui.label(egui::RichText::new("Early Preview").color(theme::text_dim()));
             ui.add_space(24.0);
             let size = egui::vec2(240.0, 32.0);
             let entries: [(&str, &str); 3] = [
@@ -904,7 +912,7 @@ impl ForgeRoomApp {
             if let Some(branch) = self.branch.clone() {
                 let (rect, icon) =
                     ui.allocate_exact_size(egui::vec2(14.0, 16.0), egui::Sense::click());
-                icons::branch(ui.painter(), rect, theme::TEXT);
+                icons::branch(ui.painter(), rect, theme::status_text());
                 let mut text = branch;
                 if let Some(Ok(status)) = &self.git_status
                     && (status.ahead > 0 || status.behind > 0)
@@ -912,7 +920,7 @@ impl ForgeRoomApp {
                     text = format!("{text}  \u{2191}{} \u{2193}{}", status.ahead, status.behind);
                 }
                 let label = ui.add(
-                    egui::Label::new(egui::RichText::new(text).color(theme::TEXT))
+                    egui::Label::new(egui::RichText::new(text).color(theme::status_text()))
                         .sense(egui::Sense::click()),
                 );
                 if icon.clicked() || label.on_hover_text("Open Source Control").clicked() {
@@ -920,9 +928,9 @@ impl ForgeRoomApp {
                 }
                 ui.add_space(10.0);
             }
-            ui.label(egui::RichText::new(&self.status).color(theme::TEXT_DIM));
+            ui.label(egui::RichText::new(&self.status).color(theme::status_dim()));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let dim = |text: String| egui::RichText::new(text).color(theme::TEXT_DIM);
+                let dim = |text: String| egui::RichText::new(text).color(theme::status_dim());
                 ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()));
                 if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
                     ui.label(dim(position::line_ending(tab.doc.text()).to_string()));
@@ -1054,17 +1062,17 @@ impl eframe::App for ForgeRoomApp {
         };
 
         egui::Panel::top("menu")
-            .frame(bar(theme::BG_BAR))
+            .frame(bar(theme::title_bar()))
             .show(ui, |ui| self.menu_bar(ui));
 
         egui::Panel::bottom("status")
-            .frame(bar(theme::BG_BAR))
+            .frame(bar(theme::status_bar()))
             .show(ui, |ui| self.status_bar(ui));
 
         egui::Panel::left("activity")
             .exact_size(ACTIVITY_WIDTH)
             .resizable(false)
-            .frame(egui::Frame::new().fill(theme::BG_ACTIVITY))
+            .frame(egui::Frame::new().fill(theme::bg_activity()))
             .show(ui, |ui| self.activity_bar(ui));
 
         if self.show_sidebar {
@@ -1072,12 +1080,12 @@ impl eframe::App for ForgeRoomApp {
                 .default_size(270.0)
                 .size_range(160.0..=520.0)
                 .resizable(true)
-                .frame(egui::Frame::new().fill(theme::BG_SIDEBAR))
+                .frame(egui::Frame::new().fill(theme::bg_sidebar()))
                 .show(ui, |ui| self.sidebar(ui));
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(theme::BG_EDITOR))
+            .frame(egui::Frame::new().fill(theme::bg_editor()))
             .show(ui, |ui| {
                 if !self.tabs.tabs.is_empty() {
                     self.tab_bar(ui);
@@ -1094,6 +1102,19 @@ impl eframe::App for ForgeRoomApp {
                 self.refresh_hunks();
             }
             context.request_repaint_after(std::time::Duration::from_secs(3));
+        }
+
+        match theme_gallery::show(&context, &mut self.gallery) {
+            Some(theme_gallery::Outcome::Keep) => {
+                let settings = settings::Settings {
+                    theme: Some(theme::current().key.clone()),
+                };
+                if let Err(error) = settings::save(&settings) {
+                    self.status = format!("Could not save settings: {error}");
+                }
+            }
+            Some(theme_gallery::Outcome::Cancel(key)) => theme::set(&context, &key),
+            None => {}
         }
 
         self.pending_dialog(&context);

@@ -59,7 +59,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo) -> Action {
             RichText::new("SOURCE CONTROL")
                 .size(11.0)
                 .strong()
-                .color(theme::TEXT_DIM),
+                .color(theme::text_dim()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
@@ -104,9 +104,9 @@ fn empty_state(ui: &mut egui::Ui, title: &str, detail: &str) {
         ui.add_space(14.0);
         ui.vertical(|ui| {
             ui.set_max_width((ui.available_width() - 14.0).max(120.0));
-            ui.label(RichText::new(title).strong().color(theme::TEXT));
+            ui.label(RichText::new(title).strong().color(theme::text()));
             ui.add_space(2.0);
-            ui.label(RichText::new(detail).color(theme::TEXT_DIM));
+            ui.label(RichText::new(detail).color(theme::text_dim()));
             ui.add_space(8.0);
         });
     });
@@ -135,10 +135,11 @@ fn ready(ui: &mut egui::Ui, state: &mut State, status: &git::Status) -> Option<A
             } else {
                 format!("Commit {} staged", staged.len())
             };
-            let button = egui::Button::new(RichText::new(label).strong().color(Color32::WHITE))
-                .fill(theme::ACCENT)
-                .corner_radius(6.0)
-                .min_size(egui::vec2(ui.available_width(), 30.0));
+            let button =
+                egui::Button::new(RichText::new(label).strong().color(theme::button_text()))
+                    .fill(theme::button())
+                    .corner_radius(6.0)
+                    .min_size(egui::vec2(ui.available_width(), 30.0));
             if (ui.add_enabled(can_commit, button).clicked() || (submit && can_commit))
                 && action.is_none()
             {
@@ -193,35 +194,39 @@ fn section(
     {
         let painter = ui.painter();
         if response.hovered() {
-            painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 8));
+            painter.rect_filled(rect, 0.0, theme::overlay(8));
         }
         crate::icons::chevron(
             painter,
             egui::pos2(rect.left() + 18.0, y),
             *open,
-            theme::TEXT_DIM,
+            theme::text_dim(),
         );
         let galley = painter.layout_no_wrap(
             title.to_string(),
             FontId::proportional(11.0),
-            theme::TEXT_DIM,
+            theme::text_dim(),
         );
         let width = galley.size().x;
         painter.galley(
             egui::pos2(rect.left() + 32.0, y - galley.size().y / 2.0),
             galley,
-            theme::TEXT_DIM,
+            theme::text_dim(),
         );
         // Count pill.
         let pill_x = rect.left() + 32.0 + width + 8.0;
         let pill = Rect::from_min_size(egui::pos2(pill_x, y - 8.0), egui::vec2(24.0, 16.0));
-        painter.rect_filled(pill, 8.0, Color32::from_rgb(52, 54, 58));
+        painter.rect_filled(
+            pill,
+            8.0,
+            theme::mix(theme::bg_sidebar(), theme::text(), 0.14),
+        );
         painter.text(
             pill.center(),
             Align2::CENTER_CENTER,
             changes.len(),
             FontId::proportional(10.5),
-            theme::TEXT,
+            theme::text(),
         );
         if response.hovered() || bulk_response.hovered() {
             icon_button(painter, bulk, staged, bulk_response.hovered());
@@ -254,13 +259,9 @@ fn section(
 /// `+` (stage) or `-` (unstage) button, drawn with the painter.
 fn icon_button(painter: &egui::Painter, rect: Rect, minus: bool, hovered: bool) {
     if hovered {
-        painter.rect_filled(
-            rect,
-            5.0,
-            Color32::from_rgba_unmultiplied(255, 255, 255, 24),
-        );
+        painter.rect_filled(rect, 5.0, theme::overlay(24));
     }
-    let stroke = Stroke::new(1.5, theme::TEXT);
+    let stroke = Stroke::new(1.5, theme::text());
     let c = rect.center();
     painter.line_segment(
         [c + egui::vec2(-4.5, 0.0), c + egui::vec2(4.5, 0.0)],
@@ -293,11 +294,7 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
     let letter = change.letter(staged);
     let painter = ui.painter();
     if hovered {
-        painter.rect_filled(
-            rect,
-            0.0,
-            Color32::from_rgba_unmultiplied(255, 255, 255, 10),
-        );
+        painter.rect_filled(rect, 0.0, theme::overlay(10));
     }
     crate::icons::file(
         painter,
@@ -308,9 +305,9 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
         name.to_string(),
         FontId::proportional(13.0),
         if letter == 'D' {
-            theme::TEXT_DIM
+            theme::text_dim()
         } else {
-            theme::TEXT
+            theme::text()
         },
     );
     let name_width = name_galley.size().x;
@@ -320,7 +317,7 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
     text_painter.galley(
         egui::pos2(text_left, y - name_galley.size().y / 2.0),
         name_galley,
-        theme::TEXT,
+        theme::text(),
     );
     if !directory.is_empty() {
         text_painter.text(
@@ -328,7 +325,7 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
             Align2::LEFT_CENTER,
             directory,
             FontId::proportional(11.5),
-            Color32::from_rgb(112, 114, 120),
+            theme::mix(theme::bg_sidebar(), theme::text(), 0.45),
         );
     }
     if hovered {

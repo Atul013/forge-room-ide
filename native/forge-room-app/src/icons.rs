@@ -73,7 +73,7 @@ pub fn explorer(painter: &Painter, rect: Rect, color: Color32) {
         egui::vec2(rect.width() * 0.62, rect.height() * 0.76),
     );
     painter.rect_stroke(back, 1.5, Stroke::new(1.5, color), StrokeKind::Inside);
-    painter.rect_filled(front, 1.5, Color32::from_rgb(18, 19, 20));
+    painter.rect_filled(front, 1.5, crate::theme::bg_activity());
     painter.rect_stroke(front, 1.5, Stroke::new(1.5, color), StrokeKind::Inside);
 }
 

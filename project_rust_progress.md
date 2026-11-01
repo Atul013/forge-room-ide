@@ -36,6 +36,11 @@ Single place for the state of the native app and its installer. Shared agent han
   - Click a change to open a read-only, green/red colored diff tab; "Initialize Repository" for plain folders.
   - Gutter change markers (added, modified, deleted) in the editor; refreshes every 3 s, on save and on tab switch.
   - Uses the `git` command line (like VS Code); a clear message appears when git is missing. 16 unit tests including real-repo stage/commit/diff.
+- **Themes ported from Forge Room Studio (done, verified on screen):**
+  - The six Studio themes (Neon Ronin, Starship Deck, Moss Shrine, Ink & Ember, Paper Studio, Signal Guard) load from their original VS Code theme JSON (`native/forge-room-app/themes/`). Ink & Ember is the default.
+  - Whole UI is themed at runtime (panels, bars, tabs, badges, status bar), including a light theme; syntax colors come from each theme's own token rules through a custom highlighter.
+  - View > Color Theme: gallery of preview cards, live apply, Keep or Cancel; choice saved to `%LOCALAPPDATA%\Forge Room Early Preview\settings.json` (kept across updates).
+  - Tests check every theme still meets 4.5:1 text contrast. 22 unit tests total.
 - Logo embedded in the exe (`build.rs`, `assets/forge-room.ico`).
 - Toolchain: Rust 1.99.1 (eframe 0.37 deps need 1.95+).
 
