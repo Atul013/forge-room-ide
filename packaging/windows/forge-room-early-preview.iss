@@ -5,7 +5,7 @@
   #error OutputDir must point to the artifact output directory
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.109.0-alpha.1"
+  #define AppVersion "0.110.0-alpha.1"
 #endif
 ; build-ember.ps1 compiles this as the install/uninstall engine (suffix "-engine") inside the
 ; branded setup host. It is also usable on its own as a plain Inno installer.
@@ -42,11 +42,11 @@ UninstallDisplayIcon={app}\forge-room-early-preview.exe
 CloseApplications=yes
 RestartApplications=no
 SetupLogging=yes
-VersionInfoVersion=0.109.0.1
+VersionInfoVersion=0.110.0.1
 VersionInfoCompany=Forge Room contributors
 VersionInfoDescription=Forge Room Early Preview installer
 VersionInfoProductName=Forge Room Early Preview
-VersionInfoProductVersion=0.109.0.1
+VersionInfoProductVersion=0.110.0.1
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

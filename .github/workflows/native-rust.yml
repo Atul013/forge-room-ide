@@ -11,7 +11,9 @@ on:
       - ".github/workflows/native-rust.yml"
   push:
     branches:
-      - "codex/native-early-preview"
+      - "native-rust-ide"
+    tags:
+      - "v*"
     paths:
       - "native/**"
       - "docs/native/**"
@@ -24,6 +26,8 @@ permissions:
 jobs:
   verify:
     runs-on: windows-2025
+    permissions:
+      contents: write # only used to publish a pre-release when a v* tag is pushed
     defaults:
       run:
         shell: pwsh
@@ -75,10 +79,10 @@ jobs:
         if: always() && steps.package.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64
+          name: Forge-Room-Early-Preview-0.110.0-alpha.1-windows-x64
           path: |
-            artifacts/windows-x64/Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64.zip
-            artifacts/windows-x64/Forge-Room-Early-Preview-0.109.0-alpha.1-windows-x64-setup.exe
+            artifacts/windows-x64/Forge-Room-Early-Preview-0.110.0-alpha.1-windows-x64.zip
+            artifacts/windows-x64/Forge-Room-Early-Preview-0.110.0-alpha.1-windows-x64-setup.exe
             artifacts/windows-x64/SHA256SUMS.txt
             artifacts/windows-x64/BUILD_METRICS.json
             artifacts/windows-x64/LAUNCH_SMOKE.json
@@ -86,3 +90,18 @@ jobs:
             artifacts/windows-x64/STARTUP_ERROR.log
           if-no-files-found: error
           retention-days: 14
+      - name: Publish GitHub pre-release (v* tags only)
+        if: startsWith(github.ref, 'refs/tags/v') && steps.package.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          $dir = "artifacts/windows-x64"
+          $files = @(
+            "$dir/Forge-Room-Early-Preview-$version-windows-x64-setup.exe",
+            "$dir/Forge-Room-Early-Preview-$version-windows-x64.zip",
+            "$dir/SHA256SUMS.txt",
+            "$dir/BUILD_METRICS.json",
+            "$dir/INSTALL_VERIFY.json"
+          )
+          gh release create $env:GITHUB_REF_NAME @files --prerelease --verify-tag --title "Forge Room Early Preview $version" --notes-file docs/native/EARLY_PREVIEW_NOTES.md

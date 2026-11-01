@@ -3,7 +3,7 @@
 param(
     [string]$PackageDir = (Join-Path $PSScriptRoot "..\..\artifacts\installer-redesign\payload"),
     [string]$OutputDir = (Join-Path $PSScriptRoot "..\..\artifacts\installer-redesign"),
-    [string]$Version = "0.109.0-alpha.1"
+    [string]$Version = "0.110.0-alpha.1"
 )
 
 $ErrorActionPreference = 'Stop'

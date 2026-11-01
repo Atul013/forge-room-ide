@@ -2,14 +2,15 @@
 
 A light, fast, native IDE written in Rust. No Electron, no webview, no bundled Node runtime.
 
-**Status:** early preview (`0.109.0-alpha.1`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [project_rust_progress.md](project_rust_progress.md).
+**Status:** early preview (`0.110.0-alpha.1`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [project_rust_progress.md](project_rust_progress.md).
 
 ## What works today
 
-- Open, edit and save UTF-8 text files, with unsaved-change tracking.
+- IDE shell: explorer sidebar with a folder tree, multi-file tabs, menu bar, status bar, native Open/Save dialogs.
+- Open, edit and save UTF-8 text files, with unsaved-change prompts.
 - A per-user Windows installer with in-place updates and a themed uninstaller.
 
-The IDE shell (explorer, tabs, status bar), syntax highlighting, command palette, search, terminal and Git are next; see the roadmap.
+Line numbers and syntax highlighting, command palette and search, terminal and Git are next; see the roadmap.
 
 ## Build and run
 

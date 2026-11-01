@@ -1,6 +1,6 @@
-# Forge Room Early Preview 0.109.0-alpha.1
+# Forge Room Early Preview 0.110.0-alpha.1
 
-This is an installable artifact checkpoint for the first native Rust slices. It is an early preview, not a beta, and is not a published GitHub release.
+This is an early preview of the native Rust IDE: not a beta, unsigned, and Windows 11 x64 only.
 
 ## Included
 
@@ -11,11 +11,14 @@ This is an installable artifact checkpoint for the first native Rust slices. It 
 - Private-by-default sharing policy.
 - Offline JSON state with atomic replacement, previous-state backup and recovery from corrupt primary state.
 - CLI workflow for creating a room, adding participants/tasks, changing status, handing off work, recording evidence and listing tasks.
-- Native graphical UTF-8 text open/edit/save slice with keyboard save, unsaved-state indication, a high-DPI-aware native window and AccessKit integration.
+- Native graphical IDE shell: explorer sidebar with a lazy folder tree, multi-file tabs, menu bar, status bar (line/column, encoding, line endings), native Open/Save dialogs, and unsaved-changes prompts when closing a tab or the window.
+- UTF-8 text open/edit/save with keyboard shortcuts, a high-DPI-aware native window and AccessKit integration. Files over 10 MB and non-UTF-8 files are refused with a message.
+- A per-user installer that updates in place (older version to newer, downgrades blocked) and a themed uninstaller.
 
 ## Missing
 
-- File picker, multi-file workspace, syntax highlighting, LSP, DAP, Git UI, terminal and task runner.
+- Line numbers, syntax highlighting, find/replace, command palette, find in files, LSP, DAP, Git UI, terminal and task runner.
+- File create/rename/delete in the explorer and detection of files changed on disk while open.
 - Realtime room transport, invitations, encryption and reconnect.
 - Theme/profile UI, accessibility and high-DPI acceptance.
 - Interactive Windows open/edit/save acceptance, upgrade testing and a signed release.
@@ -29,7 +32,7 @@ This is an installable artifact checkpoint for the first native Rust slices. It 
 - Silent per-user installation is exercised by CI. The workflow installs an alpha.0 baseline with the same stable AppId, upgrades to alpha.1, verifies application-data and external-project preservation, checks default shortcut behavior, and then performs a clean uninstall. Machine-readable install and launch evidence are emitted with the artifact.
 - The build is unsigned.
 - The installer is per-user and deliberately does not modify PATH or register file associations; the native app has no stable project-file format yet.
-- The portable archive includes a locked dependency inventory and a cargo-about-generated report associating shipped Rust dependencies with their full license texts. Packaging fails closed if a dependency license cannot be determined. Windows artifacts are retained temporarily as CI artifacts and are not a published release.
+- The portable archive includes a locked dependency inventory and a cargo-about-generated report associating shipped Rust dependencies with their full license texts. Packaging fails closed if a dependency license cannot be determined. Windows artifacts are also retained as CI artifacts.
 
 ## Extension tiers
 
