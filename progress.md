@@ -4,6 +4,17 @@
 
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
+### Navigate this document
+
+1. [Repository and current native state](#repository-and-migration-state)
+2. [Feature inventory and original detailed specification](#complete-product-feature-inventory-and-migration-status)
+3. [Delivery contracts for each product system](#delivery-contracts-for-the-major-systems)
+4. [The division between @ZayedBH and @Atul013](#one-ordered-workflow-split-equally)
+5. [Later phases after the first release](#beyond-the-first-release-candidate)
+6. [Slice order, boundaries and risks](#slice-by-slice-execution-order)
+7. [End-to-end acceptance scripts](#end-to-end-acceptance-scripts)
+8. [Working rules, verification and next actions](#working-rules)
+
 ## Repository and migration state
 
 - Original repository: `ZayedBH/forge-room-ide`. Its `main` now contains the native Rust replacement through PR #3. The Code OSS handoff at `b669705` is history.
@@ -103,6 +114,107 @@ The table below carries forward the original feature inventory without dropping 
 | Service / LAN / cloud | Private LAN/self-hosted room first; authenticated encrypted online relay as separate tier; room authority, discovery, NAT/relay decision, durable identities, expiring/revocable invites, persistence, account/key recovery, tenant policy, retention/deletion, observability and independent security review. | Self-hosted HTTPS/WSS service includes account/invite controls, per-address API rate limiting, per-connection relay byte/frame limits, per-address HTTP and WebSocket upgrade limits, and durable control metadata. It is not a production managed internet service; separate-machine acceptance, global bandwidth controls, operations and independent review remain. |
 | Replay and deferred concepts | Optional activity replay may be explored after the core flow. Keep Replay lower priority. Do not split low-value concepts such as Forge Twin, Ghost Developer, Forge Universe or Forge What-If into separate flagship products unless the user revisits that direction. | No Replay implementation. Deprioritized concepts are deliberately out of the active roadmap. |
 
+## Delivery contracts for the major systems
+
+The following sections translate the original briefs into concrete native-product behavior. They are **requirements and acceptance targets**, not claims that the Rust app already implements them. The status tables above identify what is present today. Each group should be delivered in smaller reviewable slices, and every slice needs automated evidence plus a visible or multi-client trial when relevant.
+
+### A. Everyday IDE foundation
+
+**Experience to deliver**
+
+1. Open a single file, folder, project and multi-root workspace; restore the last session without silently opening or sharing private content. Explorer operations include create, rename, delete, refresh and reveal, with clear confirmation for destructive actions.
+2. Edit with reliable undo/redo, selection, multi-cursor, indentation, bracket matching, find/replace, go to line, symbols, syntax colors, diagnostics and accessibility. Non-UTF-8, binary, very large and externally changed files need explicit behavior and safe failure messages.
+3. Run a normal language workflow through native LSP: completion, hover, definitions, references, rename and diagnostics. Track which language server produced each result and show when it is unavailable.
+4. Provide terminal, tasks, test discovery/execution, Problems and Debug views backed by real sources. DAP should support breakpoints, stepping, stack and variables only after a supported adapter is connected.
+5. Keep Git authoritative: status, stage, diff, commit, branch, fetch/pull/push, conflict resolution, history, blame and review. Never auto-commit merely because the room observed a change.
+6. Define extension tiers truthfully: declarative themes/grammars/snippets first, native language/debug servers next, optional constrained WASM extensions later. A VSIX filename is not proof its JavaScript code can run.
+
+**Acceptance:** @ZayedBH and @Atul013 can complete the same edit–diagnose–test–review–commit path on two representative projects. A failed save, external edit, disconnected remote or missing language tool cannot silently lose work. Startup, idle memory, large-file interaction and keyboard access are measured.
+
+### B. First-run room and membership
+
+**Create:** offer Create Room, Join Room, Recent Rooms and Return to Room from a visible but dismissible entry. A room may bind to a project/repo/branch without requiring Git. The wizard asks only for room name, privacy, availability mode, optional icon, template and duration at first; advanced settings include milestones, timezone, submission URL, roles and a preview of what will be shared. Invite-only is the default. Room creation alone uploads no code.
+
+**Join:** accept a high-entropy invite code/link or supported LAN discovery. Show room owner, project, network mode, role, local project binding and the client's actual capability tier. A participant can join read-only without a checkout. Joining never resets, pulls, switches branches or runs scripts without a separate action and consent.
+
+**Lifecycle:** invite expiry, maximum uses, rotation, revocation and optional join approval need server-side enforcement. A host can leave, pause, end, archive, restore or export according to role policy. Presence expires by lease; disconnect does not delete files or artifacts. The countdown uses authoritative start/end times and keeps advancing across app closure unless an authorized pause or extension records an audit event. Make host-offline behavior explicit rather than inventing continuity.
+
+**Identity:** humans, human-owned agents and service/test runners are distinct actor types. Multiple clients and agents under one human must not inflate human headcount. Roster details may show owner, provider/runtime, location, capability tier, task and last seen only to authorized viewers. Moderation includes revoke invite, remove role, mute/kick and deny rejoin where supported.
+
+**Acceptance:** two independent machines create/join/leave/rejoin a private room; expired or revoked codes fail; a disconnected participant returns without duplicate members or events; no project file is uploaded merely by joining.
+
+### C. Room UI and communication
+
+The editor remains the primary surface. A compact room chip shows connection state, participant count, timer, sharing state and actionable alerts. Dockable or collapsible areas cover Team, Chat, Tasks, Agents, Live Activity and Build/Demo. Each has loading, empty, offline, reconnecting, permission-denied and error states. Keep focus order, reduced motion, contrast, keyboard shortcuts and a do-not-disturb control.
+
+Communication includes public room messages, direct messages, mentions, reactions, threads, decisions and search. A message can link to a permitted task, file, diff hunk, test, preview or agent run. Private messages must be filtered before delivery and before local indexing; search does not expose content the viewer never received. Talking to an agent's owner is distinct from issuing an agent command. Retention, export and deletion policies need visible rules.
+
+**Acceptance:** two participants exchange public and private messages, link a decision to a task, reconnect and search only authorized history. A guest cannot retrieve another pair's DMs through history, search, export or a crafted protocol request.
+
+### D. Tasks, timer, milestones and deadline rescue
+
+Tasks need fast capture, owner, priority, optional estimate, due time, status, blocker, dependencies, acceptance criteria, linked files/artifacts and explicit handoff. A task can be reopened only under policy; completion requires its stated evidence rather than a status click. The host controls timer start/pause/extension; milestone changes are attributed and propagated. Presets may include 12, 24, 36 and 48 hours plus custom time. Timezone display must not change the authoritative deadline.
+
+Readiness compares remaining estimated work, critical dependencies, time left, test/build evidence, preview and actual submission status. Unknown or manual results remain labelled unknown/manual. Alerts can recommend help for blocked or due tasks. A later policy may queue or execute an eligible agent only within preapproved task, file, time, cost and tool scope. Owner opt-out, pause and reclaim always remain available; expiry never auto-marks a task done.
+
+**Acceptance:** a due-soon blocked task produces an explainable recommendation; unauthorized takeover or execution is rejected; a paused timer and changed milestone stay consistent after reconnect; the readiness view separates verified results from manual claims.
+
+### E. Live activity, visibility and spectate
+
+Events need stable IDs, actor, source, timestamp, sequence, schema version, visibility, task/file link, evidence link and idempotency key. Show real live/delayed/offline/unsupported labels. Activity may include membership, tasks, agent runs, file/diff changes, tests, terminal/build summaries, Git, decisions, contracts, conflicts, previews and handoffs. Never infer authorship from code style or claim private agent reasoning. No keystroke surveillance.
+
+Sharing scopes are separate: presence, active-file metadata, path, saved diff, saved content, unsaved buffer, cursor/selection, terminal output, debugger data, preview and agent context. Default to minimal sharing; show recipient and destination. Apply sensitive-path filters, size bounds, revision tracking and retention. Authorized teammates can inspect useful uncommitted work before Git commit, but Git remains the merge/release record.
+
+Read-only follow must not seize the viewer's own navigation. Request-edit is a separate flow with file/session/time limits. If safe shared-buffer editing is unavailable, use reviewed patch proposals and label the capability tier. True co-edit requires a tested consistency model, remote cursors, reconnect reconciliation, revocation that stops writes and collaborative undo semantics.
+
+**Acceptance:** one person shares only a saved diff while keeping unsaved content private; the viewer follows and stops following; an edit request is granted for one file, then revoked; unauthorized content and stale writes are blocked. Two-client network tests verify event visibility and ordering.
+
+### F. Human-owned agents and AI work
+
+Every agent has a unique session ID, human/service owner, provider/runtime, task, project/worktree, execution location, capabilities, permissions and observed state. The roster distinguishes available, busy, blocked, offline and stopped. Show planned action, files changed, commands run, tests, logs/artifacts and pending approvals where the provider exposes them. Users can pause, redirect, stop, reclaim and review; provider limitations must be displayed honestly.
+
+Ask reads approved context without edits. Plan creates an editable proposal and can export or hand off a structured plan. Build executes only an approved scope and yields a reviewable diff, checks, failures and remaining risk. The context picker can include selected files, symbols, selection, Git diff, diagnostics, bounded terminal output, debugger stack, room tasks/decisions and chosen Skills. In multi-root workspaces, every request and continuation stays pinned to the chosen root. Show what leaves the device and to which provider before transfer.
+
+The native capability registry should separate read/search/navigation from terminal, tests, edits, network, secret access, delegation, merge and deploy. A grant is narrower than a request. Exact approved edits should be checked against revision and path. Worktrees isolate parallel task changes, but a worktree is not an execution sandbox; untrusted autonomous commands require a real process boundary and resource limits.
+
+**Acceptance:** a real provider completes one Ask, Plan and Build path. An unapproved tool call is denied. Approved edits show an exact diff; tests show real results; rollback restores only that agent's change without deleting unrelated work. A disconnected or failed provider leaves an attributable, recoverable state.
+
+### G. Forge Studio, Morph, Widgets, Workshop and Packs
+
+Studio themes must coordinate workbench, editor syntax, icons, typography and optional non-code atmosphere. Users can preview, Keep or Restore, save personal/project profiles, import/export, and inspect contrast/reduced-motion behavior. Themes cannot silently alter permissions, keybindings, installed code or network access. Preserve the existing moods—Neon Ronin, Starship Deck, Moss Shrine, Ink & Ember, Paper Studio and Signal Guard—while allowing original future designs.
+
+Morph turns a natural-language request into a typed appearance/layout manifest. Preview the exact changes to colors, density, fonts, docks, background and motion; validate support, contrast and performance; apply only after confirmation; provide undo/restore. A prompt is not permission to mutate arbitrary workbench internals.
+
+Widgets are project-aware panels with typed UI/data bindings. The generator must identify requested sources, request only allowed capabilities, validate schema and forbidden APIs, bound CPU/memory/network, mark sample data as simulated, preview, install, monitor crashes, disable/uninstall and roll back. Workshop authors reusable commands, tools, widgets or extension contributions through source/manifest inspection, dependency review, isolated build/test and explicit install. Packs bundle versioned appearance, licensed assets, widget configuration, tools, Skill references, room templates and workflows with compatibility, dependency, provenance, selective install and rollback.
+
+**Acceptance:** a theme/profile can be previewed and restored without changing trust settings; a Morph proposal can be rejected with no side effects; a generated widget cannot access data or APIs outside its grant; a Pack can be installed and cleanly rolled back.
+
+### H. Skills, Mesh and Pipeline
+
+Skills are portable procedural instructions, not security policy, memory authority, a scheduler, debugger or sandbox. Discover local or trusted catalog `SKILL.md` entries; inspect name, description, location, license, maintainer, scripts and network needs; select for a request; map required native tools; test with synthetic data before enabling. Keep install/update/disable and provenance visible.
+
+Mesh is a versioned task/event graph that connects human and agent owners, dependencies, contracts and evidence. Pipeline orchestrates bounded handoffs and gated tests/build/deploy actions with retries, idempotency, cancellation, deadlines and verified results. Detect overlapping files and interface/schema/API changes; notify affected owners with source and confidence, ask for acknowledgement and offer preflight checks. Automation starts as recommendation. Queue/execute requires explicit narrow policy and must never force takeover, silently merge or deploy.
+
+**Acceptance:** a backend contract change alerts the owning frontend task with an exact source link; a failed test yields an artifact and blocks the next gated action; an agent handoff carries only authorized context; duplicate events cannot trigger duplicate execution.
+
+### I. Sessions, Pocket, cross-IDE and service operations
+
+Sessions adds room voice with device permission, mute/deafen/push-to-talk, speaking state, reconnect and quality indicators. Optional screen share/recording/transcription requires separate consent, retention and revocation. Integrated follow, permitted debugger/terminal view and requested shared control have their own scopes; screen share alone is not IDE-level shared state.
+
+Pocket is a phone-friendly companion for room presence, chat/calls, alerts, approvals, tasks, agent progress and read-only diffs/diagnostics. It must say whether an action needs the desktop online or an explicitly hosted runtime. Remote control needs fresh identity, scope and audit checks.
+
+Cross-IDE participation uses negotiated tiers: A for tested full collaboration, B for saved-buffer/diff participation, C for task/Git/activity only. A CLI or browser guest may join only within its tested tier. Do not promise universal unsaved-buffer streaming from third-party editors.
+
+The service starts with private LAN/self-hosted capability and expands to authenticated encrypted internet relay only with operational readiness. Define authority, discovery/NAT/relay choice, durable identities, account/key recovery, expiring invites, tenant policy, retention/deletion, quotas, observability, incident handling and independent security review. A responsive process or TLS connection is not multi-machine product acceptance.
+
+**Acceptance:** room voice reconnects without unconsented capture; a Pocket approval is attributed to the correct person and scope; a tier-C client cannot request tier-A content; a separate-machine room survives disconnect and revocation under its stated network tier.
+
+### J. Demo, shipping and deferred exploration
+
+Build/Demo should show real build/test/deploy health, authorized preview, comments and reproduction artifacts, a readiness checklist and actual submission evidence. Last-hour Ship/Panic mode surfaces P0 blockers, must-have versus optional work, merge risk and approved rescue suggestions; it must not silently broaden permissions. Export a handoff bundle with decisions, current diffs, checks, unresolved problems and agent context, filtered by recipient visibility. Activity Replay is optional after the core workflow; speculative concepts such as Twin, Ghost Developer, Universe and What-If remain parked until user evidence gives them a concrete acceptance question.
+
+**Acceptance:** the team can perform a final smoke test, inspect deployment/preview evidence, record the submitted artifact and export a privacy-filtered handoff without converting guesses into verified status.
+
 ## One ordered workflow, split equally
 
 This is the **proposed division between @ZayedBH and @Atul013**. Atul has not confirmed these assignments in this document. Both tracks include implementation and verification; each person owns a distinct code area, reviews the other's integration points, and records evidence. Rebalance after the first two phases if the measured effort differs. Neither person closes a row from a build alone.
@@ -194,6 +306,144 @@ Phase 7 is an **early native release gate**, not the end of the Forge Room produ
 | 12. Deferred exploration | Decide whether Replay or other speculative concepts solve a real observed need | Prototype only after a bounded acceptance question exists | No standalone flagship commitment without user evidence |
 
 Specific features, privacy conditions, and legacy evidence for these phases are in the detailed inventory above. Moving an item to a future phase is a scheduling decision, not deletion from scope. The original briefs in `docs/source-prompts/` remain the detailed requirement source when implementing a slice.
+
+## Slice-by-slice execution order
+
+The phases describe outcomes; this list is the proposed implementation order within them. A slice should end in a usable user action, a failure path and evidence. Owners are proposed and should be confirmed together before either person relies on the assignment. A dependency must be accepted before a dependent slice is called complete.
+
+| ID | Owner | Slice and user-visible result | Depends on | Proof to record |
+|---|---|---|---|---|
+| B01 | @ZayedBH | Room/theme baseline: local task, handoff, theme preview and restore work visibly | Current native app | Screen observations, persistence check, defects |
+| B02 | @Atul013 | Editor/Git/terminal baseline: open/edit/save, diff/commit, terminal and installer run | Current native app | Real project and disposable install observations |
+| B03 | Both | Legacy migration map: every kept feature has target crate/UI, priority, owner and test | B01, B02 | Reviewed matrix with explicit deferred items |
+| E01 | @Atul013 | External file change warning and safe save conflict choice | B02 | Two-process edit and no-overwrite test |
+| E02 | @ZayedBH | Room state recovery plus theme/keyboard accessibility fixes | B01 | Corrupt-state recovery and accessibility trial |
+| E03 | @Atul013 | Large-file measurement and editor component decision | E01 | Repeatable time/memory figures and decision note |
+| I01 | @ZayedBH | Persistent settings/keybindings and clear task/test controls | B03 | Restart persistence and real test run |
+| I02 | @Atul013 | Native LSP: diagnostics, completion, hover, definition | E01, B03 | Two-language project trial and server failure path |
+| I03 | @Atul013 | Git conflict resolution and usable terminal scrollback/copy | B02 | Conflict and terminal replay trial |
+| I04 | @Atul013 | Native debugger adapter path | I02 | Breakpoint/step/stack in supported project |
+| R01 | @Atul013 | Authenticated two-client room transport and identity | B03, E02 | Join/deny/reconnect protocol tests |
+| R02 | @ZayedBH | Create/join/invite/roster UX with explicit sharing preview | R01 | Two-machine wizard and privacy trial |
+| R03 | @ZayedBH | Chat, DMs, task links and visibility-filtered history | R01, R02 | Cross-client DM isolation and search test |
+| R04 | @Atul013 | Invite expiry/revocation, presence leases and event replay | R01 | Revocation and reconnect race tests |
+| R05 | @ZayedBH | Task/milestone/countdown, activity and read-only follow UX | R02, R04 | Two-client timing, authorization and follow trial |
+| R06 | @Atul013 | Permissioned saved diff transport and patch-proposal fallback | R04 | Revision/recipient/secret-filter tests |
+| A01 | @Atul013 | Provider-neutral scoped capability and adapter boundary | R01 or local-only scope defined | Denied-tool, cancel, audit and path tests |
+| A02 | @ZayedBH | Ask/Plan/Build context, approval, review and rollback UI | A01 | Real provider trial, rejection and restore |
+| A03 | @ZayedBH | Declarative themes/grammar/snippet import and compatibility UI | I01, B03 | Safe import and invalid package tests |
+| A04 | @Atul013 | Worktree isolation, exact edits, test evidence and recovery | A01, A02 | Unrelated work preserved after rollback |
+| L01 | @Atul013 | Reproducible installer, portable archive, hashes, license and upgrade checks | Accepted B/I/R/A slices | CI artifacts and install records |
+| L02 | @ZayedBH | Hands-on release acceptance, accessibility and honest notes | L01 | Windows trial and signed-off support matrix |
+| X01 | Both | Advanced co-edit/follow and Sessions | R05, R06 | Two-client revoke/reconnect/media consent |
+| X02 | Both | Morph, Widgets, Workshop and Packs | A01, A03 | Sandbox, permission and rollback trials |
+| X03 | Both | Mesh/Pipeline, impact alerts and deadline rescue | R05, A04 | Idempotent gated execution and human override |
+| X04 | Both | Pocket, cross-IDE tiers and hosted operations | R04, L02 | Independent client and operational security review |
+
+### Handoff between the two owners
+
+For a slice touching both tracks, the first owner opens an interface contract before writing dependent UI or transport code. The contract names actor IDs, message/version schema, error states, visibility rules, limits and migration behavior. The second owner builds against a fixture or mock of that contract. Integrate the two branches, run contract tests, then run the real user journey. Changes to a shared contract require both owners' review. A task handoff includes the diff, unresolved decisions, tests run, known failures, and the next exact action.
+
+### System boundaries to maintain
+
+| Boundary | Responsibility | Failure that must be prevented |
+|---|---|---|
+| `native/forge-room-core` | Room/task policy, actor IDs, state transitions, validation, persistence model | UI bypassing owner/host rules |
+| `native/forge-room-app` | Native editor and UI, local state, platform dialogs, user approval surfaces | Placeholder shown as live data; silent file overwrite |
+| Native adapters | Git, LSP/DAP, terminal, provider, transport and extension import | Ambient access exceeding the selected project or grant |
+| Room service | Authenticated membership, invite enforcement, bounded relay and operational storage | DM/content leakage, replay, unbounded traffic |
+| `packaging/windows` and CI | Reproducible artifacts, installer, license report, hashes and smoke evidence | Untested artifact or upgrade deleting user data |
+| Legacy folders | Behavior and test references for migration | Accidentally treating Code OSS extension code as the native runtime |
+
+No single event stream doubles as a collaborative editing algorithm. Event feed, saved-diff sharing, read-only follow and live co-edit have different consistency and permission requirements. No worktree doubles as a sandbox. No Skill text authorizes a tool. No screen share implies shared IDE state. These distinctions must survive implementation and release copy.
+
+## Risk register and decision points
+
+| Risk or open decision | Why it matters | Immediate owner action | Gate |
+|---|---|---|---|
+| Rust editor scaling | egui text layout may struggle with large files and many tabs | @Atul013 measures real workloads; @ZayedBH supplies representative projects | E03 before committing to a long-term widget |
+| External edits and recovery | Silent overwrite would destroy user work | @Atul013 adds conflict handling; @ZayedBH tests crash and room recovery | E01/E02 before wider release |
+| Legacy feature loss | A source folder exists, but behavior may not be native | Both maintain B03 matrix and this feature contract | Every ported feature has a native acceptance result |
+| Room privacy and authorization | Search, history, relay or export could reveal content across roles | @Atul013 enforces server/core visibility; @ZayedBH tests guest and DM UX | R01–R06 two-client denial tests |
+| Network scope | LAN, self-hosted and public internet are different support tiers | Both choose authority and deployment tier before inviting users | R01 design note; X04 operations review |
+| Shared edit consistency | Concurrent edits/revocation can corrupt buffers | Both choose proven CRDT/OT or reviewed patch fallback | X01 multi-client no-loss trial |
+| Agent process isolation | ACP/MCP/worktrees do not remove ambient OS permissions | @Atul013 defines execution boundary; @ZayedBH defines approval UX | A01/A04 denial and rollback tests |
+| Provider cost and reliability | Budget, cancellation and stale results vary by provider | Both specify limits and actual supported provider behavior | A02 real-provider trial |
+| Extension compatibility | Users may expect JavaScript VS Code extensions to run | @ZayedBH labels tiers; @Atul013 bounds native/WASM runtime | A03 package and permission tests |
+| Installer and release claims | CI smoke can pass without usable desktop behavior | @Atul013 owns artifacts; @ZayedBH owns visible acceptance | L01/L02 before release |
+
+## End-to-end acceptance scripts
+
+These are future checks. Keep the result **not run** until an actual person or automation performs them on a named commit and environment. Each run records pass/fail, screenshots or logs where useful, and any unverified part.
+
+### T01 — native daily coding loop
+
+1. Open a representative project and multiple files. Edit, navigate, search and save; restart and confirm content and layout.
+2. Run its language server, a failing then passing test, and a debugger session if that language is supported.
+3. Inspect the exact Git diff, resolve a controlled conflict, commit and verify the resulting history.
+4. Repeat after an external process changes an open file. **Pass:** the app warns and offers a safe choice; no buffer or external change disappears silently.
+
+### T02 — private room from two machines
+
+1. Host creates an invite-only room bound to a disposable project and shows the sharing preview.
+2. A second machine joins from an expiring code and binds its own local project without automatic pull/reset or upload.
+3. Disconnect and reconnect both clients; compare member count, task state, event sequence and timer.
+4. Revoke the invite and try to join again. **Pass:** the old code fails, authorized members retain correct state, and private files remain private.
+
+### T03 — room communication and visibility
+
+1. Three participants exchange public chat; two exchange a DM and link it to a task.
+2. The third participant searches, requests history and exports permitted activity.
+3. Directly call the protocol with the third identity for the DM ID. **Pass:** the third participant receives no DM content, result metadata or search hit; authorized participants can still recover their own conversation after reconnect.
+
+### T04 — task, handoff and countdown
+
+1. Create dependent tasks with owners, criteria, estimates, due times and a room milestone.
+2. Attempt to complete a blocked task without its criteria; request handoff to another owner; approve as host.
+3. Pause and extend the countdown as host; try the same operation as a contributor; reconnect both clients.
+4. **Pass:** unauthorized transitions fail, approved events are attributed once, timer/deadlines agree across clients, and readiness distinguishes verified checks from manual statements.
+
+### T05 — working diff, follow and edit grant
+
+1. Participant A opts to share a saved diff for one file while leaving an unsaved buffer and terminal output private.
+2. Participant B follows the permitted file, requests edit access for that file/session/time, then submits a patch or joins a supported shared buffer.
+3. A revokes access during activity; disconnect and reconnect both clients.
+4. **Pass:** B never sees the private buffer/terminal data, cannot write after revocation, and both versions reconcile without losing either person's work.
+
+### T06 — agent Ask, Plan, Build and rollback
+
+1. Bind a real provider and a disposable project. In Ask, allow selected context but no writes; in Plan, review an editable proposal.
+2. In Build, approve only named files and one test task. Try a forbidden file read, an unapproved command and a network request outside the grant.
+3. Inspect exact changed files, provider/tool evidence, test result and task attribution. Reject one proposed edit; accept another; roll back the accepted edit.
+4. **Pass:** denied actions do not execute, approvals match actual operations, rollback preserves unrelated work, and failed/unknown checks are not called verified.
+
+### T07 — deadline rescue without forced takeover
+
+1. Make a critical task blocked and due soon. Compare recommendations against eligibility, dependencies, capability, budget and owner preference.
+2. Choose recommend-only, then optionally authorize a narrow queue/execute policy with a fixed time and cost ceiling.
+3. Opt out, pause or reclaim while work is pending. Retry a duplicate event.
+4. **Pass:** no agent starts without applicable authority, owner control wins, duplicate events do not duplicate work, and merge/deploy still require their own gates.
+
+### T08 — Studio and creator safety
+
+1. Preview each theme at normal, high-contrast and reduced-motion settings; Keep one and Restore another. Import/export a profile.
+2. Request a Morph layout change and reject it after preview. Generate a widget with a denied data source and one permitted source; mark sample data visibly.
+3. Package approved appearance/widget configuration into a Pack, install, disable and uninstall it.
+4. **Pass:** editor readability and trust settings survive every appearance operation; denied data cannot be read; widget crashes are contained; rollback removes only the installed change.
+
+### T09 — Sessions, Pocket and client tiers
+
+1. Join a room voice call with device permission, mute, push-to-talk and reconnect. Attempt optional recording without consent.
+2. Use Pocket to view a task, inspect a permitted diff and approve a bounded action; try it with a revoked identity.
+3. Join through a tier-C CLI or guest client and request a tier-A live buffer.
+4. **Pass:** media capture follows consent, actions are attributed to the correct identity, revocation takes effect, and capability tiers reject unsupported data/action requests.
+
+### T10 — release, upgrade and recovery
+
+1. Build the release from a named tag; record source commit, version, license report, binary/installer/portable sizes and SHA-256 hashes.
+2. On Windows 11 x64, install as a normal user, open a real project, save settings, upgrade, reopen, then uninstall.
+3. Check external project files, settings, shortcuts and data retention against the documented policy. Repeat at high DPI/high contrast and inspect startup/idle/editor/room memory.
+4. **Pass:** hashes and versions agree, supported workflows visibly work, user projects survive, removal behavior matches release notes, and limitations are plainly stated.
 
 ## Working rules
 
