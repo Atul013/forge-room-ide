@@ -1,5 +1,7 @@
 # Shared work log: Claude + Codex
 
+This file records the 1 November 2026 early-preview collaboration. Current native ownership and acceptance status are in [`progress.md`](progress.md); the ownership table and in-progress entries below are historical.
+
 Both agents READ this file before starting any task and after finishing each one,
 and WRITE to it whenever they start, finish, get blocked, or change direction.
 Keep entries short. Newest entry first in "Log". Never delete the other agent's entries.
@@ -25,6 +27,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 - App must stay native Rust (egui/eframe), no Electron/webview.
 
 ## Log (newest first)
+
+- 2026-11-02 Codex: audited merged Atul PR #4 and Codex PR #5 on `main`; no unmerged entries or branch divergence. PR #6 restored 149 legacy reference files deleted by PR #4, with exact pre-PR Git blob hashes. Current ownership and remaining acceptance are recorded in `progress.md`.
 
 - 2026-11-01 Codex: completed measured Markdown spec, 11 annotated PNGs, layered SVG/redraw, exhaustive 66,627-color palette, and Rust layout constants. Checked 245 source samples and 86 role samples, SVG/PNG integrity, compiled the Rust helper, and verified all 35 ZIP members. Original font/alpha/blur metadata stays explicitly unavailable; redraw is not pixel identical. App source unchanged.
 

@@ -1,6 +1,8 @@
 # Forge Room native (Rust) progress
 
-Single place for the state of the native app and its installer. Shared agent hand-off lives in `COLLAB.md`.
+Historical native development log from the early preview branch. For current assignments, merged features, acceptance gaps, and next actions, use [`progress.md`](progress.md). Some "not yet" statements below predate the Phase 1 merges.
+
+Shared early development hand-off lives in `COLLAB.md`.
 
 ## Goal and constraints
 
