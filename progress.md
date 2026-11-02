@@ -1,6 +1,6 @@
 # Forge Room — progress and complete working plan
 
-**Updated:** 2 November 2026. **Active product:** native Rust IDE, Developer Preview `0.110.0-alpha.1`, Windows 11 x64. **Current phase:** Phase 1, visible Windows baseline. **Owners:** @ZayedBH and @Atul013.
+**Updated:** 2 November 2026. **Active product:** native Rust IDE, Developer Preview `0.110.0-alpha.2`, Windows 11 x64. **Current phase:** Phase 1, visible Windows baseline. **Owners:** @ZayedBH and @Atul013.
 
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
@@ -510,6 +510,8 @@ The supplied Forge Room mockups are beta design references for layout and workfl
 
 ### Phase 1 evidence — 2 November 2026
 
+- **Latest source integration:** Atul's `native-rust-ide` branch at `ade42a2` was integrated through [PR #8](https://github.com/ZayedBH/forge-room-ide/pull/8), then the Lobby room recovery change through [PR #9](https://github.com/ZayedBH/forge-room-ide/pull/9). Git reported no text conflicts in either merge. The combined PR passed Windows formatting, locked checks, tests, and clippy for both Rust crates. PR #7's commits are also marked merged through PR #9. A current-main Windows package run was requested; desktop acceptance remains open.
+- **Lobby recovery slice, source done:** When room files cannot be read, Lobby shows an unavailable warning, an `Open Room details` action, and a recovery status instead of offering `Create Room`. The action opens the Room dock. An isolated Windows trial of the first patch confirmed the warning, button, status, and unchanged invalid file hashes. The final dock-opening change passed CI but has not yet had a fresh desktop interaction trial. Keep E02 open until that trial and keyboard/theme checks pass.
 - **PR check:** `ZayedBH/forge-room-ide` had no open pull requests when checked.
 - **Integration update:** [PR #4](https://github.com/ZayedBH/forge-room-ide/pull/4) was subsequently merged into `main` at `c495aafa260694150c86908e6e93461b4027ecae`. Its editor safety, terminal, conflict and lobby changes are source-integrated; the PR's verify and branch package jobs passed. Interactive acceptance remains separate. [PR #6](https://github.com/ZayedBH/forge-room-ide/pull/6) restored the 149 `docs/`, `extensions/`, `services/`, and `releases/` reference files removed by PR #4; every restored file matched its pre-PR Git blob hash. The separate `archive/legacy-team-lobby/` duplicate remains removed.
 - **Merge conflict audit:** On 2 November 2026, `main` contained all commits from `atul/native-rust-ide` and PR #5. `git ls-files -u` and `git status --short` were empty after PR #6. PR #4 and PR #5 touched `native/forge-room-app/src/main.rs` and `rooms.rs`, but PR #5 was based on the merged PR #4 and passed Rust verification and a current-main Windows package run. No unresolved text or code merge conflict was found.
