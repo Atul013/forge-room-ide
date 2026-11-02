@@ -61,6 +61,9 @@ fn to_syntect(theme: &Theme) -> SyntectTheme {
     }
 }
 
+/// Above this size syntax highlighting is switched off (see docs/native/EDITOR_PERFORMANCE.md).
+pub const HIGHLIGHT_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+
 /// Highlighting is spread over frames: each call spends at most this long, and lines it has not
 /// reached yet are drawn plain until a later frame catches up.
 const FRAME_BUDGET: Duration = Duration::from_millis(12);
@@ -125,6 +128,17 @@ fn hash(text: &str) -> u64 {
 /// a large file stays cheap. Work per call is time-budgeted; see [`pending`].
 pub fn highlight(text: &str, extension: &str, font_id: &egui::FontId) -> LayoutJob {
     let theme = theme::current();
+    if text.len() > HIGHLIGHT_LIMIT_BYTES {
+        // Cache nothing for huge files: plain text keeps every keystroke bounded by layout alone.
+        PENDING.store(false, Ordering::Relaxed);
+        let mut job = LayoutJob::default();
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat::simple(font_id.clone(), theme.palette.text),
+        );
+        return job;
+    }
     let mut guard = cache().lock().expect("syntax cache");
     let mut state = match guard.take() {
         Some(state) if state.theme_key == theme.key && state.extension == extension => state,
@@ -288,6 +302,16 @@ mod tests {
     fn unknown_extensions_fall_back_to_plain_text() {
         let job = highlight("hello\n", "zzz", &egui::FontId::monospace(14.0));
         assert_eq!(job.text, "hello\n");
+    }
+
+    #[test]
+    fn huge_files_are_shown_as_plain_text() {
+        let text = "let x = 1;
+"
+        .repeat(HIGHLIGHT_LIMIT_BYTES / 10);
+        let job = highlight(&text, "rs", &egui::FontId::monospace(14.0));
+        assert_eq!(job.sections.len(), 1);
+        assert!(!pending());
     }
 
     fn fresh_cache() -> Cache {
