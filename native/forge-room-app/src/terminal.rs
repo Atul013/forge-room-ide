@@ -18,6 +18,9 @@ pub struct Terminal {
     size: (u16, u16),
     /// Dragged selection over the visible grid: (row, column) of both ends.
     selection: Option<((u16, u16), (u16, u16))>,
+    /// The selected text, captured when the drag ends so that later output scrolling the grid
+    /// cannot change what Copy puts on the clipboard.
+    snapshot: Option<String>,
     wheel_rows: f32,
     pub shell: String,
 }
@@ -115,6 +118,7 @@ impl Terminal {
             exited,
             size: (size.rows, size.cols),
             selection: None,
+            snapshot: None,
             wheel_rows: 0.0,
             shell: program,
         })
@@ -128,7 +132,7 @@ impl Terminal {
             .screen_mut()
             .set_scrollback((current + rows).max(0) as usize);
         drop(parser);
-        self.selection = None;
+        self.clear_selection();
     }
 
     /// Jump back to the live screen, as typing in a terminal does.
@@ -138,17 +142,31 @@ impl Terminal {
             .expect("terminal parser")
             .screen_mut()
             .set_scrollback(0);
-        self.selection = None;
+        self.clear_selection();
     }
 
-    fn selected_text(&self) -> Option<String> {
+    fn clear_selection(&mut self) {
+        self.selection = None;
+        self.snapshot = None;
+    }
+
+    /// The text under the selection as the grid looks now, clamped to the current size.
+    fn live_selected_text(&self) -> Option<String> {
         let (a, b) = self.selection?;
         let ((first_row, first_col), (last_row, last_col)) = if a <= b { (a, b) } else { (b, a) };
         let parser = self.parser.lock().expect("terminal parser");
-        let text = parser
-            .screen()
-            .contents_between(first_row, first_col, last_row, last_col + 1);
-        (!text.trim().is_empty()).then_some(text)
+        let screen = parser.screen();
+        let (rows, cols) = screen.size();
+        let (first_row, last_row) = (first_row.min(rows - 1), last_row.min(rows - 1));
+        let (first_col, last_col) = (first_col.min(cols - 1), last_col.min(cols - 1));
+        Some(screen.contents_between(first_row, first_col, last_row, last_col + 1))
+    }
+
+    /// What Copy should copy. `None` only when nothing is selected: a selection of blank cells is
+    /// still a selection, so Ctrl+C on it must not interrupt the running program.
+    fn selected_text(&self) -> Option<String> {
+        self.selection?;
+        self.snapshot.clone().or_else(|| self.live_selected_text())
     }
 
     pub fn has_exited(&self) -> bool {
@@ -169,6 +187,8 @@ impl Terminal {
             return;
         }
         self.size = (rows, cols);
+        // Stored cell positions belong to the old grid.
+        self.clear_selection();
         let _ = self.master.resize(PtySize {
             rows,
             cols,
@@ -210,8 +230,11 @@ impl Terminal {
                 self.selection = Some((anchor, cell_at(position)));
             }
         }
+        if response.drag_stopped() {
+            self.snapshot = self.live_selected_text();
+        }
         if response.clicked() {
-            self.selection = None;
+            self.clear_selection();
         }
         if response.hovered() {
             // Smoothed wheel movement arrives in small pieces; keep the fraction between frames.
@@ -248,7 +271,7 @@ impl Terminal {
                     Event::Copy => match self.selected_text() {
                         Some(text) => {
                             ui.ctx().copy_text(text);
-                            self.selection = None;
+                            self.clear_selection();
                         }
                         None => {
                             self.follow_output();
@@ -635,5 +658,45 @@ mod tests {
             "line ran: {screen:?}"
         );
         println!("SCREEN: {screen:?}");
+    }
+
+    /// Copy semantics that must hold however the grid changes under a selection.
+    #[test]
+    #[ignore]
+    fn selection_survives_output_resize_and_blank_cells() {
+        let context = egui::Context::default();
+        let mut terminal = Terminal::spawn(&context, None).expect("spawn shell");
+        assert!(wait_for(&terminal, "PS "), "shell never showed a prompt");
+        {
+            let mut parser = terminal.parser.lock().unwrap();
+            parser.process(b"\x1b[2J \x1b[H");
+            parser.process(b"SELECT-ME\r\nother line\r\n");
+        }
+        // Nothing selected: Copy is the interrupt key, so there is no text to copy.
+        assert_eq!(terminal.selected_text(), None);
+
+        terminal.selection = Some(((0, 0), (0, 8)));
+        terminal.snapshot = terminal.live_selected_text();
+        assert_eq!(terminal.selected_text().as_deref(), Some("SELECT-ME"));
+
+        // New output scrolls the grid, but the captured text is what gets copied.
+        {
+            let mut parser = terminal.parser.lock().unwrap();
+            for index in 0..60 {
+                parser.process(format!("filler {index}\r\n").as_bytes());
+            }
+        }
+        assert_eq!(terminal.selected_text().as_deref(), Some("SELECT-ME"));
+
+        // A selection of blank cells is still a selection.
+        terminal.clear_selection();
+        terminal.selection = Some(((20, 0), (20, 3)));
+        assert!(terminal.selected_text().is_some());
+
+        // Resizing drops positions that belong to the old grid; nothing panics.
+        terminal.selection = Some(((0, 80), (1, 90)));
+        terminal.resize(10, 20);
+        assert_eq!(terminal.selection, None);
+        assert_eq!(terminal.selected_text(), None);
     }
 }

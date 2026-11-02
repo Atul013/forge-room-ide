@@ -99,17 +99,21 @@ impl DocumentSession {
         if size > MAX_FILE_BYTES {
             return Err(DocumentError::TooLarge(size));
         }
+        // Fingerprint first: a change landing between the stamp and the read is then noticed
+        // later, instead of being hidden by a stamp that already includes it.
+        let fingerprint = stamp(&path);
         let text = fs::read_to_string(&path)?;
-        self.disk_stamp = stamp(&path);
+        self.disk_stamp = fingerprint;
         self.path = Some(path);
         self.saved_text.clone_from(&text);
         self.text = text;
         Ok(())
     }
 
-    /// True when the file on disk now holds different content than this session last saw.
-    /// A touched-but-identical file is not a change. A deleted file is not reported: saving
-    /// simply recreates it.
+    /// Quick check used for polling: true when the file's size or time changed and its content
+    /// differs from what this session last saw. A touched-but-identical file is not a change, and a
+    /// deleted file is not reported (saving simply recreates it). Because it trusts an unchanged
+    /// size and time, it is only an optimisation: saving uses [`Self::content_differs`].
     pub fn changed_on_disk(&mut self) -> bool {
         let Some(path) = &self.path else {
             return false;
@@ -129,9 +133,23 @@ impl DocumentSession {
         }
     }
 
+    /// Reads the file and compares it with what this session last saw. Unlike the stamp check this
+    /// cannot be fooled by a tool that rewrites a file and restores its time and size.
+    fn content_differs(&self) -> bool {
+        let Some(path) = &self.path else {
+            return false;
+        };
+        match fs::read_to_string(path) {
+            Ok(text) => text != self.saved_text,
+            // Gone: saving recreates it. Anything else that cannot be read (not UTF-8) is a change;
+            // a permission problem will surface from the write itself.
+            Err(error) => error.kind() == io::ErrorKind::InvalidData,
+        }
+    }
+
     /// Save, refusing to overwrite content that changed on disk since it was opened or saved.
     pub fn save(&mut self) -> Result<(), DocumentError> {
-        if self.changed_on_disk() {
+        if self.content_differs() {
             return Err(DocumentError::ChangedOnDisk);
         }
         self.overwrite()
@@ -301,6 +319,31 @@ edit
 edit
 "
         );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn save_notices_outside_changes_that_keep_the_same_size_and_time() {
+        let path = test_path();
+        fs::write(&path, "old\n").unwrap();
+        let original_time = fs::metadata(&path).unwrap().modified().unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&path).unwrap();
+        document.text_mut().clear();
+        document.text_mut().push_str("mine\n");
+
+        // Another program rewrites the bytes and puts the old modification time back.
+        fs::write(&path, "new\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(original_time))
+            .unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().len(), 4);
+
+        assert!(matches!(document.save(), Err(DocumentError::ChangedOnDisk)));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
         fs::remove_file(path).unwrap();
     }
 

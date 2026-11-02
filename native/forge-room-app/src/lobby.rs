@@ -52,6 +52,9 @@ pub struct LobbyConfig {
     pub notes: BTreeMap<String, String>,
 }
 
+/// Longest time box the lobby accepts (ten years); keeps date arithmetic and the DragValue sane.
+const MAX_DURATION_HOURS: u32 = 24 * 365 * 10;
+
 const PERMISSIONS: [&str; 4] = ["Shared Edit", "Run", "Build", "Deploy"];
 const SHARING: [&str; 4] = [
     "Follow IDE Session (Read-Only)",
@@ -153,6 +156,10 @@ pub struct Context<'a> {
 pub struct Lobby {
     config: LobbyConfig,
     path: Option<PathBuf>,
+    /// Edits not yet safely on disk; stays set until a save succeeds.
+    dirty: bool,
+    save_error: Option<String>,
+    last_save_attempt: Option<std::time::Instant>,
     tab: Tab,
     invite: String,
     invite_role: usize,
@@ -164,6 +171,9 @@ impl Default for Lobby {
         Self {
             config: LobbyConfig::default(),
             path: None,
+            dirty: false,
+            save_error: None,
+            last_save_attempt: None,
             tab: Tab::Lobby,
             invite: String::new(),
             invite_role: 0,
@@ -210,22 +220,61 @@ impl Lobby {
         };
     }
 
-    fn save(&self) {
+    /// Write the settings next to the room file. The new content goes to a temporary file first and
+    /// replaces the old one in a single step, so a failed or interrupted save never leaves a
+    /// truncated settings file.
+    fn save(&mut self) -> Result<(), String> {
         let Some(path) = &self.path else {
-            return;
+            self.dirty = false;
+            return Ok(());
         };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        let write = || -> std::io::Result<()> {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let bytes = serde_json::to_vec_pretty(&self.config).map_err(std::io::Error::other)?;
+            let temporary = path.with_extension("json.tmp");
+            std::fs::write(&temporary, bytes)?;
+            std::fs::rename(&temporary, path)
+        };
+        match write() {
+            Ok(()) => {
+                self.dirty = false;
+                self.save_error = None;
+                Ok(())
+            }
+            Err(error) => {
+                let message = format!("Could not save the lobby settings: {error}");
+                self.save_error = Some(message.clone());
+                Err(message)
+            }
         }
-        if let Ok(bytes) = serde_json::to_vec_pretty(&self.config) {
-            let _ = std::fs::write(path, bytes);
+    }
+
+    /// Save pending edits, retrying a failed save at most once a second.
+    fn flush(&mut self) {
+        if !self.dirty {
+            return;
         }
+        let due = self
+            .last_save_attempt
+            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(1));
+        if due {
+            self.last_save_attempt = Some(std::time::Instant::now());
+            let _ = self.save();
+        }
+    }
+
+    /// When the room's time box ends. A damaged or hand-edited settings file can hold any numbers, so
+    /// this saturates instead of overflowing.
+    fn end_epoch(&self) -> u64 {
+        let hours = u64::from(self.config.duration_hours.min(MAX_DURATION_HOURS));
+        self.config.start_epoch.saturating_add(hours * 3600)
     }
 
     /// Seconds left in the room's time box.
     pub fn remaining(&self) -> u64 {
-        let end = self.config.start_epoch + u64::from(self.config.duration_hours) * 3600;
-        end.saturating_sub(now())
+        self.end_epoch().saturating_sub(now())
     }
 
     pub fn kind_label(&self) -> &str {
@@ -274,6 +323,14 @@ impl Lobby {
                     })
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+                        if let Some(error) = &self.save_error {
+                            ui.label(
+                                RichText::new(format!(
+                                    "{error} Your edits are kept and saving will be retried."
+                                ))
+                                .color(Color32::from_rgb(240, 113, 120)),
+                            );
+                        }
                         self.header(ui, context, &mut action);
                         self.tabs(ui);
                         ui.add_space(2.0);
@@ -282,8 +339,10 @@ impl Lobby {
             });
 
         if serde_json::to_string(&self.config).unwrap_or_default() != before {
-            self.save();
+            self.dirty = true;
+            self.last_save_attempt = None;
         }
+        self.flush();
         action
     }
 
@@ -731,7 +790,7 @@ impl Lobby {
                                 None => "Not created yet",
                             };
                             let start = self.config.start_epoch;
-                            let end = start + u64::from(self.config.duration_hours) * 3600;
+                            let end = self.end_epoch();
                             kv(ui, "room", "Room Name", |ui| {
                                 ui.label(format!("{} {}", context.workspace, self.config.kind));
                             });
@@ -762,7 +821,7 @@ impl Lobby {
                                     }
                                     ui.add(
                                         egui::DragValue::new(&mut self.config.duration_hours)
-                                            .range(1..=720)
+                                            .range(1..=MAX_DURATION_HOURS)
                                             .suffix(" Hours"),
                                     )
                                     .on_hover_text("Drag or click to change");
@@ -1905,7 +1964,7 @@ mod tests {
         lobby.config.goals.push(("Demo".into(), true));
         lobby.config.milestones[1].status = MilestoneStatus::Done;
         lobby.config.labels.insert("ada".into(), "Lead".into());
-        lobby.save();
+        lobby.save().unwrap();
 
         let mut reopened = Lobby::default();
         reopened.load_for(Some(path.clone()));
@@ -1938,6 +1997,48 @@ mod tests {
         lobby.load_for(Some(damaged.clone()));
         assert_eq!(lobby.config.duration_hours, 24);
         let _ = std::fs::remove_file(damaged);
+    }
+
+    #[test]
+    fn extreme_saved_numbers_do_not_overflow() {
+        let path = temp_path("extreme");
+        std::fs::write(
+            &path,
+            r#"{"start_epoch": 18446744073709551615, "duration_hours": 4294967295}"#,
+        )
+        .unwrap();
+        let mut lobby = Lobby::default();
+        lobby.load_for(Some(path.clone()));
+        assert_eq!(lobby.end_epoch(), u64::MAX);
+        assert!(lobby.remaining() > 0);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_edits_and_is_retried() {
+        // A regular file where the parent directory should be makes every write fail.
+        let blocker = temp_path("blocker");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let path = blocker.join("lobby.json");
+
+        let mut lobby = Lobby::default();
+        lobby.load_for(Some(path.clone()));
+        lobby.config.goal = "important".into();
+        lobby.dirty = true;
+        assert!(lobby.save().is_err());
+        assert!(lobby.dirty, "edits stay pending after a failed save");
+        assert!(lobby.save_error.is_some());
+
+        // Once the problem is fixed, the next attempt succeeds and clears the error.
+        std::fs::remove_file(&blocker).unwrap();
+        lobby.last_save_attempt = None;
+        lobby.flush();
+        assert!(!lobby.dirty);
+        assert!(lobby.save_error.is_none());
+        let mut reopened = Lobby::default();
+        reopened.load_for(Some(path.clone()));
+        assert_eq!(reopened.config.goal, "important");
+        let _ = std::fs::remove_dir_all(blocker);
     }
 
     #[test]

@@ -64,6 +64,10 @@ fn to_syntect(theme: &Theme) -> SyntectTheme {
 /// Above this size syntax highlighting is switched off (see docs/native/EDITOR_PERFORMANCE.md).
 pub const HIGHLIGHT_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 
+/// A single line longer than this is drawn plain: one parser call cannot be interrupted, so a
+/// pathological line (minified code, a data blob) would otherwise stall the frame.
+pub const MAX_HIGHLIGHT_LINE_BYTES: usize = 4000;
+
 /// Highlighting is spread over frames: each call spends at most this long, and lines it has not
 /// reached yet are drawn plain until a later frame catches up.
 const FRAME_BUDGET: Duration = Duration::from_millis(12);
@@ -246,22 +250,27 @@ fn refresh(cache: &mut Cache, text: &str, budget: Duration) {
         }
         let line = new_lines[index];
         let before = (parse.clone(), highlight.clone());
-        let spans = match parse.parse_line(line, set) {
-            Ok(ops) => HighlightIterator::new(&mut highlight, &ops, line, &highlighter)
-                .map(|(style, piece)| {
-                    let color = egui::Color32::from_rgb(
-                        style.foreground.r,
-                        style.foreground.g,
-                        style.foreground.b,
-                    );
-                    (
-                        color,
-                        style.font_style.contains(FontStyle::ITALIC),
-                        piece.len(),
-                    )
-                })
-                .collect(),
-            Err(_) => vec![(plain, false, line.len())],
+        // Overlong lines are left unparsed, and the parser state carries over unchanged.
+        let spans = if line.len() > MAX_HIGHLIGHT_LINE_BYTES {
+            vec![(plain, false, line.len())]
+        } else {
+            match parse.parse_line(line, set) {
+                Ok(ops) => HighlightIterator::new(&mut highlight, &ops, line, &highlighter)
+                    .map(|(style, piece)| {
+                        let color = egui::Color32::from_rgb(
+                            style.foreground.r,
+                            style.foreground.g,
+                            style.foreground.b,
+                        );
+                        (
+                            color,
+                            style.font_style.contains(FontStyle::ITALIC),
+                            piece.len(),
+                        )
+                    })
+                    .collect(),
+                Err(_) => vec![(plain, false, line.len())],
+            }
         };
         cache.lines.push(StyledLine {
             text: line.to_string(),
@@ -386,6 +395,31 @@ world
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_pathological_line_does_not_stall_the_frame() {
+        let line = "let x = 1; ".repeat(50_000);
+        let mut cache = Cache::new(&theme::current(), "rs");
+        let started = std::time::Instant::now();
+        let job = run(&mut cache, &line);
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(job.text, line);
+        assert!(cache.complete);
+
+        // Lines around it still highlight, and the file is whole.
+        let text = format!(
+            "fn a() {{}}
+{line}
+fn b() {{}}
+"
+        );
+        let job = run(&mut cache, &text);
+        assert_eq!(job.text, text);
     }
 
     fn fresh_cache() -> Cache {
