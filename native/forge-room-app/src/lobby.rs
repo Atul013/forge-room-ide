@@ -576,7 +576,10 @@ impl Lobby {
                     },
                 );
                 ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                    if square_button(ui, "···").clicked() {
+                    if square_button(ui, "···")
+                        .on_hover_text("Open Lobby settings")
+                        .clicked()
+                    {
                         self.tab = Tab::Settings;
                     }
                     if accent_button(ui, "Enter Room", Some("arrow-right")).clicked() {
@@ -1895,31 +1898,18 @@ fn button_frame(
     );
     let extra = if icon.is_some() { style.pad + 2.0 } else { 0.0 };
     let width = (galley.size().x + style.pad + extra).max(style.min_width);
-    let (rect, response) = ui.allocate_exact_size(vec2(width, style.height), Sense::click());
-    let fill = if response.hovered() {
-        theme::mix(style.fill, Color32::WHITE, 0.08)
-    } else {
-        style.fill
-    };
-    ui.painter().rect_filled(rect, style.radius, fill);
-    ui.painter().rect_stroke(
-        rect,
-        style.radius,
-        Stroke::new(1.0, style.stroke),
-        egui::StrokeKind::Inside,
-    );
-    let content = galley.size().x + extra;
-    let text_x = rect.center().x - content / 2.0;
-    ui.painter().galley(
-        egui::pos2(text_x, rect.center().y - galley.size().y / 2.0),
-        galley.clone(),
-        style.text,
+    let response = ui.add_sized(
+        vec2(width, style.height),
+        egui::Button::new(RichText::new(label).size(style.size).color(style.text))
+            .fill(style.fill)
+            .stroke(Stroke::new(1.0, style.stroke))
+            .corner_radius(style.radius),
     );
     if let Some(icon) = icon {
         icons::draw(
             ui.painter(),
             icon,
-            egui::pos2(text_x + galley.size().x + 17.0, rect.center().y),
+            egui::pos2(response.rect.right() - 16.0, response.rect.center().y),
             18.0,
             style.text,
         );
