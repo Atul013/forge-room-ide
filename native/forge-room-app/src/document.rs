@@ -135,21 +135,24 @@ impl DocumentSession {
 
     /// Reads the file and compares it with what this session last saw. Unlike the stamp check this
     /// cannot be fooled by a tool that rewrites a file and restores its time and size.
-    fn content_differs(&self) -> bool {
+    fn content_differs(&self) -> Result<bool, DocumentError> {
         let Some(path) = &self.path else {
-            return false;
+            return Ok(false);
         };
         match fs::read_to_string(path) {
-            Ok(text) => text != self.saved_text,
-            // Gone: saving recreates it. Anything else that cannot be read (not UTF-8) is a change;
-            // a permission problem will surface from the write itself.
-            Err(error) => error.kind() == io::ErrorKind::InvalidData,
+            Ok(text) => Ok(text != self.saved_text),
+            // Gone: saving recreates it. Not UTF-8 is a change. Any other failure (for example a
+            // file another program holds open without read sharing) means the current bytes
+            // cannot be inspected, which is no evidence that they are unchanged.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => Ok(true),
+            Err(error) => Err(DocumentError::Io(error)),
         }
     }
 
     /// Save, refusing to overwrite content that changed on disk since it was opened or saved.
     pub fn save(&mut self) -> Result<(), DocumentError> {
-        if self.content_differs() {
+        if self.content_differs()? {
             return Err(DocumentError::ChangedOnDisk);
         }
         self.overwrite()
@@ -320,6 +323,45 @@ edit
 "
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn save_refuses_when_the_file_cannot_be_read_back() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let path = std::env::temp_dir().join(format!("forge-share-{}.txt", std::process::id()));
+        fs::write(
+            &path, "old
+",
+        )
+        .unwrap();
+        let mut doc = DocumentSession::default();
+        doc.open(&path).unwrap();
+        doc.text_mut().clear();
+        doc.text_mut().push_str("mine\n");
+        // Another program holds the file for writing without allowing reads.
+        let mut holder = fs::OpenOptions::new()
+            .write(true)
+            .share_mode(2)
+            .open(&path)
+            .unwrap();
+        io::Write::write_all(
+            &mut holder,
+            b"new
+",
+        )
+        .unwrap();
+        assert!(
+            doc.save().is_err(),
+            "an unreadable file must not be overwritten"
+        );
+        drop(holder);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "new
+"
+        );
+        fs::remove_file(&path).ok();
     }
 
     #[test]

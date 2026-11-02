@@ -321,11 +321,15 @@ impl ForgeRoomApp {
             self.refresh_git();
             let root = self.repo_root();
             self.room.load_for(root.as_deref());
-            self.lobby
+            let kept = self
+                .lobby
                 .load_for(root.as_deref().map(room_state::lobby_path_for));
             self.runtimes = root.as_deref().map(detect_runtimes).unwrap_or_default();
             self.search.reset();
-            self.status = format!("Opened folder {}", path.display());
+            self.status = match kept {
+                Ok(()) => format!("Opened folder {}", path.display()),
+                Err(error) => format!("Opened folder {}. {error}", path.display()),
+            };
             return;
         }
         match self.tabs.open_file(&path) {
@@ -2753,8 +2757,13 @@ impl eframe::App for ForgeRoomApp {
         egui::Color32::from_rgb(10, 11, 12).to_normalized_gamma_f32()
     }
 
+    fn on_exit(&mut self) {
+        let _ = self.lobby.finish();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
+        self.lobby.flush_pending();
         if context.input(|input| input.viewport().close_requested())
             && self.tabs.any_dirty()
             && !self.allow_close

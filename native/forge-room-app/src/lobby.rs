@@ -217,13 +217,26 @@ fn load_config(path: &Path) -> Option<LobbyConfig> {
 
 impl Lobby {
     /// Switch to the lobby saved at `path` (or a fresh one), for the project that was just opened.
-    pub fn load_for(&mut self, path: Option<PathBuf>) {
+    /// Unsaved edits are written first; the error says why they could not be kept.
+    pub fn load_for(&mut self, path: Option<PathBuf>) -> Result<(), String> {
+        let result = self.finish();
         let config = path.as_deref().and_then(load_config);
         *self = Self {
             config: config.unwrap_or_default(),
             path,
             ..Self::default()
         };
+        result
+    }
+
+    /// Save pending edits now (leaving the project or quitting).
+    pub fn finish(&mut self) -> Result<(), String> {
+        if self.dirty { self.save() } else { Ok(()) }
+    }
+
+    /// Retry pending edits from the app loop, whichever page is showing.
+    pub fn flush_pending(&mut self) {
+        self.flush();
     }
 
     /// Write the settings next to the room file. The new content goes to a temporary file first and
