@@ -221,6 +221,10 @@ impl Lobby {
         end.saturating_sub(now())
     }
 
+    pub fn kind_label(&self) -> &str {
+        &self.config.kind
+    }
+
     fn setup_items(&self, context: &Context) -> Vec<&'static str> {
         let mut items = Vec::new();
         if self.config.repo_url.trim().is_empty() {

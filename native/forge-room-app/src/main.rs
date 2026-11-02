@@ -775,114 +775,6 @@ impl ForgeRoomApp {
             egui::Stroke::new(1.0, theme::border()),
         );
 
-        // Command palette pill, centred on the whole bar.
-        let pill = egui::Rect::from_center_size(
-            egui::pos2(bar.center().x, bar.center().y),
-            egui::vec2((bar.width() * 0.34).clamp(200.0, 460.0), 30.0),
-        );
-        let pill_response = ui.interact(
-            pill,
-            ui.scope_id().with("title-palette"),
-            egui::Sense::click(),
-        );
-        let painter = ui.painter();
-        painter.rect_filled(
-            pill,
-            9.0,
-            if pill_response.hovered() {
-                theme::mix(theme::bg_editor(), theme::text(), 0.07)
-            } else {
-                theme::mix(theme::bg_editor(), theme::text(), 0.03)
-            },
-        );
-        painter.rect_stroke(
-            pill,
-            9.0,
-            egui::Stroke::new(1.0, theme::border()),
-            egui::StrokeKind::Inside,
-        );
-        icons::search(
-            painter,
-            egui::Rect::from_center_size(
-                egui::pos2(pill.left() + 20.0, pill.center().y),
-                egui::vec2(14.0, 14.0),
-            ),
-            theme::text_dim(),
-        );
-        painter.text(
-            egui::pos2(pill.left() + 36.0, pill.center().y),
-            egui::Align2::LEFT_CENTER,
-            "Command Palette (Ctrl+Shift+P)",
-            egui::FontId::proportional(13.5),
-            theme::text_dim(),
-        );
-        if pill_response.clicked() {
-            self.run_command(Command::GoToLine, true);
-        }
-
-        if bar.width() > 980.0 {
-            let room_pill = egui::Rect::from_min_size(
-                egui::pos2(pill.right() + 16.0, pill.top()),
-                egui::vec2(230.0, 30.0),
-            );
-            let response = ui.interact(
-                room_pill,
-                ui.scope_id().with("title-room"),
-                egui::Sense::click(),
-            );
-            let painter = ui.painter();
-            let lit = self.show_right && self.right_tab == RightTab::Room;
-            painter.rect_filled(
-                room_pill,
-                9.0,
-                if lit {
-                    theme::mix(theme::bg_editor(), theme::accent(), 0.18)
-                } else if response.hovered() {
-                    theme::mix(theme::bg_editor(), theme::text(), 0.07)
-                } else {
-                    theme::mix(theme::bg_editor(), theme::text(), 0.03)
-                },
-            );
-            painter.rect_stroke(
-                room_pill,
-                9.0,
-                egui::Stroke::new(
-                    1.0,
-                    if lit {
-                        theme::mix(theme::bg_editor(), theme::accent(), 0.6)
-                    } else {
-                        theme::border()
-                    },
-                ),
-                egui::StrokeKind::Inside,
-            );
-            icons::room(
-                painter,
-                egui::Rect::from_center_size(
-                    egui::pos2(room_pill.left() + 22.0, room_pill.center().y),
-                    egui::vec2(18.0, 18.0),
-                ),
-                theme::text(),
-            );
-            let name = match self.room.summary() {
-                Some((name, _, _)) => format!("Room: {name}"),
-                None => "Room".to_string(),
-            };
-            painter.text(
-                egui::pos2(room_pill.left() + 40.0, room_pill.center().y),
-                egui::Align2::LEFT_CENTER,
-                name,
-                egui::FontId::proportional(13.5),
-                theme::text(),
-            );
-            if response
-                .on_hover_text("Show or hide the Room panel")
-                .clicked()
-            {
-                self.show_dock(RightTab::Room);
-            }
-        }
-
         ui.horizontal_centered(|ui| {
             ui.add_space(14.0);
             let (logo, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
@@ -896,6 +788,8 @@ impl ForgeRoomApp {
                     .color(theme::text()),
                 |ui| self.menu_bar(ui),
             );
+            ui.add_space(10.0);
+            self.title_chips(ui, bar.width());
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
@@ -941,8 +835,134 @@ impl ForgeRoomApp {
                         ui.ctx().send_viewport_cmd(command);
                     }
                 }
+                ui.add_space(10.0);
+                for (icon, tip, command) in [
+                    ("panel-right", "Toggle side panel", Command::ShowRoom),
+                    ("panel-bottom", "Toggle terminal", Command::ToggleTerminal),
+                    ("panel-left", "Toggle sidebar", Command::ToggleSidebar),
+                ] {
+                    let (rect, response) =
+                        ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::click());
+                    if response.hovered() {
+                        ui.painter().rect_filled(rect, 8.0, theme::overlay(14));
+                    }
+                    icons::draw(ui.painter(), icon, rect.center(), 20.0, theme::text_dim());
+                    if response.on_hover_text(tip).clicked() {
+                        match command {
+                            Command::ShowRoom => self.show_dock(RightTab::Ai),
+                            other => self.run_command(other, false),
+                        }
+                    }
+                }
+                ui.add_space(8.0);
+                if bar.width() > 900.0 {
+                    let (pill, response) =
+                        ui.allocate_exact_size(egui::vec2(310.0, 32.0), egui::Sense::click());
+                    let painter = ui.painter();
+                    painter.rect_filled(
+                        pill,
+                        9.0,
+                        if response.hovered() {
+                            theme::mix(theme::bg_editor(), theme::text(), 0.07)
+                        } else {
+                            theme::mix(theme::bg_editor(), theme::text(), 0.03)
+                        },
+                    );
+                    painter.rect_stroke(
+                        pill,
+                        9.0,
+                        egui::Stroke::new(1.0, theme::border()),
+                        egui::StrokeKind::Inside,
+                    );
+                    icons::draw(
+                        painter,
+                        "search",
+                        egui::pos2(pill.left() + 18.0, pill.center().y),
+                        16.0,
+                        theme::text_dim(),
+                    );
+                    painter.text(
+                        egui::pos2(pill.left() + 34.0, pill.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        "Search, run, or ask Forge...",
+                        egui::FontId::proportional(13.0),
+                        theme::text_dim(),
+                    );
+                    painter.text(
+                        egui::pos2(pill.right() - 12.0, pill.center().y),
+                        egui::Align2::RIGHT_CENTER,
+                        "Ctrl+Shift+P",
+                        egui::FontId::proportional(11.5),
+                        theme::text_dim(),
+                    );
+                    if response.on_hover_text("Command Palette").clicked() {
+                        self.run_command(Command::GoToLine, true);
+                    }
+                    ui.add_space(10.0);
+                }
+                if bar.width() > 1180.0 && self.lobby.remaining() > 0 {
+                    let remaining = self.lobby.remaining();
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{:02}:{:02}:{:02}",
+                            remaining / 3600,
+                            remaining / 60 % 60,
+                            remaining % 60
+                        ))
+                        .size(17.0)
+                        .family(fonts::semibold())
+                        .color(theme::accent()),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(self.lobby.kind_label())
+                            .size(14.0)
+                            .color(theme::text()),
+                    );
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_secs(1));
+                }
             });
         });
+    }
+
+    /// Room, branch, lobby, privacy and people shown after the brand name.
+    fn title_chips(&mut self, ui: &mut egui::Ui, width: f32) {
+        let Some((room_name, _, _)) = self.room.summary() else {
+            return;
+        };
+        if width < 900.0 {
+            return;
+        }
+        if title_chip(ui, Some("room"), &room_name, None, true)
+            .on_hover_text("Open the Room Lobby")
+            .clicked()
+        {
+            self.show_lobby = !self.show_lobby;
+        }
+        if let Some(branch) = self.branch.clone()
+            && title_chip(ui, Some("source-control"), &branch, None, true)
+                .on_hover_text("Switch branch")
+                .clicked()
+        {
+            self.run_command(Command::SwitchBranch, false);
+        }
+        if width < 1180.0 {
+            return;
+        }
+        let dot = Some(egui::Color32::from_rgb(240, 113, 120));
+        if title_chip(ui, None, &format!("Lobby: {room_name}"), dot, false).clicked() {
+            self.show_lobby = true;
+        }
+        title_chip(ui, Some("lock"), "Private", None, false);
+        if let Some(state) = self.room.state() {
+            let people: Vec<&str> = state
+                .participants
+                .iter()
+                .map(|person| person.name.as_str())
+                .collect();
+            avatar_stack(ui, &people);
+        }
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -2289,6 +2309,32 @@ impl ForgeRoomApp {
                 }
                 ui.add_space(10.0);
             }
+            if let Some((name, _, _)) = self.room.summary() {
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
+                ui.painter().circle_filled(
+                    dot.center(),
+                    4.0,
+                    egui::Color32::from_rgb(240, 113, 120),
+                );
+                ui.label(egui::RichText::new(name).color(theme::status_text()));
+                let pill = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new("Lobby")
+                            .color(theme::status_text())
+                            .size(13.0),
+                    )
+                    .fill(if self.show_lobby {
+                        theme::mix(theme::status_bar(), theme::accent(), 0.3)
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    })
+                    .corner_radius(6.0),
+                );
+                if pill.on_hover_text("Room Lobby").clicked() {
+                    self.show_lobby = !self.show_lobby;
+                }
+                ui.add_space(10.0);
+            }
             ui.label(egui::RichText::new(&self.status).color(theme::status_dim()));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let dim = |text: String| egui::RichText::new(text).color(theme::status_dim());
@@ -2297,6 +2343,11 @@ impl ForgeRoomApp {
                 if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
                     ui.label(dim(position::line_ending(tab.doc.text()).to_string()));
                     ui.label(dim("UTF-8".to_string()));
+                    if let Some(name) = tab.doc.file_name()
+                        && let Some(language) = language_name(&name)
+                    {
+                        ui.label(dim(language.to_string()));
+                    }
                     ui.label(dim(format!("Ln {}, Col {}", self.cursor.0, self.cursor.1)));
                 }
                 if let Some((name, people, agents)) = self.room.summary() {
@@ -2669,6 +2720,127 @@ impl eframe::App for ForgeRoomApp {
         self.pending_dialog(&context);
         self.update_title(&context);
     }
+}
+
+/// A rounded pill in the title bar: optional icon or status dot, text, optional chevron.
+fn title_chip(
+    ui: &mut egui::Ui,
+    icon: Option<&str>,
+    text: &str,
+    dot: Option<egui::Color32>,
+    chevron: bool,
+) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_string(),
+        egui::FontId::proportional(13.5),
+        theme::text(),
+    );
+    let lead = if icon.is_some() || dot.is_some() {
+        26.0
+    } else {
+        10.0
+    };
+    let tail = if chevron { 22.0 } else { 10.0 };
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(lead + galley.size().x + tail, 30.0),
+        egui::Sense::click(),
+    );
+    let painter = ui.painter();
+    if response.hovered() {
+        painter.rect_filled(rect, 8.0, theme::overlay(14));
+    }
+    if let Some(icon) = icon {
+        icons::draw(
+            painter,
+            icon,
+            egui::pos2(rect.left() + 15.0, rect.center().y),
+            16.0,
+            theme::text_dim(),
+        );
+    }
+    if let Some(color) = dot {
+        painter.circle_filled(egui::pos2(rect.left() + 15.0, rect.center().y), 4.0, color);
+    }
+    painter.galley(
+        egui::pos2(rect.left() + lead, rect.center().y - galley.size().y / 2.0),
+        galley.clone(),
+        theme::text(),
+    );
+    if chevron {
+        icons::chevron(
+            painter,
+            egui::pos2(rect.right() - 12.0, rect.center().y),
+            true,
+            theme::text_dim(),
+        );
+    }
+    response
+}
+
+/// Overlapping initials circles for the people in the room, with a "+N" for the rest.
+fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
+    let shown = names.len().min(4);
+    let extra = names.len() - shown;
+    let step = 20.0;
+    let width = 28.0 + step * shown.saturating_sub(1) as f32 + if extra > 0 { 30.0 } else { 0.0 };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
+    let painter = ui.painter();
+    for (index, name) in names.iter().take(shown).enumerate() {
+        let center = egui::pos2(rect.left() + 14.0 + step * index as f32, rect.center().y);
+        let hue = name.bytes().fold(7u32, |acc, b| {
+            acc.wrapping_mul(31).wrapping_add(u32::from(b))
+        });
+        let palette = [
+            egui::Color32::from_rgb(88, 120, 170),
+            egui::Color32::from_rgb(120, 96, 160),
+            egui::Color32::from_rgb(90, 140, 120),
+            egui::Color32::from_rgb(170, 110, 90),
+        ];
+        painter.circle_filled(center, 13.0, theme::title_bar());
+        painter.circle_filled(center, 11.5, palette[hue as usize % palette.len()]);
+        let initial: String = name.chars().next().into_iter().collect();
+        painter.text(
+            center,
+            egui::Align2::CENTER_CENTER,
+            initial.to_uppercase(),
+            egui::FontId::proportional(12.0),
+            egui::Color32::WHITE,
+        );
+    }
+    if extra > 0 {
+        painter.text(
+            egui::pos2(rect.right() - 12.0, rect.center().y),
+            egui::Align2::CENTER_CENTER,
+            format!("+{extra}"),
+            egui::FontId::proportional(12.5),
+            theme::text(),
+        );
+    }
+    response.on_hover_text(names.join(", "));
+}
+
+/// Display name of the language for a file name, judged from its extension.
+fn language_name(name: &str) -> Option<&'static str> {
+    let extension = name.rsplit_once('.')?.1.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "rs" => "Rust",
+        "ts" | "tsx" => "TypeScript",
+        "js" | "jsx" | "mjs" | "cjs" => "JavaScript",
+        "py" => "Python",
+        "go" => "Go",
+        "json" => "JSON",
+        "md" => "Markdown",
+        "toml" => "TOML",
+        "html" => "HTML",
+        "css" => "CSS",
+        "yml" | "yaml" => "YAML",
+        "c" | "h" => "C",
+        "cpp" | "hpp" | "cc" => "C++",
+        "cs" => "C#",
+        "java" => "Java",
+        "sh" => "Shell",
+        _ => return None,
+    })
 }
 
 /// Languages and runtimes a project folder uses, judged from its marker files.

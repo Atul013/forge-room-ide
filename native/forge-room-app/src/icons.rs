@@ -241,10 +241,6 @@ pub fn room(painter: &Painter, rect: Rect, color: Color32) {
     boxed(painter, "room", rect, 1.1, color);
 }
 
-pub fn search(painter: &Painter, rect: Rect, color: Color32) {
-    boxed(painter, "search", rect, 1.1, color);
-}
-
 /// Vertical arrow (push/pull counts).
 pub fn arrow(painter: &Painter, center: Pos2, up: bool, color: Color32) {
     draw(
