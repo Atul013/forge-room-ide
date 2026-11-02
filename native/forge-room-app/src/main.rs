@@ -1795,6 +1795,9 @@ impl ForgeRoomApp {
                             } else {
                                 syntax::highlight(text.as_str(), &extension, &font_id)
                             };
+                            if syntax::pending() {
+                                ui.ctx().request_repaint(); // highlighting is catching up
+                            }
                             job.wrap.max_width = f32::INFINITY; // no soft wrap, so gutter numbers match rows
                             ui.fonts_mut(|fonts| fonts.layout_job(job))
                         };
