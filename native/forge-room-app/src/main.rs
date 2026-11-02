@@ -14,6 +14,7 @@ mod graph;
 mod gutter;
 mod icons;
 mod lobby;
+mod mark;
 mod palette;
 mod position;
 mod room_state;
@@ -796,13 +797,7 @@ impl ForgeRoomApp {
         ui.horizontal_centered(|ui| {
             ui.add_space(14.0);
             let (logo, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
-            icons::draw(
-                ui.painter(),
-                "forge-mark",
-                logo.center(),
-                24.0,
-                theme::accent(),
-            );
+            mark::draw(ui.painter(), logo.center(), 24.0);
             ui.add_space(4.0);
             // The design has no menu strip: File, Edit and View live under the brand name.
             ui.menu_button(

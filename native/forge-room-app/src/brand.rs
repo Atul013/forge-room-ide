@@ -2,27 +2,11 @@
 //! painter so they scale cleanly and follow the active theme's accent.
 
 use crate::{fonts, theme};
-use eframe::egui::{self, Align2, Color32, FontId, Painter, Pos2, Rect, Shape, Stroke};
+use eframe::egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape, Stroke};
 
-/// Ring-plus logo centred on `center`.
+/// The Forge Room logo centred on `center`.
 pub fn logo(painter: &Painter, center: Pos2, radius: f32) {
-    painter.circle_stroke(center, radius, Stroke::new(radius * 0.11, theme::accent()));
-    let arm = radius * 0.4;
-    let stroke = Stroke::new(radius * 0.1, Color32::from_rgb(240, 240, 239));
-    painter.line_segment(
-        [
-            center + egui::vec2(-arm, 0.0),
-            center + egui::vec2(arm, 0.0),
-        ],
-        stroke,
-    );
-    painter.line_segment(
-        [
-            center + egui::vec2(0.0, -arm),
-            center + egui::vec2(0.0, arm),
-        ],
-        stroke,
-    );
+    crate::mark::draw(painter, center, radius * 2.0);
 }
 
 /// Letter-spaced wordmark, like the installer's "F O R G E  R O O M".

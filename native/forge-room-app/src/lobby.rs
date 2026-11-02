@@ -2058,7 +2058,8 @@ fn avatar(painter: &egui::Painter, rect: Rect, name: &str, agent: bool, online: 
 
 /// The Forge Room project mark.
 fn project_mark(painter: &egui::Painter, center: egui::Pos2, size: f32, color: Color32) {
-    icons::draw(painter, "forge-mark", center, size, color);
+    let _ = color;
+    crate::mark::draw(painter, center, size);
 }
 
 // ---- Dates (UTC) ----------------------------------------------------------------------
