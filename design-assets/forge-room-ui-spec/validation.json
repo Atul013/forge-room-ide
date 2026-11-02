@@ -1,0 +1,48 @@
+{
+  "status": "passed artifact/evidence validation; redraw is not pixel identical",
+  "source_sha256": "4a57ade63d634e88e429d6b24971b0328d4d2575efc767992cd5e8af90356c9c",
+  "reference_size_px": [
+    1672,
+    941
+  ],
+  "pixels_per_logical_point": 1,
+  "areas": 9,
+  "component_rectangles": 71,
+  "text_ink_selections": 149,
+  "icon_ink_selections": 108,
+  "exact_source_samples_checked": 245,
+  "named_role_samples_checked": 86,
+  "exhaustive_rgb_colors": 66627,
+  "palette_pixels_accounted_for": 1573352,
+  "annotated_pngs_including_overview_and_token_board": 11,
+  "named_svg_layers": 11,
+  "svg_embedded_rasters": 0,
+  "svg_embedded_fonts": 0,
+  "svg_text_nodes": 149,
+  "svg_paths": 123,
+  "redraw_comparison": {
+    "whole_image_rgb_mae_0_to_255": 6.3876,
+    "fraction_pixels_with_any_channel_error_gt_32": 0.048909,
+    "pixel_identical": false,
+    "interpretation": "A fitted vector redraw, not original font/blur/alpha recovery or pixel-equivalent reconstruction.",
+    "area_rgb_mae_0_to_255": {
+      "01-window-frame": 6.8899,
+      "02-title-bar": 5.5797,
+      "03-left-rail": 2.3539,
+      "04-explorer": 5.1039,
+      "05-source-control": 6.0765,
+      "06-editor": 8.0134,
+      "07-bottom-panel": 7.6979,
+      "08-right-dock": 6.793,
+      "09-status-bar": 7.0145
+    }
+  },
+  "unknown_metadata_explicitly_retained": [
+    "original font family/size/weight",
+    "original source-layer alpha",
+    "source background image",
+    "source blur kernel/radius",
+    "original stroke/radius parameters",
+    "hidden states and behavior"
+  ]
+}

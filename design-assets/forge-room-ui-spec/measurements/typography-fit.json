@@ -1,0 +1,590 @@
+[
+  {
+    "style": "brand",
+    "sample": "Forge Room",
+    "sample_rect": [
+      89,
+      39,
+      108,
+      23
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      90,
+      42,
+      104,
+      19
+    ],
+    "candidates": [
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 19.25,
+        "ink_width": 104,
+        "ink_height": 19,
+        "normalized_shape_iou": 0.7658,
+        "dimension_error": 0.0,
+        "score": 0.7658
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 700,
+        "size_px_pt": 18.5,
+        "ink_width": 104,
+        "ink_height": 18,
+        "normalized_shape_iou": 0.7858,
+        "dimension_error": 0.0526,
+        "score": 0.7332
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 700,
+        "size_px_pt": 19.25,
+        "ink_width": 109,
+        "ink_height": 19,
+        "normalized_shape_iou": 0.7486,
+        "dimension_error": 0.0481,
+        "score": 0.7005
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "panel-heading",
+    "sample": "Explorer",
+    "sample_rect": [
+      124,
+      92,
+      74,
+      22
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      127,
+      95,
+      60,
+      17
+    ],
+    "candidates": [
+      {
+        "family": "Calibri",
+        "weight": 400,
+        "size_px_pt": 19.0,
+        "ink_width": 62,
+        "ink_height": 17,
+        "normalized_shape_iou": 0.7636,
+        "dimension_error": 0.0333,
+        "score": 0.7302
+      },
+      {
+        "family": "Calibri",
+        "weight": 700,
+        "size_px_pt": 17.5,
+        "ink_width": 60,
+        "ink_height": 16,
+        "normalized_shape_iou": 0.7571,
+        "dimension_error": 0.0588,
+        "score": 0.6983
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 400,
+        "size_px_pt": 17.5,
+        "ink_width": 61,
+        "ink_height": 17,
+        "normalized_shape_iou": 0.7083,
+        "dimension_error": 0.0167,
+        "score": 0.6917
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "tab",
+    "sample": "Room.tsx",
+    "sample_rect": [
+      430,
+      92,
+      72,
+      21
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      433,
+      96,
+      64,
+      12
+    ],
+    "candidates": [
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 16.0,
+        "ink_width": 66,
+        "ink_height": 12,
+        "normalized_shape_iou": 0.7881,
+        "dimension_error": 0.0312,
+        "score": 0.7568
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 400,
+        "size_px_pt": 16.0,
+        "ink_width": 64,
+        "ink_height": 12,
+        "normalized_shape_iou": 0.7458,
+        "dimension_error": 0.0,
+        "score": 0.7458
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 16.25,
+        "ink_width": 67,
+        "ink_height": 12,
+        "normalized_shape_iou": 0.7658,
+        "dimension_error": 0.0469,
+        "score": 0.7189
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "tree",
+    "sample": "desktop",
+    "sample_rect": [
+      194,
+      184,
+      60,
+      20
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      195,
+      187,
+      50,
+      14
+    ],
+    "candidates": [
+      {
+        "family": "Segoe UI",
+        "weight": 400,
+        "size_px_pt": 14.5,
+        "ink_width": 50,
+        "ink_height": 14,
+        "normalized_shape_iou": 0.787,
+        "dimension_error": 0.0,
+        "score": 0.787
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 14.5,
+        "ink_width": 51,
+        "ink_height": 14,
+        "normalized_shape_iou": 0.7717,
+        "dimension_error": 0.02,
+        "score": 0.7517
+      },
+      {
+        "family": "Calibri",
+        "weight": 400,
+        "size_px_pt": 15.75,
+        "ink_width": 50,
+        "ink_height": 14,
+        "normalized_shape_iou": 0.7368,
+        "dimension_error": 0.0,
+        "score": 0.7368
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "section-heading",
+    "sample": "Source Control",
+    "sample_rect": [
+      128,
+      545,
+      124,
+      22
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      129,
+      548,
+      111,
+      12
+    ],
+    "candidates": [
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 16.5,
+        "ink_width": 109,
+        "ink_height": 12,
+        "normalized_shape_iou": 0.7595,
+        "dimension_error": 0.018,
+        "score": 0.7415
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 700,
+        "size_px_pt": 16.5,
+        "ink_width": 113,
+        "ink_height": 12,
+        "normalized_shape_iou": 0.7227,
+        "dimension_error": 0.018,
+        "score": 0.7047
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 16.0,
+        "ink_width": 106,
+        "ink_height": 12,
+        "normalized_shape_iou": 0.7276,
+        "dimension_error": 0.045,
+        "score": 0.6826
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "card-heading",
+    "sample": "How can I help you today?",
+    "sample_rect": [
+      1249,
+      224,
+      224,
+      24
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      1251,
+      227,
+      215,
+      18
+    ],
+    "candidates": [
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 18.0,
+        "ink_width": 215,
+        "ink_height": 18,
+        "normalized_shape_iou": 0.828,
+        "dimension_error": 0.0,
+        "score": 0.828
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 17.75,
+        "ink_width": 212,
+        "ink_height": 18,
+        "normalized_shape_iou": 0.7706,
+        "dimension_error": 0.014,
+        "score": 0.7567
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 700,
+        "size_px_pt": 18.0,
+        "ink_width": 223,
+        "ink_height": 18,
+        "normalized_shape_iou": 0.7751,
+        "dimension_error": 0.0372,
+        "score": 0.7378
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "chat-body",
+    "sample": "Update the Room component to show",
+    "sample_rect": [
+      1301,
+      384,
+      305,
+      22
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      1302,
+      388,
+      272,
+      16
+    ],
+    "candidates": [
+      {
+        "family": "Segoe UI",
+        "weight": 400,
+        "size_px_pt": 15.75,
+        "ink_width": 266,
+        "ink_height": 16,
+        "normalized_shape_iou": 0.7047,
+        "dimension_error": 0.0221,
+        "score": 0.6826
+      },
+      {
+        "family": "Calibri",
+        "weight": 400,
+        "size_px_pt": 17.5,
+        "ink_width": 272,
+        "ink_height": 16,
+        "normalized_shape_iou": 0.639,
+        "dimension_error": 0.0,
+        "score": 0.639
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 16.75,
+        "ink_width": 290,
+        "ink_height": 16,
+        "normalized_shape_iou": 0.7048,
+        "dimension_error": 0.0662,
+        "score": 0.6387
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "breadcrumb",
+    "sample": "apps",
+    "sample_rect": [
+      408,
+      133,
+      32,
+      20
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      409,
+      139,
+      30,
+      11
+    ],
+    "candidates": [
+      {
+        "family": "Calibri",
+        "weight": 400,
+        "size_px_pt": 16.75,
+        "ink_width": 30,
+        "ink_height": 11,
+        "normalized_shape_iou": 0.6691,
+        "dimension_error": 0.0,
+        "score": 0.6691
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 14.0,
+        "ink_width": 30,
+        "ink_height": 11,
+        "normalized_shape_iou": 0.6593,
+        "dimension_error": 0.0,
+        "score": 0.6593
+      },
+      {
+        "family": "Calibri",
+        "weight": 400,
+        "size_px_pt": 15.5,
+        "ink_width": 29,
+        "ink_height": 11,
+        "normalized_shape_iou": 0.6694,
+        "dimension_error": 0.0333,
+        "score": 0.636
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "code",
+    "sample": "import",
+    "sample_rect": [
+      473,
+      169,
+      54,
+      19
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      475,
+      171,
+      49,
+      15
+    ],
+    "candidates": [
+      {
+        "family": "Consolas",
+        "weight": 400,
+        "size_px_pt": 16.5,
+        "ink_width": 52,
+        "ink_height": 15,
+        "normalized_shape_iou": 0.6863,
+        "dimension_error": 0.0612,
+        "score": 0.6251
+      },
+      {
+        "family": "Consolas",
+        "weight": 700,
+        "size_px_pt": 15.25,
+        "ink_width": 49,
+        "ink_height": 15,
+        "normalized_shape_iou": 0.613,
+        "dimension_error": 0.0,
+        "score": 0.613
+      },
+      {
+        "family": "Consolas",
+        "weight": 700,
+        "size_px_pt": 15.5,
+        "ink_width": 49,
+        "ink_height": 15,
+        "normalized_shape_iou": 0.5924,
+        "dimension_error": 0.0,
+        "score": 0.5924
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "terminal",
+    "sample": "ready in 412 ms",
+    "sample_rect": [
+      553,
+      766,
+      134,
+      20
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      558,
+      769,
+      121,
+      14
+    ],
+    "candidates": [
+      {
+        "family": "Consolas",
+        "weight": 700,
+        "size_px_pt": 15.0,
+        "ink_width": 122,
+        "ink_height": 14,
+        "normalized_shape_iou": 0.5663,
+        "dimension_error": 0.0083,
+        "score": 0.558
+      },
+      {
+        "family": "Consolas",
+        "weight": 400,
+        "size_px_pt": 15.0,
+        "ink_width": 122,
+        "ink_height": 14,
+        "normalized_shape_iou": 0.5572,
+        "dimension_error": 0.0083,
+        "score": 0.5489
+      },
+      {
+        "family": "Consolas",
+        "weight": 400,
+        "size_px_pt": 15.25,
+        "ink_width": 125,
+        "ink_height": 14,
+        "normalized_shape_iou": 0.5439,
+        "dimension_error": 0.0331,
+        "score": 0.5109
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "status",
+    "sample": "feature/room-collab",
+    "sample_rect": [
+      80,
+      874,
+      132,
+      20
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      81,
+      876,
+      129,
+      13
+    ],
+    "candidates": [
+      {
+        "family": "Segoe UI",
+        "weight": 400,
+        "size_px_pt": 13.75,
+        "ink_width": 122,
+        "ink_height": 13,
+        "normalized_shape_iou": 0.7238,
+        "dimension_error": 0.0543,
+        "score": 0.6695
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 14.75,
+        "ink_width": 135,
+        "ink_height": 13,
+        "normalized_shape_iou": 0.665,
+        "dimension_error": 0.0465,
+        "score": 0.6185
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 400,
+        "size_px_pt": 14.75,
+        "ink_width": 130,
+        "ink_height": 13,
+        "normalized_shape_iou": 0.6248,
+        "dimension_error": 0.0078,
+        "score": 0.617
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  },
+  {
+    "style": "small-helper",
+    "sample": "Agent",
+    "sample_rect": [
+      1147,
+      490,
+      40,
+      18
+    ],
+    "measured_ink_bounds_luminance_gt_110": [
+      1150,
+      492,
+      33,
+      12
+    ],
+    "candidates": [
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 12.0,
+        "ink_width": 33,
+        "ink_height": 12,
+        "normalized_shape_iou": 0.5794,
+        "dimension_error": 0.0,
+        "score": 0.5794
+      },
+      {
+        "family": "Segoe UI",
+        "weight": 600,
+        "size_px_pt": 11.75,
+        "ink_width": 32,
+        "ink_height": 12,
+        "normalized_shape_iou": 0.5547,
+        "dimension_error": 0.0303,
+        "score": 0.5244
+      },
+      {
+        "family": "Arial",
+        "weight": 400,
+        "size_px_pt": 12.0,
+        "ink_width": 31,
+        "ink_height": 12,
+        "normalized_shape_iou": 0.5571,
+        "dimension_error": 0.0606,
+        "score": 0.4965
+      }
+    ],
+    "original_font_identity": "not recoverable from raster"
+  }
+]
