@@ -1,0 +1,22 @@
+{
+	"$schema": "vscode://schemas/color-theme",
+	"name": "Forge Room · Signal Guard",
+	"type": "hc-black",
+	"colors": {
+		"focusBorder": "#fff27a", "foreground": "#ffffff", "descriptionForeground": "#e3e3e3", "disabledForeground": "#bcbcbc", "errorForeground": "#ff8d82", "textLink.foreground": "#83dcff",
+		"editor.background": "#101010", "editor.foreground": "#ffffff", "editorLineNumber.foreground": "#b7b7b7", "editorLineNumber.activeForeground": "#fff27a", "editorCursor.foreground": "#fff27a", "editor.selectionBackground": "#5a5a00", "editor.lineHighlightBackground": "#ffffff14", "editorIndentGuide.background1": "#777777", "editorIndentGuide.activeBackground1": "#fff27a", "editorGutter.background": "#101010", "editorError.foreground": "#ff8d82", "editorWarning.foreground": "#fff27a", "editorInfo.foreground": "#83dcff",
+		"sideBar.background": "#151515", "sideBar.foreground": "#ffffff", "sideBarTitle.foreground": "#ffffff", "sideBarSectionHeader.background": "#252525", "sideBarSectionHeader.foreground": "#ffffff", "activityBar.background": "#101010", "activityBar.foreground": "#fff27a", "activityBar.inactiveForeground": "#d0d0d0", "activityBarBadge.background": "#fff27a", "activityBarBadge.foreground": "#101010",
+		"statusBar.background": "#fff27a", "statusBar.foreground": "#101010", "statusBar.noFolderBackground": "#fff27a", "titleBar.activeBackground": "#101010", "titleBar.activeForeground": "#ffffff", "titleBar.inactiveBackground": "#171717", "titleBar.inactiveForeground": "#d0d0d0", "panel.background": "#121212", "panel.border": "#888888", "panelTitle.activeBorder": "#fff27a",
+		"tab.activeBackground": "#101010", "tab.activeForeground": "#ffffff", "tab.inactiveBackground": "#252525", "tab.inactiveForeground": "#dedede", "tab.border": "#888888", "editorGroupHeader.tabsBackground": "#252525", "editorGroup.border": "#888888", "button.background": "#fff27a", "button.foreground": "#101010", "button.hoverBackground": "#fff7a8", "input.background": "#101010", "input.foreground": "#ffffff", "input.border": "#bcbcbc", "list.activeSelectionBackground": "#404000", "list.activeSelectionForeground": "#ffffff", "list.hoverBackground": "#ffffff20", "badge.background": "#fff27a", "badge.foreground": "#101010",
+		"terminal.background": "#101010", "terminal.foreground": "#ffffff", "terminal.ansiRed": "#ff8d82", "terminal.ansiGreen": "#91e891", "terminal.ansiYellow": "#fff27a", "terminal.ansiBlue": "#83dcff", "terminal.ansiMagenta": "#f6a8ff", "terminal.ansiCyan": "#83fff1", "diffEditor.insertedTextBackground": "#91e89145", "diffEditor.removedTextBackground": "#ff8d8245"
+	},
+	"tokenColors": [
+		{ "scope": ["comment"], "settings": { "foreground": "#cccccc", "fontStyle": "italic" } },
+		{ "scope": ["keyword", "storage"], "settings": { "foreground": "#ffadf5" } },
+		{ "scope": ["string"], "settings": { "foreground": "#a9f39b" } },
+		{ "scope": ["constant.numeric", "constant.language"], "settings": { "foreground": "#fff27a" } },
+		{ "scope": ["entity.name.function", "support.function"], "settings": { "foreground": "#83dcff" } },
+		{ "scope": ["entity.name.type", "entity.name.class", "support.type"], "settings": { "foreground": "#ffbd79" } },
+		{ "scope": ["variable"], "settings": { "foreground": "#ffffff" } }
+	]
+}

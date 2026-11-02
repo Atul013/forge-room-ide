@@ -1,0 +1,94 @@
+{
+    "themes":  [
+                   {
+                       "id":  "Forge Room · Neon Ronin",
+                       "name":  "Neon Ronin",
+                       "mood":  "Anime after dark",
+                       "description":  "A quiet night editor with vermilion signals and warm neon accents.",
+                       "mode":  "dark",
+                       "colors":  [
+                                      "#17171d",
+                                      "#a64f59",
+                                      "#84bbc2",
+                                      "#e6b16f"
+                                  ],
+                       "art":  "ronin",
+                       "key":  "neon-ronin"
+                   },
+                   {
+                       "id":  "Forge Room · Starship Deck",
+                       "name":  "Starship Deck",
+                       "mood":  "Flight systems",
+                       "description":  "Cool instrument surfaces, brass indicators, and steady green status.",
+                       "mode":  "dark",
+                       "colors":  [
+                                      "#171a19",
+                                      "#806b42",
+                                      "#83b8b4",
+                                      "#e0bd72"
+                                  ],
+                       "art":  "orbit",
+                       "key":  "starship-deck"
+                   },
+                   {
+                       "id":  "Forge Room · Moss Shrine",
+                       "name":  "Moss Shrine",
+                       "mood":  "Quiet forest",
+                       "description":  "Moss greens and softened contrast for long, focused sessions.",
+                       "mode":  "dark",
+                       "colors":  [
+                                      "#171c19",
+                                      "#536c4e",
+                                      "#82b9ae",
+                                      "#c9cf91"
+                                  ],
+                       "art":  "moss",
+                       "key":  "moss-shrine"
+                   },
+                   {
+                       "id":  "Forge Room · Ink \u0026 Ember",
+                       "name":  "Ink \u0026 Ember",
+                       "mood":  "Workshop at dusk",
+                       "description":  "Graphite surfaces, ember controls, and a measured warm palette.",
+                       "mode":  "dark",
+                       "colors":  [
+                                      "#151916",
+                                      "#835831",
+                                      "#81b6bc",
+                                      "#e2b46b"
+                                  ],
+                       "art":  "ember",
+                       "key":  "ink-ember"
+                   },
+                   {
+                       "id":  "Forge Room · Paper Studio",
+                       "name":  "Paper Studio",
+                       "mood":  "Daylight desk",
+                       "description":  "Warm paper, quiet borders, and grounded syntax colors.",
+                       "mode":  "light",
+                       "colors":  [
+                                      "#f5f2e9",
+                                      "#79533a",
+                                      "#316d78",
+                                      "#527548"
+                                  ],
+                       "art":  "paper",
+                       "key":  "paper-studio"
+                   },
+                   {
+                       "id":  "Forge Room · Signal Guard",
+                       "name":  "Signal Guard",
+                       "mood":  "High contrast",
+                       "description":  "Bright, distinct signals designed for high-contrast readability.",
+                       "mode":  "contrast",
+                       "colors":  [
+                                      "#101010",
+                                      "#fff27a",
+                                      "#83dcff",
+                                      "#91e891"
+                                  ],
+                       "art":  "signal",
+                       "key":  "signal-guard"
+                   }
+               ]
+}
