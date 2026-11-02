@@ -2,7 +2,7 @@
 
 This is the first editor-independent Rust slice extracted from the existing Team Lobby task policies. It is deliberately additive: the Code OSS product and extensions remain untouched as the behavior reference.
 
-Version `0.110.0-alpha.1` follows Team Lobby `0.108.0` and identifies an early preview, not a beta or complete IDE.
+Version `0.110.0-alpha.2` follows Team Lobby `0.108.0` and identifies an early preview, not a beta or complete IDE.
 
 ## Included
 

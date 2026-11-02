@@ -1,4 +1,4 @@
-# Forge Room Early Preview 0.110.0-alpha.1
+# Forge Room Early Preview 0.110.0-alpha.2
 
 **Developer Preview: for developers and testers only.** The public pre-release is still on its way, so expect rough edges, missing features and breaking changes between builds.
 
@@ -6,20 +6,21 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 
 ## Included
 
+- **New in alpha.2:** the new architectural Forge Room logo and icon; a Room Lobby page (goal, team, agents, milestones, project setup, invite and Room Pulse; the countdown is opt-in); a labeled left rail, new title and status bars and a muted-ember palette; a Room Pulse strip over the workspace; Team, Agents, Tasks and Activity tabs in the right panel, all from real room data; a Preview pane that finds a local dev-server address in the terminal and opens it in your browser (no embedded web view); saving over a file changed on disk now asks first, and clean tabs reload on their own; faster incremental syntax highlighting (plain text above 2 MiB or when a line is longer than 4000 bytes); terminal scrollback, selection and copy; a Merge Conflicts group in Source Control with Accept Current/Incoming; copy and paste now work everywhere in the app.
 - Native Rust IDE (egui, no Electron or Node): icon navigation rail, Explorer with a lazy folder tree, multi-file tabs with breadcrumbs, command palette and quick open, find/replace, go to line, search in files, syntax highlighting with line numbers, and unsaved-changes prompts.
 - Integrated terminal on a real Windows pseudo-console (PowerShell).
 - Source Control: stage/unstage, commit, amend, undo last commit, discard, stash, branches, Sync/Publish/Pull/Push/Fetch, colored diffs, plus GitLens-style commit graph, file history and inline blame.
 - Rooms: people and coding agents with human owners, tasks with dependencies and acceptance, handoffs, evidence and activity, built on the Rust room/task model derived from Team Lobby 0.108.0 policies. Stored privately per project.
 - Forge Room Studio color themes (Forge Room is the default) and a reference-based redesign with a custom title bar, right dock and bottom panel.
-- AI Assistant panel: layout only. No model is connected, and nothing you type there leaves your computer.
+- AI Assistant panel: layout only. No model is connected, and nothing you type there leaves your computer. Claude Code or Codex can be run in the integrated terminal.
 - A per-user installer that updates in place (older to newer, downgrades blocked) and a themed uninstaller.
 
 ## Missing
 
 - Run/Debug, Extensions, Output, Problems, Debug Console and Ports are placeholders.
 - AI features (model-backed chat, editor actions), LSP and DAP, extensions, a task runner.
-- Merge-conflict UI, rebase, line history, minimap, bracket matching, multi-cursor and split editors.
-- File create/rename/delete in the explorer and detection of files changed on disk while open.
+- Rebase, line history, minimap, bracket matching, multi-cursor and split editors.
+- File create/rename/delete in the explorer.
 - Realtime room transport, invitations, encryption and reconnect.
 - Theme/profile import, accessibility and high-DPI acceptance.
 - A signed release.

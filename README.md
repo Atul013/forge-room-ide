@@ -2,7 +2,7 @@
 
 A light, fast, native IDE written in Rust. No Electron, no webview, no bundled Node runtime.
 
-**Status:** early preview (`0.110.0-alpha.1`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [progress.md](progress.md).
+**Status:** early preview (`0.110.0-alpha.2`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [progress.md](progress.md).
 
 ## What works today
 
