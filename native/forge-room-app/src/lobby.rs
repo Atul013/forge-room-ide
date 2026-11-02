@@ -153,6 +153,7 @@ pub struct Context<'a> {
     pub branch: Option<&'a str>,
     pub runtimes: &'a [String],
     pub state: Option<&'a RoomState>,
+    pub room_unavailable: bool,
     pub acting_as: &'a str,
 }
 
@@ -353,6 +354,22 @@ impl Lobby {
                                 .color(Color32::from_rgb(240, 113, 120)),
                             );
                         }
+                        if context.room_unavailable {
+                            egui::Frame::new()
+                                .fill(theme::mix(theme::bg_sidebar(), Color32::from_rgb(240, 113, 120), 0.12))
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(240, 113, 120)))
+                                .corner_radius(6.0)
+                                .inner_margin(Margin::symmetric(12, 10))
+                                .show(ui, |ui| {
+                                    ui.label("Room unavailable: saved room files could not be read. They were left unchanged.");
+                                    if ui
+                                        .add(egui::Button::new("Open Room details"))
+                                        .clicked()
+                                    {
+                                        action = Some(Action::EnterRoom);
+                                    }
+                                });
+                        }
                         self.header(ui, context, &mut action);
                         self.tabs(ui);
                         ui.add_space(2.0);
@@ -415,6 +432,11 @@ impl Lobby {
                             ui.label(RichText::new(text).color(theme::text_dim()).size(13.0));
                             ui.add_space(6.0);
                         }
+                    } else if context.room_unavailable {
+                        ui.label(
+                            RichText::new("Room unavailable. Open Room for details.")
+                                .color(theme::text_dim()),
+                        );
                     } else {
                         ui.label(
                             RichText::new("No room yet. Create one to see live activity here.")
@@ -947,6 +969,7 @@ impl Lobby {
                                     "Mixed (Humans + AI)"
                                 }
                                 Some(_) => "Humans",
+                                None if context.room_unavailable => "Needs recovery",
                                 None => "Not created yet",
                             };
                             let start = self.config.start_epoch;
@@ -1124,11 +1147,19 @@ impl Lobby {
             },
             |ui| {
                 if context.state.is_none() {
-                    ui.label(
-                        RichText::new("Create the room to add people.").color(theme::text_dim()),
-                    );
-                    if accent_button(ui, "Create Room", None).clicked() {
-                        *action = Some(Action::CreateRoom);
+                    if context.room_unavailable {
+                        ui.label(
+                            RichText::new("Room files need recovery before members can be added.")
+                                .color(theme::text_dim()),
+                        );
+                    } else {
+                        ui.label(
+                            RichText::new("Create the room to add people.")
+                                .color(theme::text_dim()),
+                        );
+                        if accent_button(ui, "Create Room", None).clicked() {
+                            *action = Some(Action::CreateRoom);
+                        }
                     }
                     return;
                 }

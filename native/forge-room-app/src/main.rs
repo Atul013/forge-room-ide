@@ -2645,6 +2645,7 @@ impl ForgeRoomApp {
             branch: self.branch.as_deref(),
             runtimes: &self.runtimes,
             state: self.room.state(),
+            room_unavailable: self.room.is_unavailable(),
             acting_as: self.room.acting_as(),
         };
         match self.lobby.show(ui, &context) {
