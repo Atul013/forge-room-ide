@@ -8,7 +8,7 @@
 - Supplied fork: `Atul013/forge-room-ide`. The active Rust source imported here is `native-rust-ide` at `5fadb8f40bf42325e8a9a4e17ec3a59eaa1adea7` (Developer Preview `0.110.0-alpha.1`). The fork also has an open early-preview PR; that branch is older than the imported native branch.
 - Imported from `atul/native-rust-ide`: `native/`, `packaging/`, `design-assets/`, `.github/`, `COLLAB.md`, `docs/native/`, and `docs/design/`. The native README is now the entry point. The previous README is preserved at `docs/legacy/README_CODE_OSS.md`; existing documents, `PROJECT_PROGRESS.md`, and planning files remain in the checkout.
 - The old `extensions/`, `services/`, `releases/`, and `.build/` directories were moved intact to `C:\Forge-Room-IDE-Legacy-20261102` outside this active checkout. Their source, local edits, untracked files, packages, and embedded documents remain available there. **The active application is `native/forge-room-app`; the Code OSS extension is no longer the product target.**
-- The imported native source is currently uncommitted in this checkout. The fork is configured as remote `atul`; `origin` still points to the original repository. Do not publish or merge until the build results are reviewed.
+- The native replacement was merged into `ZayedBH/forge-room-ide` `main` through PR #3 on 2 November 2026 (merge commit `f6f0a7d`). The fork is configured as remote `atul`; `origin` remains the original repository. Windows CI passed Rust formatting, locked dependency resolution, checks, tests, and clippy for both core and graphical app. Installer packaging and hands-on Windows acceptance are separate open gates. Earlier local edits to historical documents remain uncommitted.
 
 ## Product goal and hard constraints
 
@@ -63,4 +63,4 @@ Each row is a paired milestone with one owner on each side. The two owners shoul
 
 ## Next checkpoint
 
-Run the baseline checks in milestone 1, inspect the real app on Windows, and record results here. Then prepare the migration boundary decision in milestone 2 before publishing a replacement branch.
+Inspect the real app and installer on Windows and record results here. Then resolve legacy-module retention and native feature gaps in milestone 2.
