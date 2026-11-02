@@ -38,7 +38,7 @@ use workspace::Workspace;
 const APP_NAME: &str = "Forge Room Early Preview";
 const TAB_HEIGHT: f32 = 42.0;
 const TITLE_HEIGHT: f32 = 36.0;
-const ACTIVITY_WIDTH: f32 = 126.0;
+const ACTIVITY_WIDTH: f32 = 118.0;
 
 /// One entry of the navigation rail on the left.
 #[derive(Clone, Copy)]
@@ -1292,10 +1292,10 @@ impl ForgeRoomApp {
         );
         if !label.is_empty() {
             painter.text(
-                egui::pos2(rect.left() + 40.0, rect.center().y),
+                egui::pos2(rect.left() + 38.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 label,
-                egui::FontId::proportional(12.5),
+                egui::FontId::proportional(12.0),
                 color,
             );
         }
@@ -2286,7 +2286,7 @@ impl ForgeRoomApp {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_centered(|ui| {
             if let Some(branch) = self.branch.clone() {
                 let (rect, icon) =
                     ui.allocate_exact_size(egui::vec2(14.0, 16.0), egui::Sense::click());
@@ -2594,7 +2594,7 @@ impl eframe::App for ForgeRoomApp {
         let bar = |fill| {
             egui::Frame::new()
                 .fill(fill)
-                .inner_margin(egui::Margin::symmetric(14, 5))
+                .inner_margin(egui::Margin::symmetric(14, 0))
         };
 
         // Flat panels separated by hairline dividers, as in the reference.
@@ -2610,6 +2610,7 @@ impl eframe::App for ForgeRoomApp {
             .show(ui, |ui| self.title_bar(ui));
 
         egui::Panel::bottom("status")
+            .exact_size(29.0)
             .frame(bar(theme::status_bar()))
             .show(ui, |ui| self.status_bar(ui));
 

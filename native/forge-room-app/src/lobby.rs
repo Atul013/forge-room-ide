@@ -266,7 +266,12 @@ impl Lobby {
             .auto_shrink(false)
             .show(ui, |ui| {
                 egui::Frame::new()
-                    .inner_margin(Margin::symmetric(14, 10))
+                    .inner_margin(Margin {
+                        left: 26,
+                        right: 18,
+                        top: 10,
+                        bottom: 10,
+                    })
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
                         self.header(ui, context, &mut action);
@@ -287,9 +292,13 @@ impl Lobby {
     fn pulse(&mut self, ui: &mut Ui, context: &Context) {
         let items = self.setup_items(context);
         egui::Frame::new()
-            .fill(theme::bg_sidebar())
-            .inner_margin(Margin::symmetric(14, 8))
+            .outer_margin(Margin::symmetric(5, 4))
+            .stroke(Stroke::new(1.0, theme::border()))
+            .corner_radius(6.0)
+            .inner_margin(Margin::symmetric(12, 5))
             .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.set_min_height(28.0);
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                     icons::draw(ui.painter(), "pulse", rect.center(), 18.0, theme::accent());
@@ -416,11 +425,6 @@ impl Lobby {
                     });
                 });
             });
-        let rect = ui.min_rect();
-        ui.painter().line_segment(
-            [rect.left_bottom(), rect.right_bottom()],
-            Stroke::new(1.0, theme::border()),
-        );
     }
 
     // ---- Header -------------------------------------------------------------------------
@@ -503,7 +507,7 @@ impl Lobby {
                 });
 
                 ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                    if ghost_button(ui, "···", None).clicked() {
+                    if square_button(ui, "···").clicked() {
                         self.tab = Tab::Settings;
                     }
                     if accent_button(ui, "Enter Room", Some("arrow-right")).clicked() {
@@ -583,8 +587,10 @@ impl Lobby {
                         theme::text_dim()
                     },
                 );
-                let (rect, response) =
-                    ui.allocate_exact_size(vec2(galley.size().x + 52.0, 37.0), Sense::click());
+                let (rect, response) = ui.allocate_exact_size(
+                    vec2((galley.size().x + 52.0).max(104.0), 37.0),
+                    Sense::click(),
+                );
                 if self.tab == tab {
                     ui.painter().rect_filled(
                         rect,
@@ -708,7 +714,8 @@ impl Lobby {
                 let width = ui.available_width();
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 14.0;
-                    let half = (width - 14.0) * 0.5;
+                    let half = (width - 14.0) * 0.497;
+                    let goal_width = width - 14.0 - half;
                     ui.allocate_ui_with_layout(
                         vec2(half, 10.0),
                         Layout::top_down(Align::Min),
@@ -746,12 +753,19 @@ impl Lobby {
                                 }
                             });
                             kv(ui, "clock", "Duration", |ui| {
-                                ui.horizontal(|ui| {
+                                ui.scope(|ui| {
+                                    let widgets = &mut ui.visuals_mut().widgets;
+                                    for state in [&mut widgets.inactive, &mut widgets.hovered] {
+                                        state.bg_fill = Color32::TRANSPARENT;
+                                        state.weak_bg_fill = Color32::TRANSPARENT;
+                                        state.bg_stroke = Stroke::NONE;
+                                    }
                                     ui.add(
                                         egui::DragValue::new(&mut self.config.duration_hours)
                                             .range(1..=720)
                                             .suffix(" Hours"),
-                                    );
+                                    )
+                                    .on_hover_text("Drag or click to change");
                                 });
                             });
                             kv(ui, "calendar", "Start Time", |ui| {
@@ -763,17 +777,18 @@ impl Lobby {
                         },
                     );
                     ui.allocate_ui_with_layout(
-                        vec2(half, 10.0),
+                        vec2(goal_width, 10.0),
                         Layout::top_down(Align::Min),
                         |ui| {
-                            ui.set_width(half);
+                            ui.set_width(goal_width);
                             egui::Frame::new()
                                 .fill(inner_fill())
                                 .stroke(Stroke::new(1.0, theme::border()))
-                                .corner_radius(8.0)
-                                .inner_margin(Margin::same(12))
+                                .corner_radius(6.0)
+                                .inner_margin(Margin::symmetric(10, 8))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
+                                    ui.spacing_mut().item_spacing.y = 2.0;
                                     ui.horizontal(|ui| {
                                         let (rect, _) = ui
                                             .allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
@@ -784,7 +799,21 @@ impl Lobby {
                                             18.0,
                                             theme::text_dim(),
                                         );
-                                        ui.label(RichText::new("Project Goal").size(16.0).strong());
+                                        ui.label(
+                                            RichText::new("Project Goal")
+                                                .size(16.0)
+                                                .family(crate::fonts::semibold()),
+                                        );
+                                        ui.with_layout(
+                                            Layout::right_to_left(Align::Center),
+                                            |ui| {
+                                                if icon_button(ui, "plus", "Add a checklist item")
+                                                    .clicked()
+                                                {
+                                                    self.config.goals.push((String::new(), false));
+                                                }
+                                            },
+                                        );
                                     });
                                     ui.add(
                                         egui::TextEdit::multiline(&mut self.config.goal)
@@ -803,6 +832,7 @@ impl Lobby {
                                             ui.add(
                                                 egui::TextEdit::singleline(text)
                                                     .frame(egui::Frame::NONE)
+                                                    .font(FontId::proportional(13.0))
                                                     .desired_width(f32::INFINITY),
                                             );
                                         });
@@ -813,9 +843,6 @@ impl Lobby {
                                     }
                                     if let Some(index) = remove {
                                         self.config.goals.remove(index);
-                                    }
-                                    if ghost_button(ui, "+ Add item", None).clicked() {
-                                        self.config.goals.push((String::new(), false));
                                     }
                                 });
                         },
@@ -837,11 +864,25 @@ impl Lobby {
             })
             .unwrap_or_default();
         let title = format!("Team Members ({})", people.len());
+        let rows = context
+            .state
+            .map(|state| {
+                let agents = state
+                    .participants
+                    .iter()
+                    .filter(|p| p.role == Role::Agent)
+                    .count();
+                (state.participants.len() - agents).max(agents)
+            })
+            .unwrap_or(0)
+            .clamp(2, 6);
+        let min_height = 36.0 + 16.0 + rows as f32 * 54.0;
         let add = std::cell::Cell::new(false);
-        card(
+        card_sized(
             ui,
             "users",
             &title,
+            min_height,
             |ui| {
                 if outline_button(ui, "+ Add Member").clicked() {
                     add.set(true);
@@ -889,11 +930,25 @@ impl Lobby {
             })
             .unwrap_or_default();
         let title = format!("AI Agents ({})", agents.len());
+        let rows = context
+            .state
+            .map(|state| {
+                let agents = state
+                    .participants
+                    .iter()
+                    .filter(|p| p.role == Role::Agent)
+                    .count();
+                (state.participants.len() - agents).max(agents)
+            })
+            .unwrap_or(0)
+            .clamp(2, 6);
+        let min_height = 36.0 + 16.0 + rows as f32 * 54.0;
         let add = std::cell::Cell::new(false);
-        card(
+        card_sized(
             ui,
             "bot",
             &title,
+            min_height,
             |ui| {
                 if outline_button(ui, "+ Add Agent").clicked() {
                     add.set(true);
@@ -932,7 +987,7 @@ impl Lobby {
     ) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
-            let (rect, _) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(vec2(41.0, 41.0), Sense::hover());
             avatar(ui.painter(), rect, &person.name, agent, Some(you));
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
@@ -1030,7 +1085,7 @@ impl Lobby {
                             ui.set_width(track);
                             let count = self.config.milestones.len().max(1);
                             let (rect, _) =
-                                ui.allocate_exact_size(vec2(track, 96.0), Sense::hover());
+                                ui.allocate_exact_size(vec2(track, 88.0), Sense::hover());
                             let step = track / count as f32;
                             let line_y = rect.top() + 16.0;
                             ui.painter().line_segment(
@@ -1062,11 +1117,11 @@ impl Lobby {
                                 let painter = ui.painter();
                                 match milestone.status {
                                     MilestoneStatus::Done => {
-                                        painter.circle_filled(center, 11.5, theme::accent());
+                                        painter.circle_filled(center, 11.0, theme::accent());
                                         icons::draw(painter, "check", center, 16.0, Color32::BLACK);
                                     }
                                     MilestoneStatus::InProgress => {
-                                        painter.circle_filled(center, 11.5, theme::bg_editor());
+                                        painter.circle_filled(center, 11.0, theme::bg_editor());
                                         painter.circle_stroke(
                                             center,
                                             13.0,
@@ -1075,7 +1130,7 @@ impl Lobby {
                                         painter.circle_filled(center, 4.5, AMBER);
                                     }
                                     MilestoneStatus::Pending => {
-                                        painter.circle_filled(center, 11.5, theme::bg_editor());
+                                        painter.circle_filled(center, 11.0, theme::bg_editor());
                                         painter.circle_stroke(
                                             center,
                                             13.0,
@@ -1138,13 +1193,13 @@ impl Lobby {
                                     let percent = done as f32 / total as f32;
                                     ui.horizontal(|ui| {
                                         let (bar, _) = ui.allocate_exact_size(
-                                            vec2(ui.available_width() - 44.0, 12.0),
+                                            vec2(ui.available_width() - 44.0, 14.0),
                                             Sense::hover(),
                                         );
-                                        ui.painter().rect_filled(bar, 6.0, theme::border());
+                                        ui.painter().rect_filled(bar, 7.0, theme::border());
                                         let mut fill = bar;
                                         fill.set_width(bar.width() * percent);
-                                        ui.painter().rect_filled(fill, 6.0, theme::accent());
+                                        ui.painter().rect_filled(fill, 7.0, theme::accent());
                                         ui.label(format!("{:.0}%", percent * 100.0));
                                     });
                                 });
@@ -1284,26 +1339,30 @@ impl Lobby {
             "Invite to Room",
             |_| {},
             |ui| {
+                let width = ui.available_width();
                 ui.horizontal(|ui| {
-                    ui.add(
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let input = (width - 85.0 - 100.0 - 16.0).max(60.0);
+                    ui.add_sized(
+                        [input, 28.0],
                         egui::TextEdit::singleline(&mut self.invite)
                             .hint_text("Enter email or team code...")
-                            .desired_width((ui.available_width() - 218.0).max(80.0)),
+                            .align(egui::Align2::LEFT_CENTER),
                     );
                     let roles = ["Member", "Viewer", "Agent owner"];
                     egui::ComboBox::from_id_salt("invite-role")
                         .selected_text(roles[self.invite_role])
-                        .width(90.0)
+                        .width(60.0)
                         .show_ui(ui, |ui| {
                             for (index, role) in roles.iter().enumerate() {
                                 ui.selectable_value(&mut self.invite_role, index, *role);
                             }
                         });
-                    if accent_button(ui, "Invite", Some("send")).clicked() {
+                    if compact_button(ui, "Invite", Some("send"), 78.0).clicked() {
                         self.invite_note = Some(
-                        "Network invites are not available in this preview yet; rooms are local."
-                            .into(),
-                    );
+                            "Network invites are not available in this preview yet; rooms are local."
+                                .into(),
+                        );
                     }
                 });
                 if let Some(note) = &self.invite_note {
@@ -1323,12 +1382,25 @@ fn card(
     right: impl FnOnce(&mut Ui),
     body: impl FnOnce(&mut Ui),
 ) {
+    card_sized(ui, icon, title, 0.0, right, body);
+}
+
+/// A card at least `min_height` tall, so paired cards can share a bottom edge.
+fn card_sized(
+    ui: &mut Ui,
+    icon: &str,
+    title: &str,
+    min_height: f32,
+    right: impl FnOnce(&mut Ui),
+    body: impl FnOnce(&mut Ui),
+) {
     egui::Frame::new()
         .fill(card_fill())
         .stroke(Stroke::new(1.0, theme::border()))
         .corner_radius(9.0)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            ui.set_min_height(min_height);
             ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
             egui::Frame::new()
                 .fill(header_fill())
@@ -1338,9 +1410,10 @@ fn card(
                     sw: 0,
                     se: 0,
                 })
-                .inner_margin(Margin::symmetric(14, 8))
+                .inner_margin(Margin::symmetric(14, 4))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
+                    ui.set_min_height(28.0);
                     ui.horizontal(|ui| {
                         let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                         icons::draw(ui.painter(), icon, rect.center(), 18.0, theme::text_dim());
@@ -1535,63 +1608,94 @@ fn icon_button(ui: &mut Ui, icon: &str, hint: &str) -> egui::Response {
     response.on_hover_text(hint)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn button_frame(
-    ui: &mut Ui,
-    label: &str,
-    icon: Option<&str>,
+struct ButtonStyle {
     fill: Color32,
     stroke: Color32,
     text: Color32,
     size: f32,
     height: f32,
+    min_width: f32,
+    radius: f32,
+}
+
+fn button_frame(
+    ui: &mut Ui,
+    label: &str,
+    icon: Option<&str>,
+    style: ButtonStyle,
 ) -> egui::Response {
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_string(), FontId::proportional(size), text);
+    let galley = ui.painter().layout_no_wrap(
+        label.to_string(),
+        FontId::proportional(style.size),
+        style.text,
+    );
     let extra = if icon.is_some() { 30.0 } else { 0.0 };
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(galley.size().x + 28.0 + extra, height), Sense::click());
+    let width = (galley.size().x + 28.0 + extra).max(style.min_width);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, style.height), Sense::click());
     let fill = if response.hovered() {
-        theme::mix(fill, Color32::WHITE, 0.08)
+        theme::mix(style.fill, Color32::WHITE, 0.08)
     } else {
-        fill
+        style.fill
     };
-    ui.painter().rect_filled(rect, 8.0, fill);
+    ui.painter().rect_filled(rect, style.radius, fill);
     ui.painter().rect_stroke(
         rect,
-        8.0,
-        Stroke::new(1.0, stroke),
+        style.radius,
+        Stroke::new(1.0, style.stroke),
         egui::StrokeKind::Inside,
     );
-    let text_x = rect.left() + 14.0;
+    let content = galley.size().x + extra;
+    let text_x = rect.center().x - content / 2.0;
     ui.painter().galley(
         egui::pos2(text_x, rect.center().y - galley.size().y / 2.0),
         galley.clone(),
-        text,
+        style.text,
     );
     if let Some(icon) = icon {
         icons::draw(
             ui.painter(),
             icon,
-            egui::pos2(text_x + galley.size().x + 16.0, rect.center().y),
+            egui::pos2(text_x + galley.size().x + 17.0, rect.center().y),
             18.0,
-            text,
+            style.text,
         );
     }
     response
 }
 
+/// The main call to action, painted in the theme's button colors.
 fn accent_button(ui: &mut Ui, label: &str, icon: Option<&str>) -> egui::Response {
     button_frame(
         ui,
         label,
         icon,
-        theme::accent(),
-        theme::accent(),
-        theme::button_text(),
-        16.0,
-        45.0,
+        ButtonStyle {
+            fill: theme::button(),
+            stroke: theme::button(),
+            text: theme::button_text(),
+            size: 16.0,
+            height: 45.0,
+            min_width: 165.0,
+            radius: 6.0,
+        },
+    )
+}
+
+/// The smaller filled button used inside cards.
+fn compact_button(ui: &mut Ui, label: &str, icon: Option<&str>, min_width: f32) -> egui::Response {
+    button_frame(
+        ui,
+        label,
+        icon,
+        ButtonStyle {
+            fill: theme::button(),
+            stroke: theme::button(),
+            text: theme::button_text(),
+            size: 14.0,
+            height: 31.0,
+            min_width,
+            radius: 5.0,
+        },
     )
 }
 
@@ -1600,24 +1704,33 @@ fn outline_button(ui: &mut Ui, label: &str) -> egui::Response {
         ui,
         label,
         None,
-        accent_soft(),
-        theme::accent(),
-        theme::text(),
-        13.5,
-        30.0,
+        ButtonStyle {
+            fill: accent_soft(),
+            stroke: theme::accent(),
+            text: theme::text(),
+            size: 12.5,
+            height: 27.0,
+            min_width: 0.0,
+            radius: 4.0,
+        },
     )
 }
 
-fn ghost_button(ui: &mut Ui, label: &str, icon: Option<&str>) -> egui::Response {
+/// The "more" button next to Enter Room, square and level with it.
+fn square_button(ui: &mut Ui, label: &str) -> egui::Response {
     button_frame(
         ui,
         label,
-        icon,
-        inner_fill(),
-        theme::border(),
-        theme::text(),
-        13.5,
-        26.0,
+        None,
+        ButtonStyle {
+            fill: inner_fill(),
+            stroke: theme::border(),
+            text: theme::text(),
+            size: 14.0,
+            height: 40.0,
+            min_width: 40.0,
+            radius: 6.0,
+        },
     )
 }
 
@@ -1626,7 +1739,7 @@ fn avatar(painter: &egui::Painter, rect: Rect, name: &str, agent: bool, online: 
         acc.wrapping_mul(31).wrapping_add(u32::from(b))
     });
     let fill = if agent {
-        theme::mix(theme::bg_editor(), theme::accent(), 0.25)
+        Color32::from_rgb(41, 37, 55)
     } else {
         let palette = [
             Color32::from_rgb(88, 120, 170),
@@ -1639,7 +1752,12 @@ fn avatar(painter: &egui::Painter, rect: Rect, name: &str, agent: bool, online: 
     };
     painter.circle_filled(rect.center(), rect.width() / 2.0, fill);
     if agent {
-        project_mark(painter, rect.center(), rect.width() * 0.5, theme::accent());
+        project_mark(
+            painter,
+            rect.center(),
+            rect.width() * 0.55,
+            Color32::from_rgb(158, 123, 232),
+        );
     } else {
         let initials: String = name
             .split_whitespace()
