@@ -1089,9 +1089,10 @@ impl Lobby {
                                         self.config.goals.iter_mut().enumerate()
                                     {
                                         ui.horizontal(|ui| {
-                                            ui.checkbox(done, "").on_hover_text(format!(
-                                                "Complete checklist item {}",
-                                                index + 1
+                                            ui.checkbox(done, "").accessible_name(format!(
+                                                "Complete checklist item {}: {}",
+                                                index + 1,
+                                                text
                                             ));
                                             let response = ui.add(
                                                 egui::TextEdit::singleline(text)
@@ -1859,11 +1860,13 @@ fn chip_icon(ui: &mut Ui, icon: &str, text: &str, color: Color32, strong: bool) 
 }
 
 fn icon_button(ui: &mut Ui, icon: &str, hint: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+    let response = ui
+        .add_sized(vec2(24.0, 24.0), egui::Button::new("").frame(false))
+        .accessible_name(hint);
     icons::draw(
         ui.painter(),
         icon,
-        rect.center(),
+        response.rect.center(),
         18.0,
         if response.hovered() {
             theme::text()
