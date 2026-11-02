@@ -444,7 +444,7 @@ impl Lobby {
                     Stroke::new(1.0, theme::mix(theme::bg_editor(), theme::accent(), 0.4)),
                     egui::StrokeKind::Inside,
                 );
-                project_mark(ui.painter(), mark.center(), 46.0, theme::accent());
+                project_mark(ui.painter(), mark.center(), 58.0, theme::accent());
 
                 ui.vertical(|ui| {
                     ui.label(
@@ -1662,26 +1662,9 @@ fn avatar(painter: &egui::Painter, rect: Rect, name: &str, agent: bool, online: 
     }
 }
 
-/// The Forge Room project mark: a chevron-shaped "A" built from strokes.
+/// The Forge Room project mark.
 fn project_mark(painter: &egui::Painter, center: egui::Pos2, size: f32, color: Color32) {
-    let half = size / 2.0;
-    let stroke = Stroke::new((size * 0.13).max(2.0), color);
-    painter.add(egui::Shape::line(
-        vec![
-            center + vec2(-half, half * 0.8),
-            center + vec2(0.0, -half * 0.9),
-            center + vec2(half, half * 0.8),
-        ],
-        stroke,
-    ));
-    painter.add(egui::Shape::line(
-        vec![
-            center + vec2(-half * 0.45, half * 0.55),
-            center + vec2(0.0, -half * 0.15),
-            center + vec2(half * 0.45, half * 0.55),
-        ],
-        stroke,
-    ));
+    icons::draw(painter, "forge-mark", center, size, color);
 }
 
 // ---- Dates (UTC) ----------------------------------------------------------------------

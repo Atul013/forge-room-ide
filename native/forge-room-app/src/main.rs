@@ -778,7 +778,13 @@ impl ForgeRoomApp {
         ui.horizontal_centered(|ui| {
             ui.add_space(14.0);
             let (logo, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
-            brand::logo(ui.painter(), logo.center(), 11.5);
+            icons::draw(
+                ui.painter(),
+                "forge-mark",
+                logo.center(),
+                24.0,
+                theme::accent(),
+            );
             ui.add_space(4.0);
             // The design has no menu strip: File, Edit and View live under the brand name.
             ui.menu_button(

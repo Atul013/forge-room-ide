@@ -12,7 +12,7 @@ struct Line {
     points: Vec<Pos2>,
 }
 
-const SOURCES: [(&str, &str); 64] = [
+const SOURCES: [(&str, &str); 65] = [
     (
         "accessibility-off",
         include_str!("../assets/icons/accessibility-off.svg"),
@@ -65,6 +65,7 @@ const SOURCES: [(&str, &str); 64] = [
         "folder-open",
         include_str!("../assets/icons/folder-open.svg"),
     ),
+    ("forge-mark", include_str!("../assets/icons/forge-mark.svg")),
     ("github", include_str!("../assets/icons/github.svg")),
     ("hourglass", include_str!("../assets/icons/hourglass.svg")),
     ("layers", include_str!("../assets/icons/layers.svg")),
