@@ -1084,7 +1084,11 @@ impl Lobby {
                                         self.config.goals.iter_mut().enumerate()
                                     {
                                         ui.horizontal(|ui| {
-                                            check_box(ui, done, "");
+                                            ui.checkbox(done, "")
+                                                .on_hover_text(format!(
+                                                    "Complete checklist item {}",
+                                                    index + 1
+                                                ));
                                             let response = ui.add(
                                                 egui::TextEdit::singleline(text)
                                                     .frame(egui::Frame::NONE)
@@ -1567,7 +1571,7 @@ impl Lobby {
                                 for (name, on) in
                                     PERMISSIONS.iter().zip(self.config.permissions.iter_mut())
                                 {
-                                    check_box(ui, on, name);
+                                    ui.checkbox(on, *name);
                                 }
                             });
                         });
@@ -1603,7 +1607,7 @@ impl Lobby {
                 let beside = ui.available_width() >= 440.0;
                 let mut sharing = |ui: &mut Ui| {
                     for (name, on) in SHARING.iter().zip(self.config.sharing.iter_mut()) {
-                        check_box(ui, on, name);
+                        ui.checkbox(on, *name);
                     }
                 };
                 let heading = |ui: &mut Ui| {
@@ -1848,51 +1852,6 @@ fn chip_icon(ui: &mut Ui, icon: &str, text: &str, color: Color32, strong: bool) 
         galley,
         color,
     );
-}
-
-/// A checkbox with an accent-filled box, readable on dark cards in both states.
-fn check_box(ui: &mut Ui, value: &mut bool, label: &str) -> egui::Response {
-    let galley =
-        ui.painter()
-            .layout_no_wrap(label.to_string(), FontId::proportional(14.0), theme::text());
-    let gap = if label.is_empty() { 0.0 } else { 8.0 };
-    let (rect, mut response) =
-        ui.allocate_exact_size(vec2(17.0 + gap + galley.size().x, 21.0), Sense::click());
-    if response.clicked() {
-        *value = !*value;
-        response.mark_changed();
-    }
-    let boxed = Rect::from_min_size(
-        egui::pos2(rect.left(), rect.center().y - 8.5),
-        vec2(17.0, 17.0),
-    );
-    let painter = ui.painter();
-    if *value {
-        painter.rect_filled(boxed, 4.0, theme::accent());
-        icons::draw(painter, "check", boxed.center(), 14.0, Color32::BLACK);
-    } else {
-        painter.rect_stroke(
-            boxed,
-            4.0,
-            Stroke::new(
-                1.5,
-                if response.hovered() {
-                    theme::text()
-                } else {
-                    theme::text_dim()
-                },
-            ),
-            egui::StrokeKind::Inside,
-        );
-    }
-    if !label.is_empty() {
-        painter.galley(
-            egui::pos2(boxed.right() + gap, rect.center().y - galley.size().y / 2.0),
-            galley,
-            theme::text(),
-        );
-    }
-    response
 }
 
 fn icon_button(ui: &mut Ui, icon: &str, hint: &str) -> egui::Response {
