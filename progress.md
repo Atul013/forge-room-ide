@@ -508,6 +508,8 @@ Next action and owner:
 
 The supplied Forge Room mockups are beta design references for layout and workflow, not proof that their sample agents, tests, calls, sharing, deployments, or live collaboration exist. Keep the current Forge Room color system. For native slices, use the mockups' clear left navigation, Room Pulse, project Lobby summary, task/agent context beside code, review and conflict status, and explicit permission states where the underlying behavior is real. Treat Workflows, Ship Mode, Studio Morph/Packs, and the logo variants as later concepts until their contracts and assets are accepted. Keep controls readable at the supported minimum window size and keyboard accessible.
 
+Seven original concept PNGs from Downloads are preserved in [`docs/design/concept-images/2026-11-02/`](docs/design/concept-images/2026-11-02/README.md). Both shared chats contain ten image references in total; three original files were not in Downloads when checked. Asset collection remains open until those files are supplied.
+
 ### Phase 1 evidence — 2 November 2026
 
 - **Latest source integration:** Atul's `native-rust-ide` branch at `ade42a2` was integrated through [PR #8](https://github.com/ZayedBH/forge-room-ide/pull/8), then the Lobby room recovery change through [PR #9](https://github.com/ZayedBH/forge-room-ide/pull/9). Git reported no text conflicts in either merge. The combined PR passed Windows formatting, locked checks, tests, and clippy for both Rust crates. PR #7's commits are also marked merged through PR #9. The [current-main Windows run](https://github.com/ZayedBH/forge-room-ide/actions/runs/41489152314) passed verify, release packaging, and noninteractive install/uninstall checks. Desktop acceptance remains open.
