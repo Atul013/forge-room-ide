@@ -28,6 +28,7 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-03 Codex: started `feat/room-activity-filter` atop PR #12. Activity dock filters local events by actor or detail, with Clear filter and no-match state. Focused match test added; CI and desktop trial pending.
 - 2026-11-03 Codex: started `feat/room-activity-history` atop task PR #11. Activity dock shows an empty state and toggles between latest 10 and up to 50 local events. No local Rust toolchain; CI and desktop trial pending.
 - 2026-11-03 Codex: started `feat/room-task-filter` from `main`, then stacked it on keyboard-access PR #10. Tasks dock filters by title, owner, or status, with Clear filters and no-match state; new-task title gets focus; expanded tasks show Add evidence. Focused query-match test added. No local Rust toolchain; CI and desktop trial pending.
 - 2026-11-03 Codex: E02 keyboard-access PR #10 passed Windows formatting, locked checks, tests, and clippy for both Rust crates. Lobby recovery focus, native task/Lobby controls, and accessible names are source complete; desktop keyboard acceptance remains open.

@@ -79,6 +79,7 @@ pub struct RoomView {
     tasks_open: bool,
     activity_open: bool,
     show_more_activity: bool,
+    activity_query: String,
     expanded: Option<String>,
     task_query: String,
     task_status_filter: Option<TaskStatus>,
@@ -105,6 +106,7 @@ impl Default for RoomView {
             tasks_open: true,
             activity_open: true,
             show_more_activity: false,
+            activity_query: String::new(),
             expanded: None,
             task_query: String::new(),
             task_status_filter: None,
@@ -1113,6 +1115,22 @@ impl RoomView {
             empty_state(ui, "No activity yet", "Room actions will appear here.");
             return;
         }
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.activity_query)
+                    .hint_text("Filter activity by person or detail")
+                    .desired_width((ui.available_width() - 14.0).max(140.0)),
+            );
+        });
+        if !self.activity_query.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                if ui.button("Clear filter").clicked() {
+                    self.activity_query.clear();
+                }
+            });
+        }
         if state.activity.len() > 10 {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
@@ -1128,7 +1146,21 @@ impl RoomView {
         }
         let now = now_epoch_seconds();
         let limit = if self.show_more_activity { 50 } else { 10 };
-        for event in state.activity.iter().rev().take(limit) {
+        let mut visible = 0;
+        for event in state
+            .activity
+            .iter()
+            .rev()
+            .filter(|event| {
+                activity_matches_query(
+                    &event.detail,
+                    &name_of(state, &event.actor_id),
+                    &self.activity_query,
+                )
+            })
+            .take(limit)
+        {
+            visible += 1;
             ui.horizontal_wrapped(|ui| {
                 ui.add_space(14.0);
                 ui.label(
@@ -1147,6 +1179,9 @@ impl RoomView {
                         .color(theme::mix(theme::bg_sidebar(), theme::text(), 0.4)),
                 );
             });
+        }
+        if visible == 0 {
+            empty_state(ui, "No matching activity", "Try another person or detail.");
         }
     }
 }
@@ -1343,6 +1378,13 @@ fn task_matches_query(title: &str, owner: &str, query: &str) -> bool {
         || owner.to_lowercase().contains(&query)
 }
 
+fn activity_matches_query(detail: &str, actor: &str, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    query.is_empty()
+        || detail.to_lowercase().contains(&query)
+        || actor.to_lowercase().contains(&query)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1355,6 +1397,13 @@ mod tests {
         assert!(task_matches_query("Fix parser", "Atul", "atul"));
         assert!(task_matches_query("Fix parser", "Atul", " "));
         assert!(!task_matches_query("Fix parser", "Atul", "Zayed"));
+    }
+
+    #[test]
+    fn activity_filter_matches_detail_or_actor_without_case() {
+        assert!(activity_matches_query("Closed task T-1", "Zayed", " CLOSED "));
+        assert!(activity_matches_query("Closed task T-1", "Zayed", "zayed"));
+        assert!(!activity_matches_query("Closed task T-1", "Zayed", "Atul"));
     }
 
     #[test]
