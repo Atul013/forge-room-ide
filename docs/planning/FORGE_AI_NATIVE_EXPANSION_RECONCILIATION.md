@@ -137,3 +137,15 @@ The native workspace/list gap is closed for file-based workspaces. Ask, Plan, an
 ## Current continuation - Team Lobby 0.108.0
 
 The prompt's editor/open capability is implemented as editor_open in Ask, Plan, and Build. It navigates only to a non-sensitive file under the selected local root, optionally reveals a validated one-based line, requires per-call consent even with a read-only grant, and sends no file contents back through the tool result. Automated tests pass in both extension copies. Manual IDE focus and provider invocation remain to validate.
+
+## Room service relay rate bounds — 25 October 2026
+
+The self-hosted WSS relay bounds each host and guest to 4 MiB and 1,000 inbound frames per 10-second window. An over-limit guest is closed; an over-limit host closes the in-memory room and its guests. Both service mirrors pass 13/13 TLS/control-plane tests, including flood behavior. Separate-machine acceptance, deployment-level traffic controls, and independent service review remain open.
+
+## Room service request and relay limits — 25 October 2026
+
+The self-hosted room service now has regression coverage and correct stale-entry eviction for its capped 4,096-address HTTP rate-limit table. WebSocket hosts and participants are each limited to 4 MiB and 1,000 frames per 10 seconds. Participants are disconnected on excess; an over-limit host closes the in-memory room and guests. Both service copies pass 14/14 tests. Separate-machine tests, trusted reverse-proxy configuration, service-wide bandwidth quotas, and independent service review remain open.
+
+## Room service connection-abuse bounds — 25 October 2026
+
+WebSocket upgrade attempts are limited to 120 per remote address per minute. The capped address table evicts expired entries before refusing a new address. The relay and control-plane suites pass 15/15 tests in both service mirrors, covering frame floods, byte bounds, upgrade limits, and HTTP limiter capacity recovery. This does not establish distributed or production abuse resistance.

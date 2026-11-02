@@ -1,4 +1,4 @@
-﻿# Implementation map
+# Implementation map
 
 ## Repositories
 
@@ -8,9 +8,11 @@
 
 ## Main components
 
-### Team Lobby 0.108.0
+### Team Lobby 0.128.0
 
 - `extensions/team-lobby/src/extension.ts`: room lifecycle, tasks, collaboration, Ask/Plan/Build, Git review, commands, evidence, and IDE API integration.
+- `extensions/team-lobby/src/roomMessageSearch.ts`: bounded local message matching and newest-first pagination; participant visibility filtering occurs before query matching.
+- `extensions/team-lobby/src/roomDecision.ts`: validates bounded decision titles and rationales before the room confirmation flow publishes a searchable event.
 - `src/agentCapabilities.ts`: typed workspace capabilities, scope validation, approval summaries, and request-grant separation.
 - `src/workspaceInventory.ts`: bounded paths-only inventory formatting with sensitive-path and traversal rejection.
 - `src/workspaceTasks.ts`: bounded registered-test task listing and exact name/provider matching.
@@ -46,3 +48,9 @@ The room relay is self-hostable, not a managed public SaaS, and does not store s
 - 0.107.0: Ask, Plan, and Build can enumerate up to 250 non-sensitive workspace-relative file paths without reading file contents.
 
 - 0.108.0: Ask, Plan, and Build can open a safe project file and reveal an optional line after separate per-call confirmation.
+
+- 0.122.0: Room pulse searches up to 500 viewer-visible events locally; direct-message filtering happens before matching.
+
+- 0.123.0: Room messages can reference existing tasks; activity cards expose the link and direct-message recipient filtering remains enforced.
+
+- 0.124.0: Message reactions toggle per participant; private reactions inherit the original DM audience and export privacy rules. Room protocol is 19.

@@ -1,4 +1,4 @@
-﻿# Forge AI-native expansion: repository-grounded delivery brief
+# Forge AI-native expansion: repository-grounded delivery brief
 
 **Reviewed:** 21 October 2026  
 **Repository:** Code OSS fork at `C:\Users\Admin\Documents\Codex\2026-10-20\che\code-oss`; extension handoff at `C:\Forge-Room-IDE-Handoff`.  
@@ -229,3 +229,15 @@ pm.cmd run check and 178/178 tests. The 17-file VSIX SHA-256 is 6EF2EC09E51E2588
 Added the native editor_open action to the shared capability registry. It resolves the selected-root file through canonical containment checks, rejects sensitive paths, validates optional line numbers against the opened document, and requires a dedicated confirmation before changing the visible editor. The tool result carries no file contents.
 
 **Verification:** both extension copies pass TypeScript checks and 179/179 tests. The 17-file VSIX SHA-256 is 6EF2EC09E51E25884577C159AA19382A947C682C6F1487D080C9B6ACF8F0FBFA; the manifest and package copies match. Live provider interaction remains open.
+
+## Room relay flood bounds — 25 October 2026
+
+Added per-connection relay bounds for 4 MiB and 1,000 frames per 10 seconds, with asymmetric recovery behavior: remove an over-limit guest while preserving the room, and close the room when its host exceeds the bound. Both service mirrors passed 13/13 tests at this intermediate point. The follow-on service update adds HTTP limiter eviction coverage and leaves the current suite at 14/14. Separate-machine and production-service gates remain incomplete.
+
+## Room service request and relay bounds — 25 October 2026
+
+Added host/participant WebSocket byte and frame-count limits, with guest-only disconnect and host-triggered room closure. Fixed the HTTP limiter's full-table stale-entry eviction edge. The control plane still caps at 120 requests per remote address per minute and 4,096 tracked addresses. Both service mirrors pass 14/14 tests. Local evidence does not establish separate-machine or production deployment resistance.
+
+## Room service connection-abuse bounds — 25 October 2026
+
+Added per-address WebSocket upgrade limits (120/minute, maximum 4,096 tracked addresses) with expiry cleanup. Both room-service mirrors pass 15/15 tests for relay and control-plane behavior. Separate-machine acceptance, reverse-proxy setup, global traffic quotas, and independent security review remain open.
