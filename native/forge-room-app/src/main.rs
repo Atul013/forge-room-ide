@@ -38,7 +38,7 @@ use workspace::Workspace;
 const APP_NAME: &str = "Forge Room Early Preview";
 const TAB_HEIGHT: f32 = 42.0;
 const TITLE_HEIGHT: f32 = 36.0;
-const ACTIVITY_WIDTH: f32 = 118.0;
+const ACTIVITY_WIDTH: f32 = 112.0;
 
 /// One entry of the navigation rail on the left.
 #[derive(Clone, Copy)]
@@ -1223,13 +1223,33 @@ impl ForgeRoomApp {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
             ui.add_space(10.0);
-            for (icon, tip) in [
-                ("settings", "Settings: coming soon"),
-                ("cloud", "Cloud: coming soon"),
-                ("accessibility-off", "Accessibility: coming soon"),
-            ] {
-                self.rail_item(ui, Rail::Soon, icon, "", tip, 0);
-            }
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                ui.add_space(14.0);
+                for (icon, tip) in [
+                    ("cloud", "Cloud: coming soon"),
+                    ("settings", "Settings: coming soon"),
+                ] {
+                    let (rect, response) =
+                        ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
+                    icons::draw(
+                        ui.painter(),
+                        icon,
+                        rect.center(),
+                        20.0,
+                        theme::mix(theme::bg_activity(), theme::text_dim(), 0.6),
+                    );
+                    response.on_hover_text(tip);
+                }
+            });
+            self.rail_item(
+                ui,
+                Rail::Soon,
+                "accessibility-off",
+                "",
+                "Accessibility: coming soon",
+                0,
+            );
         });
     }
 
@@ -1263,11 +1283,7 @@ impl ForgeRoomApp {
         let hovered = response.hovered() && !soon;
         let painter = ui.painter();
         if active {
-            painter.rect_filled(
-                rect,
-                6.0,
-                theme::mix(theme::bg_activity(), theme::accent(), 0.18),
-            );
+            painter.rect_filled(rect, 5.0, theme::nav_active());
         } else if hovered {
             painter.rect_filled(rect, 8.0, theme::overlay(12));
         }
@@ -1286,16 +1302,16 @@ impl ForgeRoomApp {
         icons::draw(
             painter,
             icon_name,
-            egui::pos2(rect.left() + 22.0, rect.center().y),
-            20.0,
+            egui::pos2(rect.left() + 19.0, rect.center().y),
+            19.0,
             color,
         );
         if !label.is_empty() {
             painter.text(
-                egui::pos2(rect.left() + 38.0, rect.center().y),
+                egui::pos2(rect.left() + 35.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 label,
-                egui::FontId::proportional(12.0),
+                egui::FontId::proportional(if label.len() > 10 { 11.0 } else { 12.0 }),
                 color,
             );
         }

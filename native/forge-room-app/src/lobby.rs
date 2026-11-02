@@ -600,7 +600,7 @@ impl Lobby {
                             sw: 0,
                             se: 0,
                         },
-                        theme::mix(theme::bg_editor(), theme::accent(), 0.16),
+                        theme::tab_active(),
                     );
                     ui.painter().line_segment(
                         [rect.left_bottom(), rect.right_bottom()],
@@ -714,8 +714,8 @@ impl Lobby {
                 let width = ui.available_width();
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 14.0;
-                    let half = (width - 14.0) * 0.497;
-                    let goal_width = width - 14.0 - half;
+                    let goal_width = (width + 24.0) * 0.503;
+                    let half = width - 14.0 - goal_width;
                     ui.allocate_ui_with_layout(
                         vec2(half, 10.0),
                         Layout::top_down(Align::Min),
@@ -785,10 +785,10 @@ impl Lobby {
                                 .fill(inner_fill())
                                 .stroke(Stroke::new(1.0, theme::border()))
                                 .corner_radius(6.0)
-                                .inner_margin(Margin::symmetric(10, 8))
+                                .inner_margin(Margin::symmetric(10, 6))
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
-                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    ui.spacing_mut().item_spacing.y = 0.0;
                                     ui.horizontal(|ui| {
                                         let (rect, _) = ui
                                             .allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
@@ -876,7 +876,7 @@ impl Lobby {
             })
             .unwrap_or(0)
             .clamp(2, 6);
-        let min_height = 36.0 + 16.0 + rows as f32 * 54.0;
+        let min_height = 36.0 + 12.0 + rows as f32 * 51.0;
         let add = std::cell::Cell::new(false);
         card_sized(
             ui,
@@ -942,7 +942,7 @@ impl Lobby {
             })
             .unwrap_or(0)
             .clamp(2, 6);
-        let min_height = 36.0 + 16.0 + rows as f32 * 54.0;
+        let min_height = 36.0 + 12.0 + rows as f32 * 51.0;
         let add = std::cell::Cell::new(false);
         card_sized(
             ui,
@@ -1088,13 +1088,33 @@ impl Lobby {
                                 ui.allocate_exact_size(vec2(track, 88.0), Sense::hover());
                             let step = track / count as f32;
                             let line_y = rect.top() + 16.0;
+                            let reached = self
+                                .config
+                                .milestones
+                                .iter()
+                                .rposition(|m| m.status != MilestoneStatus::Pending);
                             ui.painter().line_segment(
                                 [
                                     egui::pos2(rect.left() + step / 2.0, line_y),
                                     egui::pos2(rect.right() - step / 2.0, line_y),
                                 ],
-                                Stroke::new(2.0, theme::border()),
+                                Stroke::new(
+                                    2.0,
+                                    theme::mix(theme::border(), theme::text_dim(), 0.6),
+                                ),
                             );
+                            if let Some(last) = reached {
+                                ui.painter().line_segment(
+                                    [
+                                        egui::pos2(rect.left() + step / 2.0, line_y),
+                                        egui::pos2(
+                                            rect.left() + step * (last as f32 + 0.5),
+                                            line_y,
+                                        ),
+                                    ],
+                                    Stroke::new(2.0, theme::accent()),
+                                );
+                            }
                             for (index, milestone) in self.config.milestones.iter_mut().enumerate()
                             {
                                 let x = rect.left() + step * (index as f32 + 0.5);
@@ -1117,11 +1137,11 @@ impl Lobby {
                                 let painter = ui.painter();
                                 match milestone.status {
                                     MilestoneStatus::Done => {
-                                        painter.circle_filled(center, 11.0, theme::accent());
+                                        painter.circle_filled(center, 10.0, theme::accent());
                                         icons::draw(painter, "check", center, 16.0, Color32::BLACK);
                                     }
                                     MilestoneStatus::InProgress => {
-                                        painter.circle_filled(center, 11.0, theme::bg_editor());
+                                        painter.circle_filled(center, 10.0, theme::bg_editor());
                                         painter.circle_stroke(
                                             center,
                                             13.0,
@@ -1130,7 +1150,7 @@ impl Lobby {
                                         painter.circle_filled(center, 4.5, AMBER);
                                     }
                                     MilestoneStatus::Pending => {
-                                        painter.circle_filled(center, 11.0, theme::bg_editor());
+                                        painter.circle_filled(center, 10.0, theme::bg_editor());
                                         painter.circle_stroke(
                                             center,
                                             13.0,
@@ -1297,6 +1317,7 @@ impl Lobby {
             "Hackathon Configuration",
             |_| {},
             |ui| {
+                ui.spacing_mut().item_spacing.y = 3.0;
                 kv(ui, "calendar", "Mode", |ui| {
                     combo(ui, "mode", &mut self.config.mode, &MODES);
                 });
@@ -1342,7 +1363,7 @@ impl Lobby {
                 let width = ui.available_width();
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    let input = (width - 85.0 - 100.0 - 16.0).max(60.0);
+                    let input = (width - 85.0 - 78.0 - 16.0).max(60.0);
                     ui.add_sized(
                         [input, 28.0],
                         egui::TextEdit::singleline(&mut self.invite)
@@ -1352,7 +1373,7 @@ impl Lobby {
                     let roles = ["Member", "Viewer", "Agent owner"];
                     egui::ComboBox::from_id_salt("invite-role")
                         .selected_text(roles[self.invite_role])
-                        .width(60.0)
+                        .width(50.0)
                         .show_ui(ui, |ui| {
                             for (index, role) in roles.iter().enumerate() {
                                 ui.selectable_value(&mut self.invite_role, index, *role);
@@ -1554,14 +1575,14 @@ fn check_box(ui: &mut Ui, value: &mut bool, label: &str) -> egui::Response {
             .layout_no_wrap(label.to_string(), FontId::proportional(14.0), theme::text());
     let gap = if label.is_empty() { 0.0 } else { 8.0 };
     let (rect, mut response) =
-        ui.allocate_exact_size(vec2(18.0 + gap + galley.size().x, 22.0), Sense::click());
+        ui.allocate_exact_size(vec2(17.0 + gap + galley.size().x, 21.0), Sense::click());
     if response.clicked() {
         *value = !*value;
         response.mark_changed();
     }
     let boxed = Rect::from_min_size(
-        egui::pos2(rect.left(), rect.center().y - 9.0),
-        vec2(18.0, 18.0),
+        egui::pos2(rect.left(), rect.center().y - 8.5),
+        vec2(17.0, 17.0),
     );
     let painter = ui.painter();
     if *value {
@@ -1616,6 +1637,8 @@ struct ButtonStyle {
     height: f32,
     min_width: f32,
     radius: f32,
+    /// Horizontal space around the label (and the extra width taken by an icon).
+    pad: f32,
 }
 
 fn button_frame(
@@ -1629,8 +1652,8 @@ fn button_frame(
         FontId::proportional(style.size),
         style.text,
     );
-    let extra = if icon.is_some() { 30.0 } else { 0.0 };
-    let width = (galley.size().x + 28.0 + extra).max(style.min_width);
+    let extra = if icon.is_some() { style.pad + 2.0 } else { 0.0 };
+    let width = (galley.size().x + style.pad + extra).max(style.min_width);
     let (rect, response) = ui.allocate_exact_size(vec2(width, style.height), Sense::click());
     let fill = if response.hovered() {
         theme::mix(style.fill, Color32::WHITE, 0.08)
@@ -1677,6 +1700,7 @@ fn accent_button(ui: &mut Ui, label: &str, icon: Option<&str>) -> egui::Response
             height: 45.0,
             min_width: 165.0,
             radius: 6.0,
+            pad: 28.0,
         },
     )
 }
@@ -1695,6 +1719,7 @@ fn compact_button(ui: &mut Ui, label: &str, icon: Option<&str>, min_width: f32) 
             height: 31.0,
             min_width,
             radius: 5.0,
+            pad: 14.0,
         },
     )
 }
@@ -1712,6 +1737,7 @@ fn outline_button(ui: &mut Ui, label: &str) -> egui::Response {
             height: 27.0,
             min_width: 0.0,
             radius: 4.0,
+            pad: 28.0,
         },
     )
 }
@@ -1730,6 +1756,7 @@ fn square_button(ui: &mut Ui, label: &str) -> egui::Response {
             height: 40.0,
             min_width: 40.0,
             radius: 6.0,
+            pad: 28.0,
         },
     )
 }
