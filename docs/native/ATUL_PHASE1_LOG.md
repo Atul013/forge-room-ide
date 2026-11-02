@@ -57,6 +57,11 @@ measurements were not taken.
 - The current-line highlight was drawn over the text of the line being edited, hiding it. Fixed (paint order).
 - Save As onto an existing file reported a false "changed on disk" conflict and switched the tab to a file it had not
   written. Fixed; tests added.
+- At the default 1240 x 780 window the Lobby header ran under the countdown and the right-hand column was clipped.
+  The cause was the Room Pulse strip: in egui an overflowing row also widens the parent's maximum rectangle, so
+  everything below it laid out 32 px too wide. Pulse now shows only the events that fit; the header, columns, tabs and
+  title-bar chips adapt (checked at 1550, 1240, 900 and the 760 x 480 minimum).
+- A 1.5 MB Rust file opened and highlighted fully within a few seconds, and typing at the top stayed responsive.
 - One run of the full test suite failed `git::tests::stage_commit_and_diff_in_a_real_repository`. It passed on every
   rerun (about 60, including parallel runs), so the cause is unknown. Treat it as a possible timing flake until seen again.
 
