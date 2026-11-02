@@ -1047,7 +1047,12 @@ mod tests {
         view.load_store(store.clone());
         assert!(view.state().is_some());
         assert!(!view.load_failed);
-        assert!(view.error.as_deref().unwrap().contains("restored from backup"));
+        assert!(
+            view.error
+                .as_deref()
+                .unwrap()
+                .contains("restored from backup")
+        );
         assert!(!path.exists());
 
         fs::remove_file(store.backup_path()).unwrap();
