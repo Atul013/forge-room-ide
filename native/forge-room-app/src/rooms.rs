@@ -80,6 +80,7 @@ pub struct RoomView {
     activity_open: bool,
     expanded: Option<String>,
     task_query: String,
+    task_status_filter: Option<TaskStatus>,
     focus_new_task: bool,
     checked: HashSet<(String, String)>,
     new_task: NewTask,
@@ -104,6 +105,7 @@ impl Default for RoomView {
             activity_open: true,
             expanded: None,
             task_query: String::new(),
+            task_status_filter: None,
             focus_new_task: false,
             checked: HashSet::new(),
             new_task: NewTask::default(),
@@ -609,10 +611,41 @@ impl RoomView {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.task_query)
                         .hint_text("Filter tasks by title or owner")
-                        .desired_width((ui.available_width() - 80.0).max(140.0)),
+                        .desired_width((ui.available_width() - 14.0).max(140.0)),
                 );
-                if !self.task_query.is_empty() && ui.button("Clear").clicked() {
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                egui::ComboBox::from_id_salt("task-status-filter")
+                    .selected_text(match self.task_status_filter {
+                        None => "All statuses",
+                        Some(TaskStatus::Open) => "Open",
+                        Some(TaskStatus::InProgress) => "In progress",
+                        Some(TaskStatus::Done) => "Done",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.task_status_filter, None, "All statuses");
+                        ui.selectable_value(
+                            &mut self.task_status_filter,
+                            Some(TaskStatus::Open),
+                            "Open",
+                        );
+                        ui.selectable_value(
+                            &mut self.task_status_filter,
+                            Some(TaskStatus::InProgress),
+                            "In progress",
+                        );
+                        ui.selectable_value(
+                            &mut self.task_status_filter,
+                            Some(TaskStatus::Done),
+                            "Done",
+                        );
+                    });
+                if (!self.task_query.is_empty() || self.task_status_filter.is_some())
+                    && ui.button("Clear filters").clicked()
+                {
                     self.task_query.clear();
+                    self.task_status_filter = None;
                 }
             });
         }
@@ -634,6 +667,7 @@ impl RoomView {
                 .iter()
                 .filter(|task| {
                     task.status == status
+                        && self.task_status_filter.is_none_or(|selected| selected == status)
                         && task_matches_query(&task.title, &task.owner_name, &self.task_query)
                 })
                 .collect();

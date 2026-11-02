@@ -28,7 +28,7 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
-- 2026-11-03 Codex: started `feat/room-task-filter` from `main`, then stacked it on keyboard-access PR #10. Tasks dock filters by title or owner, with Clear and no-match state; new-task title gets focus when form opens. Focused match test added. No local Rust toolchain; CI and desktop trial pending.
+- 2026-11-03 Codex: started `feat/room-task-filter` from `main`, then stacked it on keyboard-access PR #10. Tasks dock filters by title, owner, or status, with Clear filters and no-match state; new-task title gets focus when form opens. Focused query-match test added. No local Rust toolchain; CI and desktop trial pending.
 - 2026-11-03 Codex: continued E02 keyboard accessibility on `fix/lobby-recovery-keyboard-focus`. Lobby recovery action receives focus once; Room task titles, tabs, and main actions use native buttons; checklist, permission, and sharing controls use native checkboxes. Local Rust toolchain unavailable. Desktop keyboard acceptance remains open.
 - 2026-11-02 Codex: audited merged Atul PR #4 and Codex PR #5 on `main`; no unmerged entries or branch divergence. PR #6 restored 149 legacy reference files deleted by PR #4, with exact pre-PR Git blob hashes. Current ownership and remaining acceptance are recorded in `progress.md`.
 
