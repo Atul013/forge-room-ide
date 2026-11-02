@@ -607,9 +607,17 @@ impl Lobby {
     fn body(&mut self, ui: &mut Ui, context: &Context, action: &mut Option<Action>) {
         let total = ui.available_width();
         let gap = 12.0;
-        let right = (total * 0.37).clamp(320.0, 520.0);
-        let left = total - right - gap;
         let tab = self.tab;
+        let right = if tab == Tab::Milestones {
+            0.0
+        } else {
+            (total * 0.37).clamp(320.0, 520.0)
+        };
+        let left = if right == 0.0 {
+            total
+        } else {
+            total - right - gap
+        };
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing = vec2(gap, 12.0);
             ui.allocate_ui_with_layout(vec2(left, 10.0), Layout::top_down(Align::Min), |ui| {
@@ -693,7 +701,7 @@ impl Lobby {
                             let start = self.config.start_epoch;
                             let end = start + u64::from(self.config.duration_hours) * 3600;
                             kv(ui, "room", "Room Name", |ui| {
-                                ui.label(format!("{} Room", context.workspace));
+                                ui.label(format!("{} {}", context.workspace, self.config.kind));
                             });
                             kv(ui, "users", "Room Type", |ui| {
                                 ui.label(kind);
@@ -766,7 +774,7 @@ impl Lobby {
                                         self.config.goals.iter_mut().enumerate()
                                     {
                                         ui.horizontal(|ui| {
-                                            ui.checkbox(done, "");
+                                            check_box(ui, done, "");
                                             ui.add(
                                                 egui::TextEdit::singleline(text)
                                                     .frame(egui::Frame::NONE)
@@ -1197,7 +1205,7 @@ impl Lobby {
                                 for (name, on) in
                                     PERMISSIONS.iter().zip(self.config.permissions.iter_mut())
                                 {
-                                    ui.checkbox(on, *name);
+                                    check_box(ui, on, name);
                                 }
                             });
                         });
@@ -1241,7 +1249,7 @@ impl Lobby {
                     ui.add_space(10.0);
                     ui.vertical(|ui| {
                         for (name, on) in SHARING.iter().zip(self.config.sharing.iter_mut()) {
-                            ui.checkbox(on, *name);
+                            check_box(ui, on, name);
                         }
                     });
                 });
@@ -1421,6 +1429,51 @@ fn chip_icon(ui: &mut Ui, icon: &str, text: &str, color: Color32, strong: bool) 
         galley,
         color,
     );
+}
+
+/// A checkbox with an accent-filled box, readable on dark cards in both states.
+fn check_box(ui: &mut Ui, value: &mut bool, label: &str) -> egui::Response {
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_string(), FontId::proportional(14.0), theme::text());
+    let gap = if label.is_empty() { 0.0 } else { 8.0 };
+    let (rect, mut response) =
+        ui.allocate_exact_size(vec2(18.0 + gap + galley.size().x, 22.0), Sense::click());
+    if response.clicked() {
+        *value = !*value;
+        response.mark_changed();
+    }
+    let boxed = Rect::from_min_size(
+        egui::pos2(rect.left(), rect.center().y - 9.0),
+        vec2(18.0, 18.0),
+    );
+    let painter = ui.painter();
+    if *value {
+        painter.rect_filled(boxed, 4.0, theme::accent());
+        icons::draw(painter, "check", boxed.center(), 14.0, Color32::BLACK);
+    } else {
+        painter.rect_stroke(
+            boxed,
+            4.0,
+            Stroke::new(
+                1.5,
+                if response.hovered() {
+                    theme::text()
+                } else {
+                    theme::text_dim()
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if !label.is_empty() {
+        painter.galley(
+            egui::pos2(boxed.right() + gap, rect.center().y - galley.size().y / 2.0),
+            galley,
+            theme::text(),
+        );
+    }
+    response
 }
 
 fn icon_button(ui: &mut Ui, icon: &str, hint: &str) -> egui::Response {
