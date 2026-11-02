@@ -1349,12 +1349,18 @@ impl ForgeRoomApp {
         if response.on_hover_text(tip).clicked() {
             match item {
                 Rail::View(view) => {
+                    let showing = self.show_sidebar && self.view == view && !self.show_lobby;
                     if self.show_lobby {
                         self.show_lobby = false;
                         self.view = view;
                         self.show_sidebar = true;
-                    } else {
+                    } else if view != SidebarView::Search || showing {
                         self.switch_view(view);
+                        return;
+                    }
+                    // Opening Search puts the cursor in its box, like Ctrl+Shift+F.
+                    if view == SidebarView::Search {
+                        self.run_command(Command::ShowSearch, false);
                     }
                 }
                 Rail::Terminal => {
