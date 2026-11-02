@@ -152,9 +152,16 @@ impl DocumentSession {
         self.open(path)
     }
 
+    /// Write to a new path and follow it. The caller has already confirmed replacing an existing
+    /// file (the save dialog asks), so there is no outside-change check, and the old path is kept
+    /// if the write fails.
     pub fn save_as(&mut self, path: impl Into<PathBuf>) -> Result<(), DocumentError> {
-        self.path = Some(path.into());
-        self.save()
+        let path = path.into();
+        fs::write(&path, self.text.as_bytes())?;
+        self.disk_stamp = stamp(&path);
+        self.path = Some(path);
+        self.saved_text.clone_from(&self.text);
+        Ok(())
     }
 }
 
@@ -295,6 +302,75 @@ edit
 "
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn save_as_onto_an_existing_file_replaces_it_and_follows_it() {
+        let first = test_path();
+        let second = test_path().with_extension("other.txt");
+        fs::write(
+            &first,
+            "original
+",
+        )
+        .unwrap();
+        fs::write(
+            &second,
+            "something else entirely
+",
+        )
+        .unwrap();
+
+        let mut document = DocumentSession::default();
+        document.open(&first).unwrap();
+        document.text_mut().push_str(
+            "edit
+",
+        );
+        // The native dialog already asked the user to confirm replacing `second`.
+        document.save_as(&second).unwrap();
+
+        assert_eq!(document.path(), Some(second.as_path()));
+        assert_eq!(
+            fs::read_to_string(&second).unwrap(),
+            "original
+edit
+"
+        );
+        assert_eq!(
+            fs::read_to_string(&first).unwrap(),
+            "original
+"
+        );
+        assert!(!document.is_dirty());
+        // The tab now tracks the new file, so an outside change to it is noticed.
+        fs::write(
+            &second,
+            "changed outside, longer
+",
+        )
+        .unwrap();
+        assert!(document.changed_on_disk());
+        fs::remove_file(first).unwrap();
+        fs::remove_file(second).unwrap();
+    }
+
+    #[test]
+    fn a_failed_save_as_keeps_the_old_path() {
+        let first = test_path();
+        fs::write(
+            &first, "keep
+",
+        )
+        .unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&first).unwrap();
+        let missing_dir = std::env::temp_dir()
+            .join("forge-room-no-such-dir")
+            .join("x.txt");
+        assert!(document.save_as(&missing_dir).is_err());
+        assert_eq!(document.path(), Some(first.as_path()));
+        fs::remove_file(first).unwrap();
     }
 
     #[test]
