@@ -1950,6 +1950,9 @@ impl ForgeRoomApp {
                         state.store(ui.ctx(), id);
                         scroll_to = Some(start);
                     }
+                    // The current-line wash is opaque, so it must sit behind the text: reserve its
+                    // place in the paint order now and fill it once the line's position is known.
+                    let line_wash = ui.painter().add(egui::Shape::Noop);
                     let output = egui::TextEdit::multiline(tab.doc.text_mut())
                         .id(id)
                         .font(font_id.clone())
@@ -2106,13 +2109,16 @@ impl ForgeRoomApp {
                             painter.rect_filled(bar, 1.0, color);
                         }
                         if current {
-                            painter.rect_filled(
-                                egui::Rect::from_min_max(
-                                    egui::pos2(gutter.left(), top),
-                                    egui::pos2(clip.right().max(gutter.right()), top + height),
+                            painter.set(
+                                line_wash,
+                                egui::Shape::rect_filled(
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(gutter.left(), top),
+                                        egui::pos2(clip.right().max(gutter.right()), top + height),
+                                    ),
+                                    0.0,
+                                    theme::line_highlight(),
                                 ),
-                                0.0,
-                                theme::line_highlight(),
                             );
                         }
                         painter.text(

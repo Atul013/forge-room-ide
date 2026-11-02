@@ -314,6 +314,80 @@ mod tests {
         assert!(!pending());
     }
 
+    #[test]
+    fn text_without_a_final_newline_is_kept_in_full() {
+        for (text, extension) in [
+            (
+                "hello
+my-unsaved-edit",
+                "txt",
+            ),
+            (
+                "hello
+my-unsaved-edit",
+                "txt",
+            ),
+            (
+                "fn main() {}
+let last = 1",
+                "rs",
+            ),
+            ("no newline at all", "txt"),
+        ] {
+            let mut cache = Cache::new(&theme::current(), extension);
+            let job = run(&mut cache, text);
+            assert_eq!(job.text, text, "{text:?}");
+            let shown: String = pieces(&job)
+                .into_iter()
+                .map(|(piece, _, _)| piece)
+                .collect();
+            assert_eq!(
+                shown, text,
+                "sections must cover the whole text for {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_text_is_drawn_in_the_theme_text_color() {
+        let text_color = theme::current().palette.text;
+        for text in [
+            "hello
+my-unsaved-edit",
+            "hello
+world
+",
+            "single",
+        ] {
+            let mut cache = Cache::new(&theme::current(), "txt");
+            for (piece, color, _) in pieces(&run(&mut cache, text)) {
+                assert_eq!(color, text_color, "{piece:?} in {text:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn typing_at_the_end_of_a_file_matches_a_fresh_highlight() {
+        for extension in ["txt", "rs", "json"] {
+            let mut incremental = Cache::new(&theme::current(), extension);
+            let mut text = String::from(
+                "hello
+",
+            );
+            run(&mut incremental, &text);
+            for ch in "my-unsaved-edit".chars() {
+                text.push(ch);
+                let got = run(&mut incremental, &text);
+                let want = run(&mut Cache::new(&theme::current(), extension), &text);
+                assert_eq!(
+                    pieces(&got),
+                    pieces(&want),
+                    "after typing {ch:?} in .{extension}"
+                );
+            }
+        }
+    }
+
     fn fresh_cache() -> Cache {
         Cache::new(&theme::current(), "rs")
     }
