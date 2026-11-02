@@ -667,7 +667,9 @@ impl RoomView {
                 .iter()
                 .filter(|task| {
                     task.status == status
-                        && self.task_status_filter.is_none_or(|selected| selected == status)
+                        && self
+                            .task_status_filter
+                            .is_none_or(|selected| selected == status)
                         && task_matches_query(&task.title, &task.owner_name, &self.task_query)
                 })
                 .collect();
