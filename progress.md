@@ -504,6 +504,10 @@ Next action and owner:
 
 ## Next checkpoint
 
+### UI concept direction — 2 November 2026
+
+The supplied Forge Room mockups are beta design references for layout and workflow, not proof that their sample agents, tests, calls, sharing, deployments, or live collaboration exist. Keep the current Forge Room color system. For native slices, use the mockups' clear left navigation, Room Pulse, project Lobby summary, task/agent context beside code, review and conflict status, and explicit permission states where the underlying behavior is real. Treat Workflows, Ship Mode, Studio Morph/Packs, and the logo variants as later concepts until their contracts and assets are accepted. Keep controls readable at the supported minimum window size and keyboard accessible.
+
 ### Phase 1 evidence — 2 November 2026
 
 - **PR check:** `ZayedBH/forge-room-ide` had no open pull requests when checked.
