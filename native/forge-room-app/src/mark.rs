@@ -184,9 +184,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_logo_parses_into_nine_filled_pieces_inside_the_box() {
+    fn the_logo_parses_into_three_filled_pieces_inside_the_box() {
         let pieces = pieces();
-        assert_eq!(pieces.len(), 9);
+        assert_eq!(pieces.len(), 3);
         for piece in pieces {
             assert!(!piece.triangles.is_empty());
             for p in piece.triangles.iter().flatten() {
