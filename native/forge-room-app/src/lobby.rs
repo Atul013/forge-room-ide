@@ -1288,7 +1288,7 @@ impl Lobby {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.invite)
                             .hint_text("Enter email or team code...")
-                            .desired_width((ui.available_width() - 190.0).max(80.0)),
+                            .desired_width((ui.available_width() - 218.0).max(80.0)),
                     );
                     let roles = ["Member", "Viewer", "Agent owner"];
                     egui::ComboBox::from_id_salt("invite-role")
