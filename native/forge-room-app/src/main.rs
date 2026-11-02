@@ -124,6 +124,8 @@ fn startup_error_path() -> PathBuf {
 enum Pending {
     CloseTab(usize),
     Quit,
+    /// Tab `index` has unsaved edits and its file changed on disk.
+    DiskConflict(usize),
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -153,6 +155,7 @@ struct ForgeRoomApp {
     status: String,
     pending: Option<Pending>,
     allow_close: bool,
+    last_disk_check: std::time::Instant,
     focus_editor: bool,
     cursor: (usize, usize),
     last_title: String,
@@ -243,6 +246,7 @@ impl ForgeRoomApp {
             status: "Ready".into(),
             pending: None,
             allow_close: false,
+            last_disk_check: std::time::Instant::now(),
             focus_editor: false,
             cursor: (1, 1),
             last_title: String::new(),
@@ -350,10 +354,28 @@ impl ForgeRoomApp {
                 self.refresh_git();
                 true
             }
+            Err(document::DocumentError::ChangedOnDisk) => {
+                self.pending = Some(Pending::DiskConflict(index));
+                false
+            }
             Err(error) => {
                 self.status = format!("Cannot save {title}: {error}");
                 false
             }
+        }
+    }
+
+    /// Reload tabs whose file changed on disk when they have no unsaved edits; dirty tabs are
+    /// left alone and surface a conflict choice when saved.
+    fn sync_external_changes(&mut self) {
+        let mut reloaded = None;
+        for tab in &mut self.tabs.tabs {
+            if !tab.doc.is_dirty() && tab.doc.changed_on_disk() && tab.doc.reload().is_ok() {
+                reloaded = Some(tab.title());
+            }
+        }
+        if let Some(title) = reloaded {
+            self.status = format!("Reloaded {title}: it changed on disk");
         }
     }
 
@@ -2198,7 +2220,13 @@ impl ForgeRoomApp {
         let Some(pending) = &self.pending else {
             return;
         };
+        if let Pending::DiskConflict(index) = pending {
+            let index = *index;
+            self.disk_conflict_dialog(context, index);
+            return;
+        }
         let (message, save_label) = match pending {
+            Pending::DiskConflict(_) => return,
             Pending::CloseTab(index) => {
                 let name = self
                     .tabs
@@ -2267,7 +2295,68 @@ impl ForgeRoomApp {
                 self.allow_close = true;
                 context.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            (None, _) => {}
+            (Some(Pending::DiskConflict(_)) | None, _) => {}
+        }
+        self.focus_editor = true;
+    }
+
+    fn disk_conflict_dialog(&mut self, context: &egui::Context, index: usize) {
+        let Some(name) = self.tabs.tabs.get(index).map(|tab| tab.title()) else {
+            self.pending = None;
+            return;
+        };
+        let mut action = None;
+        let modal = egui::Modal::new(egui::Id::unique("disk-conflict-dialog")).show(context, |ui| {
+            ui.set_width(420.0);
+            ui.heading("File changed on disk");
+            ui.add_space(6.0);
+            ui.label(format!(
+                "\"{name}\" was modified outside Forge Room after you opened it, and you have unsaved edits. Saving now would erase the other changes."
+            ));
+            ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                if ui.button("Overwrite").clicked() {
+                    action = Some(0);
+                }
+                if ui.button("Reload from Disk").clicked() {
+                    action = Some(1);
+                }
+                if ui.button("Save As…").clicked() {
+                    action = Some(2);
+                }
+                if ui.button("Cancel").clicked() {
+                    action = Some(3);
+                }
+            });
+        });
+        if modal.should_close() && action.is_none() {
+            action = Some(3);
+        }
+        let Some(action) = action else {
+            return;
+        };
+        self.pending = None;
+        let Some(tab) = self.tabs.tabs.get_mut(index) else {
+            return;
+        };
+        match action {
+            0 => match tab.doc.overwrite() {
+                Ok(()) => {
+                    self.status = format!("Saved {name}, replacing the outside changes");
+                    self.refresh_git();
+                }
+                Err(error) => self.status = format!("Cannot save {name}: {error}"),
+            },
+            1 => match tab.doc.reload() {
+                Ok(()) => {
+                    self.status = format!("Reloaded {name} from disk; your edits were discarded")
+                }
+                Err(error) => self.status = format!("Cannot reload {name}: {error}"),
+            },
+            2 => {
+                self.save_index(index, true);
+            }
+            _ => {}
         }
         self.focus_editor = true;
     }
@@ -2314,7 +2403,12 @@ impl eframe::App for ForgeRoomApp {
         }
         if self.pending.is_none() {
             self.handle_shortcuts(ui);
+            if self.last_disk_check.elapsed() >= std::time::Duration::from_secs(1) {
+                self.last_disk_check = std::time::Instant::now();
+                self.sync_external_changes();
+            }
         }
+        context.request_repaint_after(std::time::Duration::from_secs(1));
 
         let bar = |fill| {
             egui::Frame::new()
