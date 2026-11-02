@@ -58,6 +58,9 @@ enum Rail {
 enum RightTab {
     Ai,
     Room,
+    Agents,
+    Tasks,
+    Activity,
 }
 
 fn main() {
@@ -1783,7 +1786,7 @@ impl ForgeRoomApp {
             }
             SidebarView::Room => {
                 let has_workspace = self.workspace.is_some();
-                self.room.show(ui, has_workspace);
+                self.room.show(ui, has_workspace, rooms::Section::Team);
             }
             SidebarView::SourceControl => self.source_control_view(ui, false),
         }
@@ -2323,15 +2326,14 @@ impl ForgeRoomApp {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(8.0);
-            for (tab, label, icon) in [
-                (
-                    RightTab::Ai,
-                    "AI Assistant",
-                    icons::sparkle as fn(&egui::Painter, egui::Rect, egui::Color32),
-                ),
-                (RightTab::Room, "Room", icons::room),
+            for (tab, label) in [
+                (RightTab::Room, "Team"),
+                (RightTab::Agents, "Agents"),
+                (RightTab::Tasks, "Tasks"),
+                (RightTab::Activity, "Activity"),
+                (RightTab::Ai, "AI"),
             ] {
-                if underline_tab(ui, label, self.right_tab == tab, true, Some(icon)).clicked() {
+                if underline_tab(ui, label, self.right_tab == tab, true, None).clicked() {
                     self.right_tab = tab;
                 }
             }
@@ -2350,9 +2352,15 @@ impl ForgeRoomApp {
             egui::Stroke::new(1.0, theme::border()),
         );
         match self.right_tab {
-            RightTab::Room => {
+            RightTab::Room | RightTab::Agents | RightTab::Tasks | RightTab::Activity => {
                 let has_workspace = self.workspace.is_some();
-                self.room.show(ui, has_workspace);
+                let part = match self.right_tab {
+                    RightTab::Agents => rooms::Section::Agents,
+                    RightTab::Tasks => rooms::Section::Tasks,
+                    RightTab::Activity => rooms::Section::Activity,
+                    _ => rooms::Section::Team,
+                };
+                self.room.show(ui, has_workspace, part);
             }
             RightTab::Ai => {
                 let name = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.title());
