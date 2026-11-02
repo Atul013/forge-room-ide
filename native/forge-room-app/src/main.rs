@@ -37,8 +37,8 @@ use workspace::Workspace;
 
 const APP_NAME: &str = "Forge Room Early Preview";
 const TAB_HEIGHT: f32 = 42.0;
-const TITLE_HEIGHT: f32 = 46.0;
-const ACTIVITY_WIDTH: f32 = 132.0;
+const TITLE_HEIGHT: f32 = 36.0;
+const ACTIVITY_WIDTH: f32 = 126.0;
 
 /// One entry of the navigation rail on the left.
 #[derive(Clone, Copy)]
@@ -795,7 +795,7 @@ impl ForgeRoomApp {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 for (kind, tip) in [(0, "Close"), (1, "Maximize"), (2, "Minimize")] {
                     let (rect, response) = ui
-                        .allocate_exact_size(egui::vec2(46.0, TITLE_HEIGHT), egui::Sense::click());
+                        .allocate_exact_size(egui::vec2(40.0, TITLE_HEIGHT), egui::Sense::click());
                     let hovered = response.hovered();
                     if hovered {
                         let fill = if kind == 0 {
@@ -857,7 +857,7 @@ impl ForgeRoomApp {
                 ui.add_space(8.0);
                 if bar.width() > 900.0 {
                     let (pill, response) =
-                        ui.allocate_exact_size(egui::vec2(310.0, 32.0), egui::Sense::click());
+                        ui.allocate_exact_size(egui::vec2(300.0, 28.0), egui::Sense::click());
                     let painter = ui.painter();
                     painter.rect_filled(
                         pill,
@@ -1237,7 +1237,7 @@ impl ForgeRoomApp {
         count: usize,
     ) {
         let soon = matches!(item, Rail::Soon);
-        let height = if label.contains('\n') { 48.0 } else { 38.0 };
+        let height = if label.contains('\n') { 46.0 } else { 35.0 };
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ACTIVITY_WIDTH - 12.0, height),
             if soon {
@@ -1259,8 +1259,8 @@ impl ForgeRoomApp {
         if active {
             painter.rect_filled(
                 rect,
-                8.0,
-                theme::mix(theme::bg_activity(), theme::accent(), 0.22),
+                6.0,
+                theme::mix(theme::bg_activity(), theme::accent(), 0.18),
             );
         } else if hovered {
             painter.rect_filled(rect, 8.0, theme::overlay(12));
@@ -1286,10 +1286,10 @@ impl ForgeRoomApp {
         );
         if !label.is_empty() {
             painter.text(
-                egui::pos2(rect.left() + 42.0, rect.center().y),
+                egui::pos2(rect.left() + 40.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 label,
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(12.5),
                 color,
             );
         }
@@ -2588,7 +2588,7 @@ impl eframe::App for ForgeRoomApp {
         let bar = |fill| {
             egui::Frame::new()
                 .fill(fill)
-                .inner_margin(egui::Margin::symmetric(14, 8))
+                .inner_margin(egui::Margin::symmetric(14, 5))
         };
 
         // Flat panels separated by hairline dividers, as in the reference.
@@ -2742,7 +2742,7 @@ fn title_chip(
     };
     let tail = if chevron { 22.0 } else { 10.0 };
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(lead + galley.size().x + tail, 30.0),
+        egui::vec2(lead + galley.size().x + tail, 28.0),
         egui::Sense::click(),
     );
     let painter = ui.painter();

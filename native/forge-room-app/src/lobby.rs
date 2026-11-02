@@ -177,8 +177,15 @@ fn now() -> u64 {
 }
 
 fn card_fill() -> Color32 {
-    theme::mix(theme::bg_editor(), theme::text(), 0.035)
+    theme::mix(theme::bg_editor(), theme::text(), 0.02)
 }
+
+fn header_fill() -> Color32 {
+    theme::mix(theme::bg_editor(), theme::text(), 0.05)
+}
+
+/// Warm amber used for the countdown and in-progress marks, apart from the primary accent.
+const AMBER: Color32 = Color32::from_rgb(244, 157, 120);
 
 fn inner_fill() -> Color32 {
     theme::mix(theme::bg_editor(), theme::text(), 0.06)
@@ -423,28 +430,33 @@ impl Lobby {
         egui::Frame::new().show(ui, |ui| {
             ui.set_width(width);
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 16.0;
+                ui.spacing_mut().item_spacing.x = 22.0;
                 // Project mark.
-                let (mark, _) = ui.allocate_exact_size(vec2(92.0, 92.0), Sense::hover());
-                ui.painter().rect_filled(mark, 12.0, accent_soft());
+                let (mark, _) = ui.allocate_exact_size(vec2(103.0, 84.0), Sense::hover());
+                ui.painter().rect_filled(
+                    mark,
+                    7.0,
+                    theme::mix(theme::bg_editor(), theme::accent(), 0.10),
+                );
                 ui.painter().rect_stroke(
                     mark,
-                    12.0,
-                    Stroke::new(1.0, theme::border()),
+                    7.0,
+                    Stroke::new(1.0, theme::mix(theme::bg_editor(), theme::accent(), 0.4)),
                     egui::StrokeKind::Inside,
                 );
-                project_mark(ui.painter(), mark.center(), 40.0, theme::accent());
+                project_mark(ui.painter(), mark.center(), 46.0, theme::accent());
 
                 ui.vertical(|ui| {
                     ui.label(
-                        RichText::new(context.workspace)
-                            .size(30.0)
-                            .strong()
+                        RichText::new(crate::rooms::short(context.workspace, 18))
+                            .size(32.0)
+                            .family(crate::fonts::semibold())
                             .color(theme::text()),
-                    );
+                    )
+                    .on_hover_text(context.workspace);
                     ui.label(
                         RichText::new("Project Lobby")
-                            .size(18.0)
+                            .size(20.0)
                             .color(theme::text_dim()),
                     );
                 });
@@ -457,7 +469,7 @@ impl Lobby {
                             .hint_text("One line about this room")
                             .frame(egui::Frame::NONE)
                             .desired_width(360.0)
-                            .font(FontId::proportional(15.0)),
+                            .font(FontId::proportional(16.0)),
                     );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
@@ -506,13 +518,13 @@ impl Lobby {
     fn countdown(&self, ui: &mut Ui) {
         let remaining = self.remaining();
         let (hours, minutes, seconds) = (remaining / 3600, remaining / 60 % 60, remaining % 60);
-        let size = vec2(260.0, 88.0);
+        let size = vec2(242.0, 83.0);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         let painter = ui.painter();
-        painter.rect_filled(rect, 10.0, card_fill());
+        painter.rect_filled(rect, 6.0, card_fill());
         painter.rect_stroke(
             rect,
-            10.0,
+            6.0,
             Stroke::new(1.0, theme::border()),
             egui::StrokeKind::Inside,
         );
@@ -531,13 +543,13 @@ impl Lobby {
             .into_iter()
             .enumerate()
         {
-            let x = rect.left() + 46.0 + index as f32 * 84.0;
+            let x = rect.left() + 44.0 + index as f32 * 77.0;
             painter.text(
                 egui::pos2(x, rect.center().y + 6.0),
                 Align2::CENTER_CENTER,
                 format!("{value:02}"),
-                FontId::proportional(34.0),
-                theme::accent(),
+                FontId::new(32.0, crate::fonts::semibold()),
+                AMBER,
             );
             painter.text(
                 egui::pos2(x, rect.bottom() - 12.0),
@@ -548,11 +560,11 @@ impl Lobby {
             );
             if index < 2 {
                 painter.text(
-                    egui::pos2(x + 42.0, rect.center().y + 4.0),
+                    egui::pos2(x + 38.0, rect.center().y + 4.0),
                     Align2::CENTER_CENTER,
                     ":",
-                    FontId::proportional(30.0),
-                    theme::accent(),
+                    FontId::proportional(28.0),
+                    AMBER,
                 );
             }
         }
@@ -564,7 +576,7 @@ impl Lobby {
             for (tab, label) in TABS {
                 let galley = ui.painter().layout_no_wrap(
                     label.to_string(),
-                    FontId::proportional(16.0),
+                    FontId::proportional(15.0),
                     if self.tab == tab {
                         theme::text()
                     } else {
@@ -572,9 +584,18 @@ impl Lobby {
                     },
                 );
                 let (rect, response) =
-                    ui.allocate_exact_size(vec2(galley.size().x + 56.0, 38.0), Sense::click());
+                    ui.allocate_exact_size(vec2(galley.size().x + 52.0, 37.0), Sense::click());
                 if self.tab == tab {
-                    ui.painter().rect_filled(rect, 6.0, card_fill());
+                    ui.painter().rect_filled(
+                        rect,
+                        egui::CornerRadius {
+                            nw: 5,
+                            ne: 5,
+                            sw: 0,
+                            se: 0,
+                        },
+                        theme::mix(theme::bg_editor(), theme::accent(), 0.16),
+                    );
                     ui.painter().line_segment(
                         [rect.left_bottom(), rect.right_bottom()],
                         Stroke::new(2.0, theme::accent()),
@@ -614,7 +635,7 @@ impl Lobby {
         let right = if tab == Tab::Milestones {
             0.0
         } else {
-            (total * 0.37).clamp(320.0, 520.0)
+            ((total - gap) * 0.33).clamp(300.0, 520.0)
         };
         let left = if right == 0.0 {
             total
@@ -633,23 +654,24 @@ impl Lobby {
                     let both = tab == Tab::Lobby;
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = 12.0;
-                        let each = if both { (left - 12.0) / 2.0 } else { left };
+                        let team_width = if both { (left - 12.0) * 0.48 } else { left };
+                        let agents_width = if both { left - 12.0 - team_width } else { left };
                         if tab != Tab::Agents {
                             ui.allocate_ui_with_layout(
-                                vec2(each, 10.0),
+                                vec2(team_width, 10.0),
                                 Layout::top_down(Align::Min),
                                 |ui| {
-                                    ui.set_width(each);
+                                    ui.set_width(team_width);
                                     self.team(ui, context, action);
                                 },
                             );
                         }
                         if tab != Tab::Team {
                             ui.allocate_ui_with_layout(
-                                vec2(each, 10.0),
+                                vec2(agents_width, 10.0),
                                 Layout::top_down(Align::Min),
                                 |ui| {
-                                    ui.set_width(each);
+                                    ui.set_width(agents_width);
                                     self.agents(ui, context, action);
                                 },
                             );
@@ -1040,24 +1062,20 @@ impl Lobby {
                                 let painter = ui.painter();
                                 match milestone.status {
                                     MilestoneStatus::Done => {
-                                        painter.circle_filled(center, 13.0, theme::accent());
+                                        painter.circle_filled(center, 11.5, theme::accent());
                                         icons::draw(painter, "check", center, 16.0, Color32::BLACK);
                                     }
                                     MilestoneStatus::InProgress => {
-                                        painter.circle_filled(center, 13.0, theme::bg_editor());
+                                        painter.circle_filled(center, 11.5, theme::bg_editor());
                                         painter.circle_stroke(
                                             center,
                                             13.0,
-                                            Stroke::new(3.0, Color32::from_rgb(240, 170, 60)),
+                                            Stroke::new(3.0, AMBER),
                                         );
-                                        painter.circle_filled(
-                                            center,
-                                            4.5,
-                                            Color32::from_rgb(240, 170, 60),
-                                        );
+                                        painter.circle_filled(center, 4.5, AMBER);
                                     }
                                     MilestoneStatus::Pending => {
-                                        painter.circle_filled(center, 13.0, theme::bg_editor());
+                                        painter.circle_filled(center, 11.5, theme::bg_editor());
                                         painter.circle_stroke(
                                             center,
                                             13.0,
@@ -1074,10 +1092,9 @@ impl Lobby {
                                 );
                                 let (status, color) = match milestone.status {
                                     MilestoneStatus::Done => ("Done".to_string(), theme::accent()),
-                                    MilestoneStatus::InProgress => (
-                                        format!("In Progress ({}%)", milestone.percent),
-                                        Color32::from_rgb(240, 170, 60),
-                                    ),
+                                    MilestoneStatus::InProgress => {
+                                        (format!("In Progress ({}%)", milestone.percent), AMBER)
+                                    }
                                     MilestoneStatus::Pending => {
                                         ("Pending".to_string(), theme::text_dim())
                                     }
@@ -1309,42 +1326,65 @@ fn card(
     egui::Frame::new()
         .fill(card_fill())
         .stroke(Stroke::new(1.0, theme::border()))
-        .corner_radius(10.0)
-        .inner_margin(Margin::same(14))
+        .corner_radius(9.0)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                let (rect, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
-                icons::draw(ui.painter(), icon, rect.center(), 20.0, theme::text_dim());
-                ui.label(
-                    RichText::new(title)
-                        .size(17.0)
-                        .strong()
-                        .color(theme::text()),
-                );
-                ui.with_layout(Layout::right_to_left(Align::Center), right);
-            });
-            ui.add_space(6.0);
-            body(ui);
+            ui.spacing_mut().item_spacing = vec2(8.0, 0.0);
+            egui::Frame::new()
+                .fill(header_fill())
+                .corner_radius(egui::CornerRadius {
+                    nw: 9,
+                    ne: 9,
+                    sw: 0,
+                    se: 0,
+                })
+                .inner_margin(Margin::symmetric(14, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                        icons::draw(ui.painter(), icon, rect.center(), 18.0, theme::text_dim());
+                        ui.label(
+                            RichText::new(title)
+                                .size(16.0)
+                                .family(crate::fonts::semibold())
+                                .color(theme::text()),
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), right);
+                    });
+                });
+            let line = ui.max_rect();
+            let y = ui.cursor().top();
+            ui.painter().line_segment(
+                [egui::pos2(line.left(), y), egui::pos2(line.right(), y)],
+                Stroke::new(1.0, theme::border()),
+            );
+            egui::Frame::new()
+                .inner_margin(Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing = vec2(8.0, 4.0);
+                    body(ui);
+                });
         });
 }
 
 /// A labelled row: icon and label on the left, the value widget in a fixed column.
 fn kv(ui: &mut Ui, icon: &str, label: &str, value: impl FnOnce(&mut Ui)) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
     let painter = ui.painter();
     icons::draw(
         painter,
         icon,
         egui::pos2(rect.left() + 10.0, rect.center().y),
-        18.0,
+        17.0,
         theme::text_dim(),
     );
     painter.text(
-        egui::pos2(rect.left() + 34.0, rect.center().y),
+        egui::pos2(rect.left() + 32.0, rect.center().y),
         Align2::LEFT_CENTER,
         label,
-        FontId::proportional(14.0),
+        FontId::proportional(13.5),
         theme::text(),
     );
     let value_rect = Rect::from_min_max(
@@ -1406,8 +1446,8 @@ fn chip(ui: &mut Ui, text: &str, color: Color32) {
 fn chip_icon(ui: &mut Ui, icon: &str, text: &str, color: Color32, strong: bool) {
     let galley = ui
         .painter()
-        .layout_no_wrap(text.to_string(), FontId::proportional(14.0), color);
-    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(40.0, 12.0), Sense::hover());
+        .layout_no_wrap(text.to_string(), FontId::proportional(13.0), color);
+    let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(38.0, 10.0), Sense::hover());
     let fill = if strong {
         theme::mix(theme::bg_editor(), color, 0.15)
     } else {
@@ -1549,9 +1589,9 @@ fn accent_button(ui: &mut Ui, label: &str, icon: Option<&str>) -> egui::Response
         icon,
         theme::accent(),
         theme::accent(),
-        Color32::BLACK,
+        theme::button_text(),
         16.0,
-        42.0,
+        45.0,
     )
 }
 
