@@ -6,10 +6,10 @@ A light, fast, native IDE written in Rust. No Electron, no webview, no bundled N
 
 ## What works today
 
-- IDE shell: folder explorer, multi-file tabs, native dialogs, UTF-8 editing and saving, and unsaved-change prompts.
-- Line numbers, syntax highlighting, command palette, quick open, find/replace, file search, and an integrated terminal.
-- Source Control with staging, commits, branches, synchronization, diffs, history, and blame.
-- Local project rooms with people, agents, tasks, handoffs, evidence, and activity. Network collaboration and AI provider execution are not yet implemented in the native app.
+- IDE shell: folder explorer, multi-file tabs, native dialogs, UTF-8 editing and saving, and unsaved-change prompts. A file changed by another program is reloaded when you have no edits, and saving over it asks first.
+- Line numbers, syntax highlighting (incremental, so large files stay responsive), command palette, quick open, find/replace, file search, and an integrated terminal with scrollback, selection and copy.
+- Source Control with staging, commits, branches, synchronization, diffs, history, blame, and merge-conflict resolution (accept current or incoming).
+- Local project rooms with people, agents, tasks, handoffs, evidence, and activity, and a Room Lobby page (Rooms in the left rail) with goal, milestones, setup and an optional countdown. Network collaboration, invites and AI provider execution are not yet implemented in the native app.
 - Six appearance themes and a per-user Windows installer with in-place updates and a themed uninstaller.
 
 Current gaps and the shared work plan are in [progress.md](progress.md).
