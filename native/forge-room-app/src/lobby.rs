@@ -170,6 +170,8 @@ pub struct Lobby {
     invite_note: Option<String>,
     /// Set when a checklist item was just added, so its text field takes focus.
     focus_new_goal: bool,
+    /// Focus the recovery action once when an unreadable room is first shown.
+    recovery_warning_shown: bool,
 }
 
 impl Default for Lobby {
@@ -185,6 +187,7 @@ impl Default for Lobby {
             invite_role: 0,
             invite_note: None,
             focus_new_goal: false,
+            recovery_warning_shown: false,
         }
     }
 }
@@ -343,6 +346,8 @@ impl Lobby {
     pub fn show(&mut self, ui: &mut Ui, context: &Context) -> Option<Action> {
         let before = serde_json::to_string(&self.config).unwrap_or_default();
         let mut action = None;
+        let focus_recovery = context.room_unavailable && !self.recovery_warning_shown;
+        self.recovery_warning_shown = context.room_unavailable;
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs(1));
 
@@ -375,10 +380,11 @@ impl Lobby {
                                 .inner_margin(Margin::symmetric(12, 10))
                                 .show(ui, |ui| {
                                     ui.label("Room unavailable: saved room files could not be read. They were left unchanged.");
-                                    if ui
-                                        .add(egui::Button::new("Open Room details"))
-                                        .clicked()
-                                    {
+                                    let details = ui.add(egui::Button::new("Open Room details"));
+                                    if focus_recovery {
+                                        details.request_focus();
+                                    }
+                                    if details.clicked() {
                                         action = Some(Action::EnterRoom);
                                     }
                                 });
