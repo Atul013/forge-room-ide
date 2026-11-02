@@ -54,6 +54,14 @@ measurements were not taken.
 
 ### Bugs found by trying the running app
 
+- **Copy and paste did not work anywhere in the app** (editor, find box, terminal): `eframe` was built with default
+  features off and never re-enabled `clipboard`, so Ctrl+C/Ctrl+V never reached the system clipboard. Found while testing
+  terminal copy in the running app (the `Copy` event fired with the right text but the clipboard stayed unchanged).
+  Enabled `clipboard` and `links` (the latter makes the Lobby's "open repository" link work). Verified: Ctrl+A, Ctrl+C
+  in the editor and a mouse selection plus Ctrl+C in the terminal both reach the clipboard. `cargo about` (the packaging
+  licence gate) still passes with the added crates. Paste (Ctrl+V) was not separately exercised.
+- A terminal selection was anchored a few pixels after the press instead of at it (egui reports the drag late).
+  It now anchors at the press position.
 - The current-line highlight was drawn over the text of the line being edited, hiding it. Fixed (paint order).
 - Save As onto an existing file reported a false "changed on disk" conflict and switched the tab to a file it had not
   written. Fixed; tests added.

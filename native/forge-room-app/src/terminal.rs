@@ -223,7 +223,11 @@ impl Terminal {
         };
         if let Some(position) = response.interact_pointer_pos() {
             if response.drag_started() {
-                self.selection = Some((cell_at(position), cell_at(position)));
+                // egui reports the drag a few pixels after the press: anchor where the press was.
+                let origin = ui
+                    .input(|input| input.pointer.press_origin())
+                    .unwrap_or(position);
+                self.selection = Some((cell_at(origin), cell_at(position)));
             } else if response.dragged()
                 && let Some((anchor, _)) = self.selection
             {
