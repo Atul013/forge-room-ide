@@ -347,6 +347,12 @@ pub fn discard(root: &Path, change: &Change) -> Result<(), String> {
     }
 }
 
+/// True when `text` still contains merge conflict markers (a `<<<<<<<` start and a `>>>>>>>` end).
+pub fn has_conflict_markers(text: &str) -> bool {
+    text.lines().any(|line| line.starts_with("<<<<<<< "))
+        && text.lines().any(|line| line.starts_with(">>>>>>> "))
+}
+
 /// Which side of a merge conflict to keep.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Side {
@@ -691,6 +697,18 @@ mod tests {
             "from main\n"
         );
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn conflict_markers_are_detected_only_when_complete() {
+        let conflicted = "a\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> feature\nz\n";
+        assert!(has_conflict_markers(conflicted));
+        assert!(!has_conflict_markers("a\nmine\nz\n"));
+        // A lone separator or an indented marker in prose or code is not a conflict.
+        assert!(!has_conflict_markers("=======\n"));
+        assert!(!has_conflict_markers(
+            "    <<<<<<< in a string\n    >>>>>>> too\n"
+        ));
     }
 
     #[test]

@@ -1523,7 +1523,37 @@ impl ForgeRoomApp {
             Action::Init => {
                 git::run(&root, &["init"]).map(|_| "Initialized a Git repository".into())
             }
-            Action::Stage(paths) => git::stage(&root, &paths).map(|_| String::new()),
+            Action::Stage(paths) => {
+                // Staging a conflicted file marks it resolved, so refuse while markers remain.
+                let conflicted: Vec<String> = match &self.git_status {
+                    Some(Ok(status)) => status
+                        .changes
+                        .iter()
+                        .filter(|change| change.is_conflict())
+                        .map(|change| change.path.clone())
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let (blocked, allowed): (Vec<String>, Vec<String>) =
+                    paths.into_iter().partition(|path| {
+                        conflicted.contains(path)
+                            && std::fs::read_to_string(root.join(path))
+                                .is_ok_and(|text| git::has_conflict_markers(&text))
+                    });
+                let note = if blocked.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "Not staged: conflict markers remain in {}. Resolve them or use Accept Current/Incoming.",
+                        blocked.join(", ")
+                    )
+                };
+                if allowed.is_empty() {
+                    Ok(note)
+                } else {
+                    git::stage(&root, &allowed).map(|_| note)
+                }
+            }
             Action::Unstage(paths) => git::unstage(&root, &paths).map(|_| String::new()),
             Action::Commit => {
                 let message = self.sc.message.trim().to_string();
