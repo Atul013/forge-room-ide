@@ -1250,7 +1250,7 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
 name = "forge-room-app"
-version = "0.110.0-alpha.1"
+version = "0.110.0-alpha.2"
 dependencies = [
  "eframe",
  "forge-room-early-preview",
@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "forge-room-early-preview"
-version = "0.110.0-alpha.1"
+version = "0.110.0-alpha.2"
 dependencies = [
  "serde",
  "serde_json",

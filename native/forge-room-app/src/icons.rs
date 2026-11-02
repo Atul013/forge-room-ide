@@ -284,12 +284,6 @@ pub fn more(painter: &Painter, center: Pos2, color: Color32) {
     draw(painter, "more", center, 18.0, color);
 }
 
-/// Play triangle for Run/Debug.
-/// Four-point sparkle for the AI entry.
-pub fn sparkle(painter: &Painter, rect: Rect, color: Color32) {
-    boxed(painter, "ai", rect, 1.1, color);
-}
-
 /// Terminal window with a prompt for the Terminal entry.
 pub fn plus(painter: &Painter, center: Pos2, color: Color32) {
     draw(painter, "plus", center, 16.0, color);

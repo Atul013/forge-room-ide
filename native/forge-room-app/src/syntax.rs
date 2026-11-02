@@ -132,8 +132,14 @@ fn hash(text: &str) -> u64 {
 /// a large file stays cheap. Work per call is time-budgeted; see [`pending`].
 pub fn highlight(text: &str, extension: &str, font_id: &egui::FontId) -> LayoutJob {
     let theme = theme::current();
-    if text.len() > HIGHLIGHT_LIMIT_BYTES {
-        // Cache nothing for huge files: plain text keeps every keystroke bounded by layout alone.
+    // A line too long to parse would leave the parser state wrong for every line after it (an
+    // opener or closer inside it is never seen), so such a file is shown as plain text.
+    if text.len() > HIGHLIGHT_LIMIT_BYTES
+        || text
+            .split('\n')
+            .any(|line| line.len() > MAX_HIGHLIGHT_LINE_BYTES)
+    {
+        // Cache nothing for these files: plain text keeps every keystroke bounded by layout alone.
         PENDING.store(false, Ordering::Relaxed);
         let mut job = LayoutJob::default();
         job.append(
@@ -250,7 +256,7 @@ fn refresh(cache: &mut Cache, text: &str, budget: Duration) {
         }
         let line = new_lines[index];
         let before = (parse.clone(), highlight.clone());
-        // Overlong lines are left unparsed, and the parser state carries over unchanged.
+        // `highlight` shows files with overlong lines as plain text; this only guards `update`.
         let spans = if line.len() > MAX_HIGHLIGHT_LINE_BYTES {
             vec![(plain, false, line.len())]
         } else {
@@ -290,6 +296,17 @@ fn refresh(cache: &mut Cache, text: &str, budget: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_with_an_overlong_line_is_plain_so_no_state_is_guessed() {
+        let text = format!(
+            "/*{}\nlet x = 1;\n*/\n",
+            "a".repeat(MAX_HIGHLIGHT_LINE_BYTES + 1)
+        );
+        let job = highlight(&text, "rs", &egui::FontId::monospace(14.0));
+        assert_eq!(job.sections.len(), 1);
+        assert_eq!(job.text, text);
+    }
 
     #[test]
     fn rust_keywords_get_the_theme_keyword_color() {

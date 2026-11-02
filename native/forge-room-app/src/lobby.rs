@@ -217,13 +217,26 @@ fn load_config(path: &Path) -> Option<LobbyConfig> {
 
 impl Lobby {
     /// Switch to the lobby saved at `path` (or a fresh one), for the project that was just opened.
-    pub fn load_for(&mut self, path: Option<PathBuf>) {
+    /// Unsaved edits are written first; the error says why they could not be kept.
+    pub fn load_for(&mut self, path: Option<PathBuf>) -> Result<(), String> {
+        let result = self.finish();
         let config = path.as_deref().and_then(load_config);
         *self = Self {
             config: config.unwrap_or_default(),
             path,
             ..Self::default()
         };
+        result
+    }
+
+    /// Save pending edits now (leaving the project or quitting).
+    pub fn finish(&mut self) -> Result<(), String> {
+        if self.dirty { self.save() } else { Ok(()) }
+    }
+
+    /// Retry pending edits from the app loop, whichever page is showing.
+    pub fn flush_pending(&mut self) {
+        self.flush();
     }
 
     /// Write the settings next to the room file. The new content goes to a temporary file first and
@@ -2058,7 +2071,8 @@ fn avatar(painter: &egui::Painter, rect: Rect, name: &str, agent: bool, online: 
 
 /// The Forge Room project mark.
 fn project_mark(painter: &egui::Painter, center: egui::Pos2, size: f32, color: Color32) {
-    icons::draw(painter, "forge-mark", center, size, color);
+    let _ = color;
+    crate::mark::draw(painter, center, size);
 }
 
 // ---- Dates (UTC) ----------------------------------------------------------------------
@@ -2149,7 +2163,7 @@ mod tests {
     fn saved_settings_round_trip() {
         let path = temp_path("roundtrip");
         let mut lobby = Lobby::default();
-        lobby.load_for(Some(path.clone()));
+        let _ = lobby.load_for(Some(path.clone()));
         lobby.config.goal = "Ship the MVP".into();
         lobby.config.goals.push(("Demo".into(), true));
         lobby.config.milestones[1].status = MilestoneStatus::Done;
@@ -2157,7 +2171,7 @@ mod tests {
         lobby.save().unwrap();
 
         let mut reopened = Lobby::default();
-        reopened.load_for(Some(path.clone()));
+        let _ = reopened.load_for(Some(path.clone()));
         assert_eq!(reopened.config.goal, "Ship the MVP");
         assert_eq!(reopened.config.goals, vec![("Demo".to_string(), true)]);
         assert!(reopened.config.milestones[1].status == MilestoneStatus::Done);
@@ -2174,7 +2188,7 @@ mod tests {
         let partial = temp_path("partial");
         std::fs::write(&partial, r#"{"goal": "Only a goal"}"#).unwrap();
         let mut lobby = Lobby::default();
-        lobby.load_for(Some(partial.clone()));
+        let _ = lobby.load_for(Some(partial.clone()));
         assert_eq!(lobby.config.goal, "Only a goal");
         assert_eq!(lobby.config.milestones.len(), 5);
         assert_eq!(lobby.config.duration_hours, 24);
@@ -2184,7 +2198,7 @@ mod tests {
         let damaged = temp_path("damaged");
         std::fs::write(&damaged, "{ not json").unwrap();
         let mut lobby = Lobby::default();
-        lobby.load_for(Some(damaged.clone()));
+        let _ = lobby.load_for(Some(damaged.clone()));
         assert_eq!(lobby.config.duration_hours, 24);
         let _ = std::fs::remove_file(damaged);
     }
@@ -2198,7 +2212,7 @@ mod tests {
         )
         .unwrap();
         let mut lobby = Lobby::default();
-        lobby.load_for(Some(path.clone()));
+        let _ = lobby.load_for(Some(path.clone()));
         assert_eq!(lobby.end_epoch(), u64::MAX);
         assert!(lobby.remaining() > 0);
         let _ = std::fs::remove_file(path);
@@ -2212,7 +2226,7 @@ mod tests {
         let path = blocker.join("lobby.json");
 
         let mut lobby = Lobby::default();
-        lobby.load_for(Some(path.clone()));
+        let _ = lobby.load_for(Some(path.clone()));
         lobby.config.goal = "important".into();
         lobby.dirty = true;
         assert!(lobby.save().is_err());
@@ -2226,7 +2240,7 @@ mod tests {
         assert!(!lobby.dirty);
         assert!(lobby.save_error.is_none());
         let mut reopened = Lobby::default();
-        reopened.load_for(Some(path.clone()));
+        let _ = reopened.load_for(Some(path.clone()));
         assert_eq!(reopened.config.goal, "important");
         let _ = std::fs::remove_dir_all(blocker);
     }

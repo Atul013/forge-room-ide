@@ -11,6 +11,8 @@ pub struct State {
     pub conflicts_open: bool,
     pub graph_open: bool,
     pub history_open: bool,
+    /// Which page of the sidebar is showing: false = Changes, true = History (graph + file).
+    pub show_history: bool,
 }
 
 impl Default for State {
@@ -22,6 +24,7 @@ impl Default for State {
             conflicts_open: true,
             graph_open: true,
             history_open: true,
+            show_history: false,
         }
     }
 }
@@ -217,7 +220,7 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
         .show(ui, |ui| {
             let editor = egui::TextEdit::multiline(&mut state.message)
                 .hint_text("Message (Ctrl+Enter to commit)")
-                .desired_rows(if compact { 1 } else { 3 })
+                .desired_rows(if compact { 1 } else { 2 })
                 .desired_width(f32::INFINITY)
                 .margin(egui::Margin::symmetric(10, 8));
             let response = ui.add(editor);
@@ -304,11 +307,18 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                 }
             }
         });
-    ui.add_space(10.0);
+    ui.add_space(8.0);
+    if !compact {
+        page_tabs(ui, state, status.changes.len(), view.commits.len());
+    }
 
     egui::ScrollArea::vertical()
         .auto_shrink(false)
         .show(ui, |ui| {
+            if !compact && state.show_history {
+                history_page(ui, state, view, &mut action);
+                return;
+            }
             if status.changes.is_empty() {
                 empty_state(
                     ui,
@@ -340,43 +350,82 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                 action = Some(next);
             }
 
-            if compact {
-                return;
-            }
-            // Commit graph.
-            ui.add_space(6.0);
-            group_header(ui, "GRAPH", &mut state.graph_open, view.commits.len());
-            if state.graph_open {
-                let width = view.rows.iter().map(|row| row.width).max().unwrap_or(1);
-                for (commit, row) in view.commits.iter().zip(view.rows) {
-                    if graph_row(ui, commit, row, width, status.branch.as_deref()).clicked() {
-                        action = Some(Action::ShowCommit(commit.hash.clone()));
-                    }
-                }
-                if view.commits.is_empty() {
-                    empty_state(ui, "No commits yet", "Your first commit will appear here.");
-                }
-            }
-
-            // History of the file that is open, like GitLens' File History view.
-            if let Some(name) = view.history_name {
-                ui.add_space(6.0);
-                let title = format!("FILE HISTORY · {name}");
-                group_header(ui, &title, &mut state.history_open, view.history.len());
-                if state.history_open {
-                    for commit in view.history {
-                        if history_row(ui, commit).clicked() {
-                            action = Some(Action::ShowCommit(commit.hash.clone()));
-                        }
-                    }
-                    if view.history.is_empty() {
-                        empty_state(ui, "No history", "This file has not been committed yet.");
-                    }
-                }
-            }
             ui.add_space(16.0);
         });
     action
+}
+
+/// The History page: the commit graph, then the history of the open file.
+fn history_page(ui: &mut egui::Ui, state: &mut State, view: &View, action: &mut Option<Action>) {
+    let status = view.status;
+    // Commit graph.
+    ui.add_space(6.0);
+    group_header(ui, "GRAPH", &mut state.graph_open, view.commits.len());
+    if state.graph_open {
+        let width = view.rows.iter().map(|row| row.width).max().unwrap_or(1);
+        for (commit, row) in view.commits.iter().zip(view.rows) {
+            if graph_row(ui, commit, row, width, status.branch.as_deref()).clicked() {
+                *action = Some(Action::ShowCommit(commit.hash.clone()));
+            }
+        }
+        if view.commits.is_empty() {
+            empty_state(ui, "No commits yet", "Your first commit will appear here.");
+        }
+    }
+
+    // History of the file that is open, like GitLens' File History view.
+    if let Some(name) = view.history_name {
+        ui.add_space(6.0);
+        let title = format!("FILE HISTORY · {name}");
+        group_header(ui, &title, &mut state.history_open, view.history.len());
+        if state.history_open {
+            for commit in view.history {
+                if history_row(ui, commit).clicked() {
+                    *action = Some(Action::ShowCommit(commit.hash.clone()));
+                }
+            }
+            if view.history.is_empty() {
+                empty_state(ui, "No history", "This file has not been committed yet.");
+            }
+        }
+    }
+    ui.add_space(16.0);
+}
+
+/// Changes | History switch under the commit box, so the two lists no longer share one scroll.
+fn page_tabs(ui: &mut egui::Ui, state: &mut State, changes: usize, commits: usize) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(12, 0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for (history, label, count) in
+                    [(false, "Changes", changes), (true, "History", commits)]
+                {
+                    let active = state.show_history == history;
+                    let text =
+                        RichText::new(format!("{label}  {count}"))
+                            .size(13.0)
+                            .color(if active {
+                                theme::text()
+                            } else {
+                                theme::text_dim()
+                            });
+                    let button = egui::Button::new(text)
+                        .fill(if active {
+                            theme::overlay(18)
+                        } else {
+                            Color32::TRANSPARENT
+                        })
+                        .corner_radius(6.0)
+                        .min_size(egui::vec2((ui.available_width() - 6.0) / 2.0, 26.0));
+                    if ui.add(button).clicked() {
+                        state.show_history = history;
+                    }
+                }
+            });
+        });
+    ui.add_space(6.0);
 }
 
 fn sync_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
@@ -579,8 +628,15 @@ fn discard_icon(painter: &egui::Painter, rect: Rect, hovered: bool) {
 }
 
 fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<Action> {
+    // The file name gets its own line and the folder sits underneath, so neither is cut off.
+    let two_lines = change.path.contains('/');
+    let height = if two_lines {
+        ROW_HEIGHT + 12.0
+    } else {
+        ROW_HEIGHT
+    };
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
     let y = rect.center().y;
     let stage_rect =
         Rect::from_center_size(egui::pos2(rect.right() - 20.0, y), egui::vec2(22.0, 22.0));
@@ -598,6 +654,7 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
             Sense::click(),
         )
     });
+    let response = response.on_hover_text(&change.path);
     let hovered = response.hovered()
         || stage_response.hovered()
         || discard_response.as_ref().is_some_and(|r| r.hovered());
@@ -632,17 +689,24 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
     );
     let name_width = name_galley.size().x;
     let text_left = rect.left() + 46.0;
-    let reserved = if staged { 44.0 } else { 68.0 };
+    // Room for the hover buttons only while they are shown.
+    let reserved = match (hovered, staged) {
+        (false, _) => 12.0,
+        (true, true) => 44.0,
+        (true, false) => 68.0,
+    };
     let clip = Rect::from_min_max(rect.min, egui::pos2(rect.right() - reserved, rect.bottom()));
     let text_painter = painter.with_clip_rect(clip);
+    let name_y = if two_lines { rect.top() + 11.0 } else { y };
     text_painter.galley(
-        egui::pos2(text_left, y - name_galley.size().y / 2.0),
+        egui::pos2(text_left, name_y - name_galley.size().y / 2.0),
         name_galley,
         theme::text(),
     );
+    let _ = name_width;
     if !directory.is_empty() {
         text_painter.text(
-            egui::pos2(text_left + name_width + 8.0, y),
+            egui::pos2(text_left, rect.bottom() - 10.0),
             Align2::LEFT_CENTER,
             directory,
             FontId::proportional(11.5),
@@ -765,7 +829,9 @@ fn graph_row(
     if response.hovered() {
         painter.rect_filled(rect, 0.0, theme::overlay(8));
     }
-    let x_of = |lane: usize| rect.left() + 16.0 + lane as f32 * LANE_WIDTH;
+    // Many lanes are squeezed together so the commit message keeps room to read.
+    let lane_width = LANE_WIDTH.min(64.0 / graph_width.max(1) as f32).max(4.0);
+    let x_of = |lane: usize| rect.left() + 16.0 + lane as f32 * lane_width;
     let (top, middle, bottom) = (rect.top(), rect.center().y, rect.bottom());
     let node = egui::pos2(x_of(row.lane), middle);
 

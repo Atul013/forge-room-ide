@@ -14,8 +14,10 @@ mod graph;
 mod gutter;
 mod icons;
 mod lobby;
+mod mark;
 mod palette;
 mod position;
+mod preview;
 mod room_state;
 mod rooms;
 mod search;
@@ -57,6 +59,9 @@ enum Rail {
 enum RightTab {
     Ai,
     Room,
+    Agents,
+    Tasks,
+    Activity,
 }
 
 fn main() {
@@ -194,6 +199,8 @@ struct ForgeRoomApp {
     terminal: Option<terminal::Terminal>,
     show_terminal: bool,
     show_right: bool,
+    show_preview: bool,
+    preview: preview::Preview,
     ai: ai_panel::State,
     right_tab: RightTab,
     terminal_focus_request: bool,
@@ -289,6 +296,8 @@ impl ForgeRoomApp {
             terminal: None,
             show_terminal: true,
             show_right: true,
+            show_preview: true,
+            preview: preview::Preview::default(),
             ai: ai_panel::State::default(),
             right_tab: RightTab::Ai,
             terminal_focus_request: false,
@@ -317,11 +326,16 @@ impl ForgeRoomApp {
             self.refresh_git();
             let root = self.repo_root();
             self.room.load_for(root.as_deref());
-            self.lobby
+            let kept = self
+                .lobby
                 .load_for(root.as_deref().map(room_state::lobby_path_for));
             self.runtimes = root.as_deref().map(detect_runtimes).unwrap_or_default();
             self.search.reset();
-            self.status = format!("Opened folder {}", path.display());
+            self.preview.forget_project();
+            self.status = match kept {
+                Ok(()) => format!("Opened folder {}", path.display()),
+                Err(error) => format!("Opened folder {}. {error}", path.display()),
+            };
             return;
         }
         match self.tabs.open_file(&path) {
@@ -444,6 +458,7 @@ impl ForgeRoomApp {
             Command::ShowSourceControl => self.switch_view(SidebarView::SourceControl),
             Command::ShowRoom => self.switch_view(SidebarView::Room),
             Command::ShowLobby => self.show_lobby = !self.show_lobby,
+            Command::TogglePreview => self.show_preview = !self.show_preview,
             Command::ShowSearch => {
                 self.view = SidebarView::Search;
                 self.show_sidebar = true;
@@ -796,13 +811,7 @@ impl ForgeRoomApp {
         ui.horizontal_centered(|ui| {
             ui.add_space(14.0);
             let (logo, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
-            icons::draw(
-                ui.painter(),
-                "forge-mark",
-                logo.center(),
-                24.0,
-                theme::accent(),
-            );
+            mark::draw(ui.painter(), logo.center(), 24.0);
             ui.add_space(4.0);
             // The design has no menu strip: File, Edit and View live under the brand name.
             ui.menu_button(
@@ -1788,7 +1797,7 @@ impl ForgeRoomApp {
             }
             SidebarView::Room => {
                 let has_workspace = self.workspace.is_some();
-                self.room.show(ui, has_workspace);
+                self.room.show(ui, has_workspace, rooms::Section::Team);
             }
             SidebarView::SourceControl => self.source_control_view(ui, false),
         }
@@ -2328,15 +2337,14 @@ impl ForgeRoomApp {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(8.0);
-            for (tab, label, icon) in [
-                (
-                    RightTab::Ai,
-                    "AI Assistant",
-                    icons::sparkle as fn(&egui::Painter, egui::Rect, egui::Color32),
-                ),
-                (RightTab::Room, "Room", icons::room),
+            for (tab, label) in [
+                (RightTab::Room, "Team"),
+                (RightTab::Agents, "Agents"),
+                (RightTab::Tasks, "Tasks"),
+                (RightTab::Activity, "Activity"),
+                (RightTab::Ai, "AI"),
             ] {
-                if underline_tab(ui, label, self.right_tab == tab, true, Some(icon)).clicked() {
+                if underline_tab(ui, label, self.right_tab == tab, true, None).clicked() {
                     self.right_tab = tab;
                 }
             }
@@ -2355,9 +2363,15 @@ impl ForgeRoomApp {
             egui::Stroke::new(1.0, theme::border()),
         );
         match self.right_tab {
-            RightTab::Room => {
+            RightTab::Room | RightTab::Agents | RightTab::Tasks | RightTab::Activity => {
                 let has_workspace = self.workspace.is_some();
-                self.room.show(ui, has_workspace);
+                let part = match self.right_tab {
+                    RightTab::Agents => rooms::Section::Agents,
+                    RightTab::Tasks => rooms::Section::Tasks,
+                    RightTab::Activity => rooms::Section::Activity,
+                    _ => rooms::Section::Team,
+                };
+                self.room.show(ui, has_workspace, part);
             }
             RightTab::Ai => {
                 let name = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.title());
@@ -2634,6 +2648,106 @@ impl ForgeRoomApp {
         self.focus_editor = true;
     }
 
+    /// A slim Room Pulse strip over the workspace: the latest real room events, or a hint.
+    fn pulse_strip(&mut self, ui: &mut egui::Ui) {
+        let painter = ui.painter().clone();
+        let rect = ui.max_rect();
+        painter.line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            egui::Stroke::new(1.0, theme::border()),
+        );
+        let toggle = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 104.0, rect.center().y - 12.0),
+            egui::vec2(96.0, 24.0),
+        );
+        let label = if self.show_preview {
+            "Hide Preview"
+        } else {
+            "Preview"
+        };
+        let response = ui
+            .interact(
+                toggle,
+                ui.make_persistent_id("preview-toggle"),
+                egui::Sense::click(),
+            )
+            .on_hover_text("Show or hide the Preview pane");
+        let fill = if response.hovered() {
+            theme::overlay(18)
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        painter.rect(
+            toggle,
+            6.0,
+            fill,
+            egui::Stroke::new(1.0, theme::border()),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            toggle.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(12.5),
+            theme::text(),
+        );
+        if response.clicked() {
+            self.show_preview = !self.show_preview;
+        }
+        ui.horizontal_centered(|ui| {
+            let (icon, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+            icons::draw(ui.painter(), "pulse", icon.center(), 18.0, theme::accent());
+            ui.label(
+                egui::RichText::new("Room Pulse")
+                    .family(fonts::semibold())
+                    .color(theme::text()),
+            );
+            ui.add_space(10.0);
+            let Some(state) = self.room.state() else {
+                ui.label(
+                    egui::RichText::new("No room yet. Create one from the Lobby.")
+                        .color(theme::text_dim()),
+                );
+                return;
+            };
+            if state.activity.is_empty() {
+                ui.label(egui::RichText::new("No activity yet").color(theme::text_dim()));
+                return;
+            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_secs())
+                .unwrap_or(0);
+            // An overflowing row would widen the panels below it, so only what fits is shown.
+            let slots = ((ui.available_width() - 130.0) / 250.0).floor().max(0.0) as usize;
+            for event in state.activity.iter().rev().take(slots.min(4)) {
+                let actor = state
+                    .participants
+                    .iter()
+                    .find(|person| person.id == event.actor_id)
+                    .map(|person| person.name.as_str())
+                    .unwrap_or("Someone");
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                ui.painter().circle_filled(
+                    dot.center(),
+                    3.5,
+                    egui::Color32::from_rgb(110, 200, 120),
+                );
+                let text = format!(
+                    "{actor}: {}  ·  {}",
+                    rooms::short(&event.detail, 30),
+                    room_state::ago(now, event.recorded_at_epoch_seconds)
+                );
+                ui.label(
+                    egui::RichText::new(text)
+                        .size(13.0)
+                        .color(theme::text_dim()),
+                );
+                ui.add_space(10.0);
+            }
+        });
+    }
+
     fn lobby_page(&mut self, ui: &mut egui::Ui) {
         let name = self
             .workspace
@@ -2692,8 +2806,13 @@ impl eframe::App for ForgeRoomApp {
         egui::Color32::from_rgb(10, 11, 12).to_normalized_gamma_f32()
     }
 
+    fn on_exit(&mut self) {
+        let _ = self.lobby.finish();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
+        self.lobby.flush_pending();
         if context.input(|input| input.viewport().close_requested())
             && self.tabs.any_dirty()
             && !self.allow_close
@@ -2739,6 +2858,18 @@ impl eframe::App for ForgeRoomApp {
             .frame(egui::Frame::new().fill(theme::bg_activity()))
             .show(ui, |ui| self.activity_bar(ui));
 
+        if !self.show_lobby {
+            egui::Panel::top("pulse")
+                .exact_size(34.0)
+                .resizable(false)
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::bg_sidebar())
+                        .inner_margin(egui::Margin::symmetric(12, 0)),
+                )
+                .show(ui, |ui| self.pulse_strip(ui));
+        }
+
         if self.show_sidebar && !self.show_lobby {
             egui::Panel::left("sidebar")
                 .default_size(250.0)
@@ -2769,6 +2900,22 @@ impl eframe::App for ForgeRoomApp {
                     bottom: 0,
                 }))
                 .show(ui, |ui| self.terminal_panel(ui));
+        }
+
+        if self.show_preview && !self.show_lobby && ui.available_width() > 760.0 {
+            if let Some(terminal) = &self.terminal {
+                self.preview.detect(&terminal.screen_text());
+            }
+            let mut close = false;
+            egui::Panel::right("preview")
+                .default_size(220.0)
+                .size_range(170.0..=420.0)
+                .resizable(true)
+                .frame(card(theme::bg_sidebar()))
+                .show(ui, |ui| close = self.preview.show(ui));
+            if close {
+                self.show_preview = false;
+            }
         }
 
         egui::CentralPanel::default()
