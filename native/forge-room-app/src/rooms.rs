@@ -64,6 +64,7 @@ pub struct RoomView {
     workspace_name: String,
     acting_as: String,
     error: Option<String>,
+    load_failed: bool,
     people_open: bool,
     tasks_open: bool,
     activity_open: bool,
@@ -84,6 +85,7 @@ impl Default for RoomView {
             workspace_name: String::new(),
             acting_as: String::new(),
             error: None,
+            load_failed: false,
             people_open: true,
             tasks_open: true,
             activity_open: true,
@@ -113,8 +115,11 @@ impl RoomView {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "project".into());
-        let store = room_state::store_for(root);
-        if store.path().exists() {
+        self.load_store(room_state::store_for(root));
+    }
+
+    fn load_store(&mut self, store: StateStore) {
+        if store.path().exists() || store.backup_path().exists() {
             match store.load() {
                 Ok(outcome) => {
                     if outcome.recovered_from_backup {
@@ -124,7 +129,10 @@ impl RoomView {
                     self.acting_as = outcome.state.host_id.clone();
                     self.state = Some(outcome.state);
                 }
-                Err(error) => self.error = Some(format!("Could not read this room: {error}")),
+                Err(error) => {
+                    self.error = Some(format!("Could not read this room: {error}"));
+                    self.load_failed = true;
+                }
             }
         }
         self.store = Some(store);
@@ -138,8 +146,9 @@ impl RoomView {
         &self.acting_as
     }
 
-    pub fn create_room(&mut self) {
+    pub fn create_room(&mut self) -> bool {
         self.apply(Intent::CreateRoom);
+        self.state.is_some()
     }
 
     /// Room name plus how many people and agents are in it, for the title and status bars.
@@ -196,6 +205,9 @@ impl RoomView {
     fn apply(&mut self, intent: Intent) {
         match intent {
             Intent::CreateRoom => {
+                if self.load_failed || self.state.is_some() {
+                    return;
+                }
                 let user = room_state::local_user_name();
                 let state = room_state::new_room(&self.workspace_name, &user);
                 self.acting_as = state.host_id.clone();
@@ -348,7 +360,7 @@ impl RoomView {
                     .fill(theme::button())
                     .corner_radius(6.0)
                     .min_size(egui::vec2(ui.available_width(), 32.0));
-                    if ui.add(button).clicked() {
+                    if ui.add_enabled(!self.load_failed, button).clicked() {
                         intents.push(Intent::CreateRoom);
                     }
                 });
@@ -1175,4 +1187,59 @@ pub fn short(text: &str, max: usize) -> String {
     let mut cut: String = text.chars().take(max.saturating_sub(1)).collect();
     cut.push('…');
     cut
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn damaged_room_cannot_be_replaced_by_create_room() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("forge-room-damaged-{nonce}.json"));
+        let store = StateStore::new(&path);
+        fs::write(&path, b"damaged room").unwrap();
+        fs::write(store.backup_path(), b"damaged backup").unwrap();
+
+        let mut view = RoomView::default();
+        view.load_store(store.clone());
+        assert!(view.load_failed);
+        assert!(!view.create_room());
+        assert_eq!(fs::read(&path).unwrap(), b"damaged room");
+        assert_eq!(fs::read(store.backup_path()).unwrap(), b"damaged backup");
+
+        fs::remove_file(&path).unwrap();
+        fs::remove_file(store.backup_path()).unwrap();
+    }
+
+    #[test]
+    fn missing_primary_recovers_existing_backup() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("forge-room-backup-{nonce}.json"));
+        let store = StateStore::new(&path);
+        let state = room_state::new_room("sample", "Admin");
+        fs::write(store.backup_path(), serde_json::to_vec(&state).unwrap()).unwrap();
+
+        let mut view = RoomView::default();
+        view.load_store(store.clone());
+        assert!(view.state().is_some());
+        assert!(!view.load_failed);
+        assert!(
+            view.error
+                .as_deref()
+                .unwrap()
+                .contains("restored from backup")
+        );
+        assert!(!path.exists());
+
+        fs::remove_file(store.backup_path()).unwrap();
+    }
 }
