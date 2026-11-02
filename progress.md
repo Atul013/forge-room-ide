@@ -1,6 +1,6 @@
 # Forge Room — progress and complete working plan
 
-**Updated:** 2 November 2026. **Active product:** native Rust IDE, Developer Preview `0.110.0-alpha.1`, Windows 11 x64. **Current phase:** Phase 1, visible Windows baseline. **Owners:** You and Codex.
+**Updated:** 2 November 2026. **Active product:** native Rust IDE, Developer Preview `0.110.0-alpha.1`, Windows 11 x64. **Current phase:** Phase 1, visible Windows baseline. **Owners:** @ZayedBH and @Atul013.
 
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
@@ -70,92 +70,90 @@ This inventory restores the product scope that the short roadmap hid. **Legacy**
 
 ## One ordered workflow, split equally
 
-Each row is a paired milestone with one owner on each side. The two owners should swap reviewer/implementer roles on the next row to balance effort. Neither owner closes a row from a build alone; record the observed app or service outcome and remaining limitations here.
+This is the **proposed division between @ZayedBH and @Atul013**. Atul has not confirmed these assignments in this document. Both tracks include implementation and verification; each person owns a distinct code area, reviews the other's integration points, and records evidence. Rebalance after the first two phases if the measured effort differs. Neither person closes a row from a build alone.
 
-| Order | You | Codex | Exit evidence |
+| Order | @ZayedBH | @Atul013 | Exit evidence |
 |---|---|---|---|
-| 1. Establish the native baseline | Run the Windows app and installer on your machine; record launch, open/edit/save, Git, terminal and room behavior, defects, and screen/DPI details. | Verify imported commit/file parity, run Rust tests/lints and packaging checks where available; fix reproducible source defects. | Baseline log with versions, commands, pass/fail, screenshots for UI defects, and measured gaps. |
-| 2. Resolve migration boundary | Decide which legacy assets/features must be retained and where the old code should be archived; approve the new primary branch/repo workflow. | Map each legacy feature to native port, replacement, or deferred status; prepare a reviewable cleanup/change set without touching historical docs. | Explicit feature matrix and approved branch/legacy disposition. |
-| 3. Make the editor dependable | Exercise real projects: large files, unusual encodings, external file changes, crashes, multiple windows and accessibility. Prioritize failures. | Implement file-change detection/recovery, editor performance work, and focused regression tests. Benchmark egui against candidate native components. | Repeatable startup/memory/large-file measures and successful data-loss checks. |
-| 4. Daily IDE loop | Choose representative language/project workflows and test navigation, diagnostics, Git merge, terminal, tasks and debugging. | Build native LSP, settings/keybindings, Git conflict flow, terminal usability and then DAP/tasks in small slices. | Real project acceptance for each shipped capability. |
-| 5. Native collaboration | Define a two-machine room scenario, consent rules, account/invite experience and evidence expectations. Test as a second participant. | Port authenticated transport, presence, chat, revocation, shared diffs and reconnection onto `forge-room-core`; keep private defaults. | Two-machine session with disconnect/rejoin, authorization and privacy checks. |
-| 6. AI and extension model | Choose the first provider and must-have extension workflows, including acceptable runtime and permission boundaries. Test prompts and approval UX. | Implement a provider-neutral native capability layer; start with declarative themes/grammars/snippets and LSP, then evaluate WASM extensions. | Real provider task with scoped context, approval, attributable edits, rollback and evidence. |
-| 7. Release candidate | Run installer, upgrade, uninstall, high-DPI/high-contrast and real-project acceptance; sign off on release notes. | Build reproducible CI artifacts, license/security checks, versioning and release measurements; fix release blockers. | Artifact hashes and a tested Windows release path with stated unsupported features. |
+| 1. Establish the native baseline | Own room, appearance and accessibility trials; fix reproducible defects in those areas. | Own editor, Git, terminal and installer trials; run Rust/CI checks and fix defects there. | Baseline log with build, pass/fail, defects and measured gaps for both tracks. |
+| 2. Resolve migration boundary | Map Team Lobby, Studio and product requirements to native room, appearance and AI slices. | Map editor, Git, terminal, installer and extension infrastructure to native slices. | One prioritized feature matrix with owner, dependencies and acceptance for every kept item. |
+| 3. Make the editor dependable | Own room persistence/recovery, theme readability and accessibility checks and fixes. | Own file change/save safety, editor performance and component benchmark. | No known silent data loss; repeatable startup/memory/large-file evidence. |
+| 4. Daily IDE loop | Implement settings/keybindings, task/test UI and project workflow integration; test sample projects. | Implement LSP/DAP adapters, Git conflict flow and terminal improvements; test sample projects. | Both sample projects complete the agreed coding path. |
+| 5. Native collaboration | Implement room UI, task/chat flows, consent display and cross-client UX. | Implement authenticated transport, invites, presence, revocation, persistence and reconnect. | Two machines pass authorization, reconnect and privacy scenarios. |
+| 6. AI and extension model | Implement Ask/Plan/Build experience, review/rollback UI and declarative assets; test real provider UX. | Implement provider adapter, scoped capabilities, command/edit execution and extension runtime boundaries. | Real provider task with scoped context, approval, attributable edits and rollback. |
+| 7. Release candidate | Own hands-on Windows acceptance, accessibility, product-facing fixes and release notes. | Own CI packaging, installer, license/security checks, hashes and release measurements. | Tested Windows artifacts and support claims backed by observed behavior. |
 
 ### Phase 1 — establish the native baseline (current)
 
 **Why:** Source-branch claims and a green CI job do not prove the merged app works on your Windows desktop. This phase establishes a reproducible starting point before more code changes.
 
-1. **You prepare a disposable trial.** Note the app commit/version, Windows build, display scale, and project path. Use a sample project without private credentials.
-2. **You exercise the editor.** Open a folder and multiple files; edit and save UTF-8 text; close a dirty tab using Save, Discard, and Cancel in separate trials; reopen the file and confirm the right content. Try quick open, command palette, find/replace, file search, and theme preview.
-3. **You exercise the other active areas.** On a disposable Git repo, try status, stage, commit, diff, branch, and sync. Run a command in the integrated terminal. Create a local room with a person, agent, task, dependency, evidence, and handoff. Record pass, fail, or not tested for each path.
-4. **You trial packaging.** On a disposable Windows user or VM, install, upgrade, launch, and uninstall. Check that a project outside the install directory and saved settings survive upgrade. Note installer UI, shortcuts, DPI, and any warnings.
-5. **Codex verifies the source and builds.** Confirm version references and module boundaries; run Rust formatting, checks, tests, and clippy for both crates; trigger the Windows package workflow separately from PR verification; inspect artifact names, checksums, build metrics, launch smoke, and install verification. Fix reproducible defects with targeted tests.
+1. **@ZayedBH prepare a disposable trial.** Note the app commit/version, Windows build, display scale, and project path. Use a sample project without private credentials.
+2. **@ZayedBH exercise the editor.** Open a folder and multiple files; edit and save UTF-8 text; close a dirty tab using Save, Discard, and Cancel in separate trials; reopen the file and confirm the right content. Try quick open, command palette, find/replace, file search, and theme preview.
+3. **@ZayedBH own the room and Studio baseline.** Create a local room with a person, agent, task, dependency, evidence and handoff. Test theme preview, readability, keyboard operation and display scale. Reproduce and fix defects in those areas on your branch.
+4. **@Atul013 owns the editor and platform baseline.** On a disposable Git repo, try status, stage, commit, diff, branch and sync; exercise the terminal and editor save paths. Install, upgrade, launch and uninstall in a disposable Windows user or VM. Check settings and external-project preservation, installer UI and shortcuts; fix defects in his areas.
+5. **Both verify their slices.** Run Rust formatting, checks, tests and clippy for affected crates. Atul triggers the package workflow and records hashes/build metrics/install evidence; you inspect room/appearance outcomes and cross-check the release notes. Each records pass, fail or not tested.
 6. **Together close the phase.** Record actual desktop behavior and outstanding defects. The exit condition is a visibly working edit/save loop and fresh installer result, with failures assigned by severity. Packaging smoke alone does not close interactive acceptance.
 
 ### Phase 2 — decide what migrates from Code OSS
 
 **Why:** Old Team Lobby and Studio source remains useful as a behavior reference, but the Rust app cannot run those VS Code extensions as-is.
 
-1. **You identify required outcomes.** Read the old feature inventory in `PROJECT_PROGRESS.md` and list the workflows you actually need. Mark each as daily-use essential, collaboration essential, later, or drop. Name exact extension capabilities you depend on, rather than only extension names.
-2. **You choose reference scenarios.** Pick one real development project and one two-person room workflow. Decide what the external legacy backup must retain. Keep it intact until every needed source and document is accounted for.
-3. **Codex maps the implementation.** For each legacy feature, record its native equivalent, missing domain rule, needed platform adapter, test evidence, and priority. Separate reusable task/sharing rules from webview and Node host code.
+1. **@ZayedBH map collaboration and product behavior.** Read `PROJECT_PROGRESS.md` and the old Team Lobby/Studio sources. For each room, appearance and AI feature, record the wanted outcome, native equivalent, missing rule, priority and test scenario. Pick one real project and a two-person room scenario.
+2. **@Atul013 maps editor and platform behavior.** For editor, Git, terminal, language tooling, extensions and installer, record the current native equivalent, missing adapter, priority and test. Separate reusable Rust code from Code OSS/Node assumptions.
+3. **Both account for legacy sources.** Keep restored `extensions/`, `services/` and `releases/` as references until needed files and documents are mapped. Agree which specific modules to port and which to defer; avoid an undifferentiated "port everything" task.
 4. **Together order the backlog.** Select the first three bounded native slices, each with a user outcome and a checkable exit condition. This phase ends with an explicit feature matrix, not a claim of parity.
 
 ### Phase 3 — protect files and measure editor performance
 
 **Why:** Data safety and responsiveness must be established before expanding the editor.
 
-1. **You test difficult files.** Try a large text file, many tabs, a file changed externally while open, Save As, crash/relaunch, non-UTF-8 input, permission errors, and high display scale. Record startup time, idle and loaded memory, responsiveness, and any lost or overwritten edits.
-2. **You rank failures.** Mark silent data loss or overwrite as a blocker. Record keyboard and accessibility issues separately from visual preferences.
-3. **Codex implements safety first.** Add external-change detection and a conflict choice before overwriting changed content. Cover dirty-buffer, save-failure, and room-state recovery paths with meaningful regression tests.
-4. **Codex benchmarks the editor.** Measure representative file sizes and compare Rust editor components only if egui misses agreed thresholds. Record startup, memory, large-file behavior, accessibility, integration cost, and maintenance risk.
+1. **@ZayedBH own room and appearance safety.** Exercise room save/reload/corrupt-state recovery and theme readability at normal and high display scale. Implement recovery or accessibility fixes in the room and appearance paths, with regression tests.
+2. **@Atul013 owns document safety.** Try large text, many tabs, external file edits, Save As, crash/relaunch, non-UTF-8 input and permission errors. Add external-change detection and a conflict choice before overwriting changed content; cover dirty-buffer and save-failure paths.
+3. **Both measure.** Atul records startup, memory and large-file behavior and compares Rust editor components if egui misses thresholds. You record keyboard, contrast, screen-reader and room-persistence behavior. Treat silent data loss as a blocker in either track.
 5. **Together make the component decision.** Exit only after there is no known silent edit loss, measurements can be repeated, and the editor-core choice is evidence-based.
 
 ### Phase 4 — complete the daily IDE loop
 
 **Why:** The native product should support normal coding work before collaboration adds more moving parts.
 
-1. **You define two sample projects and languages.** Write the daily path: open, search, navigate, diagnose, edit, run tests, inspect Git, resolve a conflict, and commit. Specify essential shortcuts and settings.
-2. **Codex builds in small slices.** Add native LSP diagnostics/completion/hover/definition; settings and keybinding persistence; terminal scrollback, copy and shell selection; Git conflict handling; task/test execution; then a native DAP path. Keep placeholder tabs labelled until they show live data.
-3. **You test each slice.** Include missing tools, failed tests, disconnected remotes, and invalid files, not just success paths.
+1. **@ZayedBH own the workflow surface.** Choose two sample projects and implement settings/keybinding persistence, task/test discovery and run controls, and clear Problems/Run states. Test missing tools, failed tests and invalid projects.
+2. **@Atul013 owns the engine adapters.** Add native LSP diagnostics/completion/hover/definition, DAP support, Git conflict handling and terminal scrollback/copy/shell selection in separate slices. Test disconnected remotes and failed processes.
+3. **Both integrate and test.** Walk the same daily path—open, search, diagnose, edit, test, inspect Git, resolve conflict and commit—on both sample projects. Keep placeholders labelled until backed by live results.
 4. **Together close against real projects.** Both sample projects must complete the agreed path without returning to Code OSS. A unit test or UI placeholder does not satisfy this gate.
 
 ### Phase 5 — bring Forge Room collaboration online
 
 **Why:** The local room model is not yet a secure, recoverable multi-machine room.
 
-1. **You define a two-machine trial.** Include host, invited participant, owned agent, task handoff, shared diff, chat, disconnect, and reconnect. Specify default visibility for presence, paths, diffs, saved content, unsaved buffers, terminal output, and agent context.
-2. **Codex adds authenticated transport.** Bind network identities to `forge-room-core`; add invite creation, expiry, revocation, presence, synchronized tasks, chat, diff proposals, and reconnection one slice at a time. Validate authorization and recipient visibility before display.
-3. **You test both sides.** Try revoked and expired invites, an unauthorized task change, stale state after reconnect, and a mismatched project.
+1. **@ZayedBH own room behavior and UI.** Define the two-machine trial and default sharing choices. Implement participant/task/chat views, consent and revocation controls, shared-diff review, and clear offline/reconnect states.
+2. **@Atul013 owns transport and identity.** Bind authenticated identities to `forge-room-core`; implement invite expiry/revocation, presence, event delivery, persistence and reconnect. Enforce authorization and recipient visibility before data reaches the UI.
+3. **Both test both clients.** Try expired/revoked invites, unauthorized task changes, stale state after reconnect and project mismatch. Fix failures in each owner's layer and repeat the complete scenario.
 4. **Together record the supported tier.** Exit only with two independent clients completing the scenario and preserving privacy. State whether the service is LAN/self-hosted or production-ready; a local protocol test cannot decide that.
 
 ### Phase 6 — connect AI and define extensions
 
 **Why:** The AI panel is layout only, and arbitrary VS Code JavaScript extensions do not run in this Rust process.
 
-1. **You choose one provider and one real task.** Define exactly which files/context may be read, which commands/edits need approval, what evidence is required, and how you will reject or roll back an action. Identify required extension capabilities as theme, grammar, snippet, LSP, DAP, or executable logic.
-2. **Codex builds a native capability layer.** Distinguish context read, command execution, file edit, network use, and delegation. Keep grants scoped, visible, attributable, and recoverable.
-3. **Codex connects modes incrementally.** Implement Ask, then Plan, then Build with explicit proposed edits, checkpoints, review, and rollback. Add declarative themes/grammars/snippets and native language-server support before evaluating a sandboxed WASM extension API.
-4. **You test the approval flow with the real provider.** Include successful execution, denied permission, rejected edit, and rollback. Exit only when the selected task works end to end with correct scope and evidence.
+1. **@ZayedBH own the interaction and asset layer.** Select one provider/task. Implement Ask/Plan/Build panels, context preview, approval and proposed-diff review, checkpoints and rollback controls. Port declarative themes, grammars and snippets with compatibility labels.
+2. **@Atul013 owns execution boundaries.** Implement the provider adapter and native capability layer for context read, command execution, file edit, network use and delegation. Enforce scoped grants, attribution, cancellation and recoverability; evaluate WASM only after sandbox limits are designed.
+3. **Both run the provider trial.** Test success, denied permission, rejected edit and rollback with the real provider. Compare visible UI state with execution logs and actual file changes before closing the slice.
 
 ### Phase 7 — prepare a release candidate
 
 **Why:** Artifact creation, CI smoke, and a usable release are different milestones.
 
-1. **Codex builds reproducible artifacts.** Run Windows CI for Rust build, license report, portable archive, installer, checksums, silent install/upgrade/uninstall, and launch smoke. Compare binary, installer, release-note, and tag versions; review signing and permissions.
-2. **Codex measures and documents.** Record package and installed size, visible startup, stable idle memory, editor and room workload memory, exact hashes, known limits, and a recovery path to the prior release.
-3. **You perform hands-on acceptance.** Install, upgrade, launch, and uninstall on Windows 11 x64; test default and high-DPI displays, keyboard access, high contrast, a real project, and preservation of settings and external files.
+1. **@Atul013 owns release engineering.** Run Windows CI for build, license report, portable archive, installer, checksums, silent install/upgrade/uninstall and launch smoke. Compare binary, installer, notes and tag versions; review signing, permissions, package size and memory metrics.
+2. **@ZayedBH own product acceptance and release presentation.** Perform hands-on install/upgrade/launch/uninstall on Windows 11 x64, test default/high-DPI and high-contrast displays, keyboard access and a real project. Fix product-facing defects, write accurate release notes and check settings/external-file preservation.
+3. **Both cross-review.** You inspect artifacts and metrics; Atul reproduces critical product defects. Agree on known limits and a recovery path to the prior release.
 4. **Together sign off narrowly.** Release notes must distinguish working features, placeholders, unsupported extension tiers, unsigned status, and platforms not tested. Exit when artifacts and observed Windows behavior support every published claim.
 
 ## Working rules
 
 1. **Define the outcome.** Write what the person should be able to do, what must never happen, and the observable success condition. Link the requirement or bug.
-2. **Record the starting point.** Note branch, commit, existing behavior, affected files, and related uncommitted work. Preserve historical local edits and the external legacy backup.
+2. **Record the starting point.** Note branch, commit, existing behavior, affected files, and related uncommitted work. Preserve historical local edits and the restored legacy reference folders.
 3. **Change one bounded slice.** Branch from `main`. Put reusable room policy in `forge-room-core` and UI/platform adapters in `forge-room-app`. Do not mix feature work with historical-document cleanup.
 4. **Run focused checks.** Format, check, test, and clippy the affected crate; then use Windows CI. Add tests for policy, persistence, permission boundaries, and real regressions.
 5. **Try the actual workflow.** You test a representative Windows project. For network or provider behavior, test two independent clients or the real provider. Capture observed behavior, not only a passing process.
-6. **Review and integrate.** Codex records code and test evidence; you review the product result. Merge only when the slice's exit gate is met or clearly label an experimental gap.
+6. **Review and integrate.** Atul records code and test evidence; you review the product result. Merge only when the slice's exit gate is met or clearly label an experimental gap.
 7. **Update this ledger.** Record date, owner, branch/commit, commands, Windows observation, limitations, and next owner action. Keep source integrated, automated pass, interactive pass, and multi-client/provider pass distinct.
 
 Keep room and AI execution permissions explicit. Local policy checks do not establish secure multi-machine behavior. Do not claim compatibility with VS Code JavaScript extensions. Keep credentials, tokens, private project files, and room data out of commits and screenshots.
@@ -207,6 +205,6 @@ Next action and owner:
 
 ## Next checkpoint
 
-1. **You:** perform the Phase 1 visible Windows trial in a disposable project. Record editor, Git, terminal, room, themes, and installer results.
-2. **Codex:** run or trigger the separate Windows package job, inspect artifact evidence, and reconcile stale version/status claims in current-facing docs.
+1. **@ZayedBH:** perform the Phase 1 room, theme and accessibility trial in a disposable project; record defects and fix reproducible issues in your areas.
+2. **@Atul013:** perform the editor, Git, terminal and installer trial; run the separate Windows package job, inspect artifact evidence and fix reproducible issues in his areas.
 3. **Together:** review failures, choose the first bounded fix, and close the Phase 1 gate before Phase 2.
