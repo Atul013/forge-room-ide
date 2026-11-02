@@ -504,6 +504,15 @@ Next action and owner:
 
 ## Next checkpoint
 
+### Phase 1 evidence — 2 November 2026
+
+- **PR check:** `ZayedBH/forge-room-ide` had no open pull requests when checked.
+- **Integration update:** [PR #4](https://github.com/ZayedBH/forge-room-ide/pull/4) was subsequently merged into `main` at `c495aafa260694150c86908e6e93461b4027ecae`. Its editor safety, terminal, conflict and lobby changes are source-integrated; the PR's verify and branch package jobs passed. Interactive acceptance remains separate. The PR also removed many tracked legacy files, so earlier legacy-folder inventory in this document needs a separate reconciliation before relying on those paths.
+- **B01 partial trial, @ZayedBH track:** Downloaded the repository's `v0.110.0-alpha.1` portable archive into a disposable temporary folder. SHA-256 `51CDCC7E1E5CFF47CFFE35721DCB22344AED01749417985BCA2D8C14EDF2D966` matched the release asset digest. Launched `forge-room-early-preview.exe` against a temporary sample project. The app showed version `0.110.0-alpha.1`; keyboard shortcut `Ctrl+Shift+R` opened Room. Created a local room as Admin, exited, reopened the same project, and observed `Room: sample` and Admin as host. The state file retained `schemaVersion: 1`, one participant, and private sharing defaults.
+- **B01 status: needs hands-on check.** The screenshot channel timed out, so theme preview/restore, readability, display scale, room task/dependency/evidence/handoff, and full keyboard accessibility were not verified. No B01 completion claim. Repeated the launch and Room persistence observation using the current-`main` CI portable artifact.
+- **Build gate:** `cargo` and a Visual Studio C++ toolchain were unavailable on this Windows host. The [current-main Windows verify/package run](https://github.com/ZayedBH/forge-room-ide/actions/runs/41438036066) passed formatting, locked checks, tests and clippy for both Rust crates; it built and uploaded the portable archive and installer. Downloaded archive SHA-256 `44C97EC8C9D7FEBAF48403C5FDF7F98C4A66FF682C71016F90ED5A955C7F70D8` matched `SHA256SUMS.txt`. CI's noninteractive installer check passed upgrade, preservation, shortcuts and uninstall; `interactiveInstallerUiVerified` was `false`. The current-main portable app launched on this desktop and displayed the persisted local room. B02 hands-on installer trial and Phase 1 exit remain open.
+- **Next action:** Complete B01 theme/task/accessibility checks and B02 desktop/installer trials using the current-main artifacts. Mark slices done only after their visible exit conditions pass.
+
 1. **@ZayedBH:** perform the Phase 1 room, theme and accessibility trial in a disposable project; record defects and fix reproducible issues in your areas.
-2. **@Atul013:** perform the editor, Git, terminal and installer trial; run the separate Windows package job, inspect artifact evidence and fix reproducible issues in his areas.
+2. **@Atul013:** inspect the completed Windows package artifact evidence, perform the editor, Git, terminal and interactive installer trial, and fix reproducible issues in his areas.
 3. **Together:** review failures, choose the first bounded fix, and close the Phase 1 gate before Phase 2.
