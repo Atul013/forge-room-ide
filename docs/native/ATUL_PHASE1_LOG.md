@@ -8,7 +8,7 @@ Nothing here replaces the hands-on desktop trial that `progress.md` Phase 1 requ
 | Check | Result | Evidence |
 |---|---|---|
 | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --locked` for `forge-room-core` | Pass | 7 tests |
-| Same three for `forge-room-app` | Pass | 66 tests, 4 ignored (benchmark and real-terminal tests, run by hand) |
+| Same three for `forge-room-app` | Pass | 75 tests, 4 ignored (benchmark and real-terminal tests, run by hand) |
 | Ignored real-terminal tests (`runs_a_real_command_through_the_pty`, `scrolling_back_reveals_older_output`, `ctrl_c_at_the_prompt_discards_the_typed_line`) | Pass | Run by hand against ConPTY and PowerShell |
 | Windows package workflow in CI | Not tested | Needs a push and a workflow run |
 | Installer install, upgrade, uninstall on a clean Windows user | Not tested | Needs a disposable user or VM |
@@ -42,6 +42,23 @@ measurements were not taken.
   the prompt, and the next command ran. The same check inside a test started from the agent's own shell failed
   because that shell passes "ignore Ctrl+C" on to its children, so there is no automated test for it.
 - Not done: shell selection, copy of a selection that spans scrollback, paste confirmation for multi-line text.
+
+### I03 (partial): merge conflicts in Source Control
+
+- A conflicted file is shown once, in a "Merge Conflicts" group, instead of under both staged and unstaged changes.
+- Right-click offers Accept Current Change or Accept Incoming Change (`git checkout --ours|--theirs`, then `git add`).
+  Staging a hand-edited file marks it resolved. Committing is blocked while any conflict is open.
+- Evidence: a unit test against a real merge conflict (both sides), and the running app showing the group and menu.
+- Not done: an in-editor merge view with per-hunk choices; conflict resolution for delete/modify conflicts (`checkout
+  --ours` fails when a side has no version of the file and the error is shown as is).
+
+### Bugs found by trying the running app
+
+- The current-line highlight was drawn over the text of the line being edited, hiding it. Fixed (paint order).
+- Save As onto an existing file reported a false "changed on disk" conflict and switched the tab to a file it had not
+  written. Fixed; tests added.
+- One run of the full test suite failed `git::tests::stage_commit_and_diff_in_a_real_repository`. It passed on every
+  rerun (about 60, including parallel runs), so the cause is unknown. Treat it as a possible timing flake until seen again.
 
 ### Room Lobby and shell (new reference design)
 
