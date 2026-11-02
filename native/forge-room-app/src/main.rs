@@ -120,8 +120,20 @@ fn startup_error_path() -> PathBuf {
 enum Pending {
     CloseTab(usize),
     Quit,
-    /// Tab `index` has unsaved edits and its file changed on disk.
-    DiskConflict(usize),
+    /// Tab `index` has unsaved edits and its file changed on disk; `Resume` is what the save was
+    /// for, to carry on with once the conflict is settled.
+    DiskConflict(usize, Resume),
+}
+
+/// What to do after a disk conflict that interrupted a save has been resolved.
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum Resume {
+    #[default]
+    Nothing,
+    /// Close the tab that was being saved.
+    CloseTab,
+    /// Carry on saving every dirty tab, then quit.
+    Quit,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -152,6 +164,8 @@ struct ForgeRoomApp {
     pending: Option<Pending>,
     allow_close: bool,
     last_disk_check: std::time::Instant,
+    /// Set around a save that may hit a conflict, so the conflict dialog knows what to resume.
+    resume: Resume,
     lobby: lobby::Lobby,
     show_lobby: bool,
     runtimes: Vec<String>,
@@ -246,6 +260,7 @@ impl ForgeRoomApp {
             pending: None,
             allow_close: false,
             last_disk_check: std::time::Instant::now(),
+            resume: Resume::Nothing,
             lobby: lobby::Lobby::default(),
             show_lobby: false,
             runtimes: Vec::new(),
@@ -360,7 +375,10 @@ impl ForgeRoomApp {
                 true
             }
             Err(document::DocumentError::ChangedOnDisk) => {
-                self.pending = Some(Pending::DiskConflict(index));
+                self.pending = Some(Pending::DiskConflict(
+                    index,
+                    std::mem::take(&mut self.resume),
+                ));
                 false
             }
             Err(error) => {
@@ -2403,13 +2421,13 @@ impl ForgeRoomApp {
         let Some(pending) = &self.pending else {
             return;
         };
-        if let Pending::DiskConflict(index) = pending {
-            let index = *index;
-            self.disk_conflict_dialog(context, index);
+        if let Pending::DiskConflict(index, resume) = pending {
+            let (index, resume) = (*index, *resume);
+            self.disk_conflict_dialog(context, index, resume);
             return;
         }
         let (message, save_label) = match pending {
-            Pending::DiskConflict(_) => return,
+            Pending::DiskConflict(..) => return,
             Pending::CloseTab(index) => {
                 let name = self
                     .tabs
@@ -2460,30 +2478,53 @@ impl ForgeRoomApp {
         match (pending, choice) {
             (_, Choice::Cancel) => {}
             (Some(Pending::CloseTab(index)), Choice::Save) => {
-                if self.save_index(index, false) {
+                self.resume = Resume::CloseTab;
+                let saved = self.save_index(index, false);
+                self.resume = Resume::Nothing;
+                if saved {
                     self.tabs.close(index);
                 }
             }
             (Some(Pending::CloseTab(index)), Choice::Discard) => self.tabs.close(index),
-            (Some(Pending::Quit), Choice::Save) => {
-                let dirty: Vec<usize> = (0..self.tabs.tabs.len())
-                    .filter(|index| self.tabs.tabs[*index].doc.is_dirty())
-                    .collect();
-                if dirty.into_iter().all(|index| self.save_index(index, false)) {
-                    self.allow_close = true;
-                    context.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            }
+            (Some(Pending::Quit), Choice::Save) => self.save_all_and_quit(context),
             (Some(Pending::Quit), Choice::Discard) => {
                 self.allow_close = true;
                 context.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            (Some(Pending::DiskConflict(_)) | None, _) => {}
+            (Some(Pending::DiskConflict(..)) | None, _) => {}
         }
         self.focus_editor = true;
     }
 
-    fn disk_conflict_dialog(&mut self, context: &egui::Context, index: usize) {
+    /// Save every dirty tab and close the window. If a tab hits a disk conflict the dialog takes
+    /// over, remembers this intent, and calls here again once the conflict is settled.
+    fn save_all_and_quit(&mut self, context: &egui::Context) {
+        let dirty: Vec<usize> = (0..self.tabs.tabs.len())
+            .filter(|index| self.tabs.tabs[*index].doc.is_dirty())
+            .collect();
+        self.resume = Resume::Quit;
+        let all_saved = dirty.into_iter().all(|index| self.save_index(index, false));
+        self.resume = Resume::Nothing;
+        if all_saved {
+            self.allow_close = true;
+            context.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    /// Carry on with what a conflicted save was for.
+    fn resume_after_conflict(&mut self, context: &egui::Context, index: usize, resume: Resume) {
+        match resume {
+            Resume::Nothing => {}
+            Resume::CloseTab => {
+                if index < self.tabs.tabs.len() {
+                    self.tabs.close(index);
+                }
+            }
+            Resume::Quit => self.save_all_and_quit(context),
+        }
+    }
+
+    fn disk_conflict_dialog(&mut self, context: &egui::Context, index: usize, resume: Resume) {
         let Some(name) = self.tabs.tabs.get(index).map(|tab| tab.title()) else {
             self.pending = None;
             return;
@@ -2522,24 +2563,35 @@ impl ForgeRoomApp {
         let Some(tab) = self.tabs.tabs.get_mut(index) else {
             return;
         };
-        match action {
+        // True when the choice settled the conflict, so the interrupted operation can go on.
+        let settled = match action {
             0 => match tab.doc.overwrite() {
                 Ok(()) => {
                     self.status = format!("Saved {name}, replacing the outside changes");
                     self.refresh_git();
+                    true
                 }
-                Err(error) => self.status = format!("Cannot save {name}: {error}"),
+                Err(error) => {
+                    self.status = format!("Cannot save {name}: {error}");
+                    false
+                }
             },
             1 => match tab.doc.reload() {
                 Ok(()) => {
-                    self.status = format!("Reloaded {name} from disk; your edits were discarded")
+                    self.status = format!("Reloaded {name} from disk; your edits were discarded");
+                    true
                 }
-                Err(error) => self.status = format!("Cannot reload {name}: {error}"),
+                Err(error) => {
+                    self.status = format!("Cannot reload {name}: {error}");
+                    false
+                }
             },
-            2 => {
-                self.save_index(index, true);
-            }
-            _ => {}
+            2 => self.save_index(index, true),
+            // Cancel also cancels the close or quit that led here.
+            _ => false,
+        };
+        if settled {
+            self.resume_after_conflict(context, index, resume);
         }
         self.focus_editor = true;
     }

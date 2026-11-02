@@ -8,7 +8,7 @@ Nothing here replaces the hands-on desktop trial that `progress.md` Phase 1 requ
 | Check | Result | Evidence |
 |---|---|---|
 | `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --locked` for `forge-room-core` | Pass | 7 tests |
-| Same three for `forge-room-app` | Pass | 75 tests, 4 ignored (benchmark and real-terminal tests, run by hand) |
+| Same three for `forge-room-app` | Pass | 79 tests, 5 ignored (benchmark and real-terminal tests, run by hand) |
 | Ignored real-terminal tests (`runs_a_real_command_through_the_pty`, `scrolling_back_reveals_older_output`, `ctrl_c_at_the_prompt_discards_the_typed_line`) | Pass | Run by hand against ConPTY and PowerShell |
 | Windows package workflow in CI | Not tested | Needs a push and a workflow run |
 | Installer install, upgrade, uninstall on a clean Windows user | Not tested | Needs a disposable user or VM |
@@ -59,6 +59,25 @@ measurements were not taken.
   written. Fixed; tests added.
 - One run of the full test suite failed `git::tests::stage_commit_and_diff_in_a_real_repository`. It passed on every
   rerun (about 60, including parallel runs), so the cause is unknown. Treat it as a possible timing flake until seen again.
+
+### Independent code review (Codex), all eight findings fixed
+
+Codex reviewed the Rust changes read-only (`design-assets/forge-room-ui-spec/CODE_REVIEW_NOTES.md`), reproducing most
+findings with probes. Each fix has a regression test unless noted.
+
+1. Saving trusted an unchanged file size and time, so an outside tool that rewrote the bytes and restored the time
+   was overwritten silently. Saves now compare content; `open()` takes the fingerprint before reading.
+2. One very long line could stall a frame far past the 12 ms budget. Lines over 4000 bytes are drawn plain.
+3. Resizing the terminal with a selection could panic in `contents_between`. The selection is cleared on resize
+   and clamped when read.
+4. A settings file with huge `start_epoch` or `duration_hours` overflowed the end time. It saturates; duration is capped.
+5. Failed lobby saves were silently dropped. Saves are atomic (temp file, then rename), report errors, and retry.
+6. Output scrolling under a terminal selection changed what Copy copied. The text is captured when the drag ends.
+7. Copying a blank selection sent Ctrl+C to the running program. Only "no selection" interrupts now.
+8. After a disk conflict, the Close, Save All or Quit that triggered the save was forgotten. The dialog now remembers
+   it and resumes after Overwrite, Reload or Save As; Cancel cancels the whole operation. Verified in the running app
+   (edit, change the file outside, close tab, Save, Overwrite: file saved and tab closed). No automated test: it is
+   window-state logic.
 
 ### Room Lobby and shell (new reference design)
 
