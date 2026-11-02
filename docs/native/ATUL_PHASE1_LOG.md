@@ -48,7 +48,10 @@ measurements were not taken.
 - A conflicted file is shown once, in a "Merge Conflicts" group, instead of under both staged and unstaged changes.
 - Right-click offers Accept Current Change or Accept Incoming Change (`git checkout --ours|--theirs`, then `git add`).
   Staging a hand-edited file marks it resolved. Committing is blocked while any conflict is open.
-- Evidence: a unit test against a real merge conflict (both sides), and the running app showing the group and menu.
+- Staging a conflicted file is refused while `<<<<<<<` and `>>>>>>>` markers remain (message in the status bar).
+- Evidence: a unit test against a real merge conflict (both sides), and the whole flow driven in the running app on a real
+  repository: right-click, Accept Incoming Change, the file moves to Staged Changes, type a message, Ctrl+Enter, and the
+  merge commit appears in the graph with a clean working tree.
 - Not done: an in-editor merge view with per-hunk choices; conflict resolution for delete/modify conflicts (`checkout
   --ours` fails when a side has no version of the file and the error is shown as is).
 
