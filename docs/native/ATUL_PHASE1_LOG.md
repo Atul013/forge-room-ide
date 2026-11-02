@@ -37,9 +37,10 @@ measurements were not taken.
 - egui turns Ctrl+C into a `Copy` event and Ctrl+X into `Cut`, which the terminal used to drop. They now map back to
   0x03 and 0x18 when nothing is selected.
 - Moved `vt100` from 0.15 to 0.16: 0.15 panics when scrolled back further than one screen.
-- **Open defect or environment artifact:** in a test started from the agent's shell, 0x03 reached the PowerShell
-  prompt (it showed `^C` and discarded the line) but did **not** interrupt a running `ping` or `Start-Sleep`. Not
-  reproduced or ruled out on a normal desktop launch. Check this by hand: run `ping -n 40 127.0.0.1` in the terminal, press Ctrl+C.
+- **Ctrl+C interrupting a running program: verified in the running app.** Launched through Explorer (so it inherits
+  nothing from the agent's shell), typing `ping -n 40 127.0.0.1` and pressing Ctrl+C printed `Control-C`, returned
+  the prompt, and the next command ran. The same check inside a test started from the agent's own shell failed
+  because that shell passes "ignore Ctrl+C" on to its children, so there is no automated test for it.
 - Not done: shell selection, copy of a selection that spans scrollback, paste confirmation for multi-line text.
 
 ### Room Lobby and shell (new reference design)
