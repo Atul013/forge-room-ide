@@ -80,6 +80,7 @@ pub struct RoomView {
     activity_open: bool,
     expanded: Option<String>,
     task_query: String,
+    focus_new_task: bool,
     checked: HashSet<(String, String)>,
     new_task: NewTask,
     new_person: NewPerson,
@@ -103,6 +104,7 @@ impl Default for RoomView {
             activity_open: true,
             expanded: None,
             task_query: String::new(),
+            focus_new_task: false,
             checked: HashSet::new(),
             new_task: NewTask::default(),
             new_person: NewPerson::default(),
@@ -590,6 +592,7 @@ impl RoomView {
         let (_, add) = section(ui, "TASKS", &mut self.tasks_open, state.tasks.len(), true);
         if add {
             self.new_task.open = !self.new_task.open;
+            self.focus_new_task = self.new_task.open;
             if self.new_task.owner.is_empty() {
                 self.new_task.owner = self.acting_as.clone();
             }
@@ -657,12 +660,16 @@ impl RoomView {
     }
 
     fn new_task_form(&mut self, ui: &mut egui::Ui, state: &RoomState, intents: &mut Vec<Intent>) {
+        let focus_title = std::mem::take(&mut self.focus_new_task);
         form_frame(ui, |ui| {
-            ui.add(
+            let title = ui.add(
                 egui::TextEdit::singleline(&mut self.new_task.title)
                     .hint_text("What needs doing?")
                     .desired_width(f32::INFINITY),
             );
+            if focus_title {
+                title.request_focus();
+            }
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Owner").color(theme::text_dim()));
                 let mut owner = self.new_task.owner.clone();
