@@ -36,6 +36,8 @@ pub struct LobbyConfig {
     pub kind: String,
     pub duration_hours: u32,
     pub start_epoch: u64,
+    /// The countdown only runs once someone starts it; a new room has no clock.
+    pub timer_running: bool,
     pub private: bool,
     pub goal: String,
     pub goals: Vec<(String, bool)>,
@@ -91,6 +93,7 @@ impl Default for LobbyConfig {
             kind: "Hackathon".into(),
             duration_hours: 24,
             start_epoch: start,
+            timer_running: false,
             private: true,
             goal: String::new(),
             goals: Vec::new(),
@@ -275,6 +278,22 @@ impl Lobby {
     /// Seconds left in the room's time box.
     pub fn remaining(&self) -> u64 {
         self.end_epoch().saturating_sub(now())
+    }
+
+    /// True while a started timer still has time left; this is what the title bar shows.
+    pub fn timer_active(&self) -> bool {
+        self.config.timer_running && self.remaining() > 0
+    }
+
+    /// Start the time box now. Milestone dates were laid out from the old start, so they move with it.
+    fn start_timer(&mut self) {
+        let started = now();
+        let shift = started.saturating_sub(self.config.start_epoch);
+        for milestone in &mut self.config.milestones {
+            milestone.due_epoch = milestone.due_epoch.saturating_add(shift);
+        }
+        self.config.start_epoch = started;
+        self.config.timer_running = true;
     }
 
     pub fn kind_label(&self) -> &str {
@@ -578,19 +597,62 @@ impl Lobby {
         });
     }
 
-    fn countdown(&self, ui: &mut Ui) {
-        let remaining = self.remaining();
+    fn countdown(&mut self, ui: &mut Ui) {
+        let remaining = if self.config.timer_running {
+            self.remaining()
+        } else {
+            0
+        };
         let (hours, minutes, seconds) = (remaining / 3600, remaining / 60 % 60, remaining % 60);
         let size = vec2(242.0, 83.0);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        {
+            let painter = ui.painter();
+            painter.rect_filled(rect, 6.0, card_fill());
+            painter.rect_stroke(
+                rect,
+                6.0,
+                Stroke::new(1.0, theme::border()),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if !self.config.timer_running {
+            ui.painter().text(
+                rect.center_top() + vec2(0.0, 18.0),
+                Align2::CENTER_CENTER,
+                format!("{}-hour time box", self.config.duration_hours),
+                FontId::proportional(13.0),
+                theme::text(),
+            );
+            ui.painter().text(
+                rect.center_top() + vec2(0.0, 40.0),
+                Align2::CENTER_CENTER,
+                "No timer running",
+                FontId::proportional(14.0),
+                theme::text_dim(),
+            );
+            let button =
+                Rect::from_center_size(rect.center_bottom() - vec2(0.0, 17.0), vec2(120.0, 26.0));
+            let response = ui.interact(button, ui.scope_id().with("start-timer"), Sense::click());
+            let fill = if response.hovered() {
+                theme::mix(theme::button(), Color32::WHITE, 0.08)
+            } else {
+                theme::button()
+            };
+            ui.painter().rect_filled(button, 5.0, fill);
+            ui.painter().text(
+                button.center(),
+                Align2::CENTER_CENTER,
+                "Start timer",
+                FontId::proportional(13.0),
+                theme::button_text(),
+            );
+            if response.on_hover_text("Start the countdown now").clicked() {
+                self.start_timer();
+            }
+            return;
+        }
         let painter = ui.painter();
-        painter.rect_filled(rect, 6.0, card_fill());
-        painter.rect_stroke(
-            rect,
-            6.0,
-            Stroke::new(1.0, theme::border()),
-            egui::StrokeKind::Inside,
-        );
         painter.text(
             rect.center_top() + vec2(0.0, 16.0),
             Align2::CENTER_CENTER,
@@ -602,6 +664,24 @@ impl Lobby {
             FontId::proportional(13.0),
             theme::text(),
         );
+        // A small close mark in the corner stops the timer.
+        let stop = Rect::from_center_size(rect.right_top() + vec2(-14.0, 14.0), vec2(20.0, 20.0));
+        let stop_response = ui.interact(stop, ui.scope_id().with("stop-timer"), Sense::click());
+        icons::draw(
+            ui.painter(),
+            "close",
+            stop.center(),
+            13.0,
+            if stop_response.hovered() {
+                theme::text()
+            } else {
+                theme::text_dim()
+            },
+        );
+        if stop_response.on_hover_text("Stop the timer").clicked() {
+            self.config.timer_running = false;
+        }
+        let painter = ui.painter();
         for (index, (value, unit)) in [(hours, "HRS"), (minutes, "MIN"), (seconds, "SEC")]
             .into_iter()
             .enumerate()
@@ -827,11 +907,20 @@ impl Lobby {
                                     .on_hover_text("Drag or click to change");
                                 });
                             });
+                            let running = self.config.timer_running;
                             kv(ui, "calendar", "Start Time", |ui| {
-                                ui.label(format_time(start));
+                                ui.label(if running {
+                                    format_time(start)
+                                } else {
+                                    "Not started".to_string()
+                                });
                             });
                             kv(ui, "calendar", "End Time", |ui| {
-                                ui.label(format_time(end));
+                                ui.label(if running {
+                                    format_time(end)
+                                } else {
+                                    "Not started".to_string()
+                                });
                             });
                         },
                     );
@@ -2049,5 +2138,30 @@ mod tests {
         assert_eq!(lobby.remaining(), 0);
         lobby.config.start_epoch = now();
         assert!(lobby.remaining() > 23 * 3600);
+    }
+
+    #[test]
+    fn a_new_room_has_no_running_timer_until_started() {
+        let mut lobby = Lobby::default();
+        assert!(!lobby.timer_active());
+        let first_due = lobby.config.milestones[1].due_epoch;
+        lobby.config.start_epoch = now().saturating_sub(3 * 3600);
+        lobby.config.milestones[1].due_epoch = lobby.config.start_epoch + 4 * 3600;
+        let before = lobby.config.milestones[1].due_epoch;
+
+        lobby.start_timer();
+        assert!(lobby.timer_active());
+        assert!(lobby.remaining() > 23 * 3600);
+        // Milestones keep their offsets from the (moved) start.
+        assert_eq!(
+            lobby.config.milestones[1].due_epoch - lobby.config.start_epoch,
+            4 * 3600
+        );
+        assert!(lobby.config.milestones[1].due_epoch > before);
+        let _ = first_due;
+
+        // A finished box is not "active" even though it was started.
+        lobby.config.start_epoch = now().saturating_sub(48 * 3600);
+        assert!(!lobby.timer_active());
     }
 }

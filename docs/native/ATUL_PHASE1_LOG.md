@@ -87,8 +87,9 @@ findings with probes. Each fix has a regression test unless noted (3, 6 and 7 sh
   saved beside the room file (`<room>.lobby.json`); the core does not model them yet.
 - Rebuilt the left rail, title bar and status bar from the reference; adopted the muted ember palette in the default theme.
 - Invites do nothing over a network: the Invite button says so. "Content Sharing" checkboxes are stored settings with no effect yet.
-- The countdown starts when a project's lobby is first created and counts down a 24-hour box. Whether new rooms should start
-  a timer automatically is a product decision for Zayed and Atul.
+- The countdown is opt-in: a new room shows "No timer running" and a Start timer button. Starting it moves the
+  milestone dates with it and shows the countdown in the title bar; the corner x stops it. The default mode and tags
+  still say "Hackathon"; whether new rooms should default to another kind is a product decision.
 - Evidence: screenshots of the running app at 1550 x 975 with an empty room and a populated demo room; compared against the
   reference by Codex (`design-assets/forge-room-ui-spec/LOBBY_DIFF.md`). Interaction behavior beyond clicking tabs and
   checkboxes was not exercised.

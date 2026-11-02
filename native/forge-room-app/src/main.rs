@@ -924,7 +924,7 @@ impl ForgeRoomApp {
                     }
                     ui.add_space(10.0);
                 }
-                if bar.width() > 1180.0 && self.lobby.remaining() > 0 {
+                if bar.width() > 1180.0 && self.lobby.timer_active() {
                     let remaining = self.lobby.remaining();
                     ui.label(
                         egui::RichText::new(format!(
