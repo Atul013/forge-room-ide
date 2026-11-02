@@ -290,6 +290,9 @@ impl Lobby {
                     ui.add_space(8.0);
                     if let Some(state) = context.state {
                         let clock = now();
+                        if state.activity.is_empty() {
+                            ui.label(RichText::new("No activity yet").color(theme::text_dim()));
+                        }
                         for event in state.activity.iter().rev().take(4) {
                             let actor = state
                                 .participants
