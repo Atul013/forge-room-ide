@@ -1055,6 +1055,7 @@ impl RoomView {
                 );
             });
         }
+        let mut submit_evidence = false;
         ui.horizontal(|ui| {
             let mut kind = self.evidence_kind.clone();
             egui::ComboBox::from_id_salt(("evidence-kind", &task.id))
@@ -1075,17 +1076,22 @@ impl RoomView {
                     .hint_text("What did you verify?")
                     .desired_width(f32::INFINITY),
             );
-            let submit = response.lost_focus()
+            submit_evidence = response.lost_focus()
                 && ui.input(|input| input.key_pressed(egui::Key::Enter))
                 && !self.evidence_text.trim().is_empty();
-            if submit {
-                intents.push(Intent::Evidence {
-                    task: task.id.clone(),
-                    kind: self.evidence_kind.clone(),
-                    text: self.evidence_text.clone(),
-                });
-            }
         });
+        let ready = !self.evidence_text.trim().is_empty();
+        if ui
+            .add_enabled(ready, egui::Button::new("Add evidence"))
+            .clicked()
+            || submit_evidence
+        {
+            intents.push(Intent::Evidence {
+                task: task.id.clone(),
+                kind: self.evidence_kind.clone(),
+                text: self.evidence_text.clone(),
+            });
+        }
     }
 
     fn activity(&mut self, ui: &mut egui::Ui, state: &RoomState) {
