@@ -1109,6 +1109,10 @@ impl RoomView {
         if !self.activity_open {
             return;
         }
+        if state.activity.is_empty() {
+            empty_state(ui, "No activity yet", "Room actions will appear here.");
+            return;
+        }
         if state.activity.len() > 10 {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
