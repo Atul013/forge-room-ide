@@ -347,6 +347,31 @@ pub fn discard(root: &Path, change: &Change) -> Result<(), String> {
     }
 }
 
+/// True when `text` still contains merge conflict markers (a `<<<<<<<` start and a `>>>>>>>` end).
+pub fn has_conflict_markers(text: &str) -> bool {
+    text.lines().any(|line| line.starts_with("<<<<<<< "))
+        && text.lines().any(|line| line.starts_with(">>>>>>> "))
+}
+
+/// Which side of a merge conflict to keep.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Side {
+    /// The branch being merged into (the current branch).
+    Current,
+    /// The branch being merged in.
+    Incoming,
+}
+
+/// Resolve a conflicted file by taking one whole side, then stage it.
+pub fn resolve_conflict(root: &Path, path: &str, side: Side) -> Result<(), String> {
+    let flag = match side {
+        Side::Current => "--ours",
+        Side::Incoming => "--theirs",
+    };
+    run(root, &["checkout", flag, "--", path])?;
+    run(root, &["add", "--", path]).map(|_| ())
+}
+
 pub fn stash_push(root: &Path, message: &str) -> Result<String, String> {
     let mut args = vec!["stash", "push", "--include-untracked"];
     if !message.trim().is_empty() {
@@ -584,6 +609,106 @@ mod tests {
             ],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn resolving_a_conflict_keeps_the_chosen_side_and_stages_it() {
+        if !git_available() {
+            return;
+        }
+        let dir = temp_repo();
+        let git = |args: &[&str]| {
+            let mut full = vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ];
+            full.extend_from_slice(args);
+            run(&dir, &full)
+        };
+        fs::write(dir.join("a.txt"), "base\n").unwrap();
+        git(&["add", "a.txt"]).unwrap();
+        git(&["commit", "-q", "-m", "base"]).unwrap();
+        let main = git(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        git(&["checkout", "-q", "-b", "feature"]).unwrap();
+        fs::write(dir.join("a.txt"), "from feature\n").unwrap();
+        git(&["commit", "-q", "-am", "feature"]).unwrap();
+        git(&["checkout", "-q", &main]).unwrap();
+        fs::write(dir.join("a.txt"), "from main\n").unwrap();
+        git(&["commit", "-q", "-am", "main"]).unwrap();
+        assert!(
+            git(&["merge", "feature"]).is_err(),
+            "the merge should conflict"
+        );
+
+        let before = status(&dir).unwrap();
+        assert!(before.changes.iter().any(|change| change.is_conflict()));
+
+        resolve_conflict(&dir, "a.txt", Side::Incoming).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "from feature\n"
+        );
+        let after = status(&dir).unwrap();
+        assert!(after.changes.iter().all(|change| !change.is_conflict()));
+        let _ = fs::remove_dir_all(dir);
+
+        // And the other side, in a second repo.
+        let dir = temp_repo();
+        let git = |args: &[&str]| {
+            let mut full = vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ];
+            full.extend_from_slice(args);
+            run(&dir, &full)
+        };
+        fs::write(dir.join("a.txt"), "base\n").unwrap();
+        git(&["add", "a.txt"]).unwrap();
+        git(&["commit", "-q", "-m", "base"]).unwrap();
+        let main = git(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        git(&["checkout", "-q", "-b", "feature"]).unwrap();
+        fs::write(dir.join("a.txt"), "from feature\n").unwrap();
+        git(&["commit", "-q", "-am", "feature"]).unwrap();
+        git(&["checkout", "-q", &main]).unwrap();
+        fs::write(dir.join("a.txt"), "from main\n").unwrap();
+        git(&["commit", "-q", "-am", "main"]).unwrap();
+        assert!(git(&["merge", "feature"]).is_err());
+        resolve_conflict(&dir, "a.txt", Side::Current).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "from main\n"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn conflict_markers_are_detected_only_when_complete() {
+        let conflicted = "a\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> feature\nz\n";
+        assert!(has_conflict_markers(conflicted));
+        assert!(!has_conflict_markers("a\nmine\nz\n"));
+        // A lone separator or an indented marker in prose or code is not a conflict.
+        assert!(!has_conflict_markers("=======\n"));
+        assert!(!has_conflict_markers(
+            "    <<<<<<< in a string\n    >>>>>>> too\n"
+        ));
     }
 
     #[test]

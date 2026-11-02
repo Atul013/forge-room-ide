@@ -8,6 +8,7 @@ pub struct State {
     pub message: String,
     pub staged_open: bool,
     pub changes_open: bool,
+    pub conflicts_open: bool,
     pub graph_open: bool,
     pub history_open: bool,
 }
@@ -18,6 +19,7 @@ impl Default for State {
             message: String::new(),
             staged_open: true,
             changes_open: true,
+            conflicts_open: true,
             graph_open: true,
             history_open: true,
         }
@@ -53,6 +55,7 @@ pub enum Action {
     Stage(Vec<String>),
     Unstage(Vec<String>),
     DiscardAsk(Vec<git::Change>),
+    Resolve { path: String, side: git::Side },
     ShowDiff { path: String, staged: bool },
     OpenFile(String),
     Sync,
@@ -196,8 +199,18 @@ fn empty_state(ui: &mut egui::Ui, title: &str, detail: &str) {
 fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Option<Action> {
     let mut action = None;
     let status = view.status;
-    let staged: Vec<&git::Change> = status.changes.iter().filter(|c| c.is_staged()).collect();
-    let unstaged: Vec<&git::Change> = status.changes.iter().filter(|c| c.is_unstaged()).collect();
+    // A conflicted file is neither staged nor unstaged yet: it gets its own group, once.
+    let conflicts: Vec<&git::Change> = status.changes.iter().filter(|c| c.is_conflict()).collect();
+    let staged: Vec<&git::Change> = status
+        .changes
+        .iter()
+        .filter(|c| !c.is_conflict() && c.is_staged())
+        .collect();
+    let unstaged: Vec<&git::Change> = status
+        .changes
+        .iter()
+        .filter(|c| !c.is_conflict() && c.is_unstaged())
+        .collect();
 
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(12, 0))
@@ -208,7 +221,8 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                 .desired_width(f32::INFINITY)
                 .margin(egui::Margin::symmetric(10, 8));
             let response = ui.add(editor);
-            let can_commit = !staged.is_empty() && !state.message.trim().is_empty();
+            let can_commit =
+                !staged.is_empty() && conflicts.is_empty() && !state.message.trim().is_empty();
             let submit = response.has_focus()
                 && ui.input(|input| input.modifiers.command && input.key_pressed(egui::Key::Enter));
             ui.add_space(6.0);
@@ -225,7 +239,9 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                         .fill(theme::button())
                         .corner_radius(6.0)
                         .min_size(egui::vec2((ui.available_width() - 32.0).max(80.0), 30.0));
-                let hint = if can_commit {
+                let hint = if !conflicts.is_empty() {
+                    "Resolve the merge conflicts first"
+                } else if can_commit {
                     "Commit the staged changes"
                 } else {
                     "Stage changes and write a message first"
@@ -299,6 +315,17 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                     "Working tree clean",
                     "There is nothing to commit. Changes you make will show up here.",
                 );
+            }
+            if !conflicts.is_empty()
+                && let Some(next) = section(
+                    ui,
+                    "MERGE CONFLICTS",
+                    &mut state.conflicts_open,
+                    &conflicts,
+                    false,
+                )
+            {
+                action = Some(next);
             }
             if !staged.is_empty()
                 && let Some(next) =
@@ -426,7 +453,7 @@ fn section(
     let bulk_response = ui.interact(bulk, ui.scope_id().with(("bulk", title)), Sense::click());
     let discard_all =
         Rect::from_center_size(egui::pos2(rect.right() - 44.0, y), egui::vec2(22.0, 22.0));
-    let discard_all_response = if staged {
+    let discard_all_response = if staged || title == "MERGE CONFLICTS" {
         None
     } else {
         Some(ui.interact(
@@ -564,7 +591,7 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
     );
     let discard_rect =
         Rect::from_center_size(egui::pos2(rect.right() - 44.0, y), egui::vec2(22.0, 22.0));
-    let discard_response = (!staged).then(|| {
+    let discard_response = (!staged && !change.is_conflict()).then(|| {
         ui.interact(
             discard_rect,
             ui.scope_id().with(("discard", change.path.as_str())),
@@ -642,6 +669,35 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
     }
     if discard_response.is_some_and(|r| r.on_hover_text("Discard changes").clicked()) {
         return Some(Action::DiscardAsk(vec![change.clone()]));
+    }
+    if change.is_conflict() {
+        let mut chosen = None;
+        response.context_menu(|ui| {
+            if ui.button("Accept Current Change").clicked() {
+                chosen = Some(git::Side::Current);
+                ui.close();
+            }
+            if ui.button("Accept Incoming Change").clicked() {
+                chosen = Some(git::Side::Incoming);
+                ui.close();
+            }
+            ui.separator();
+            ui.label(
+                egui::RichText::new("Or edit the file, then stage it to mark it resolved.")
+                    .size(12.0)
+                    .color(theme::text_dim()),
+            );
+        });
+        if let Some(side) = chosen {
+            return Some(Action::Resolve {
+                path: change.path.clone(),
+                side,
+            });
+        }
+        if response.clicked() {
+            return Some(Action::OpenFile(change.path.clone()));
+        }
+        return None;
     }
     if response.clicked() {
         return Some(if change.is_untracked() || letter == 'D' {

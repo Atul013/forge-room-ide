@@ -30,6 +30,10 @@ pub struct Palette {
     pub line_highlight: Color32,
     pub line_number: Color32,
     pub list_active: Color32,
+    /// Fill of the selected rail entry.
+    pub nav_active: Color32,
+    /// Fill of the selected page tab.
+    pub tab_active: Color32,
     pub comment: Color32,
     pub keyword: Color32,
     pub string: Color32,
@@ -204,6 +208,9 @@ fn build(entry: &CatalogEntry, file: &ThemeFile) -> Theme {
         line_number: get("editorLineNumber.foreground").unwrap_or(text_dim),
         list_active: get("list.activeSelectionBackground")
             .unwrap_or_else(|| mix(bg_sidebar, accent, 0.25)),
+        nav_active: get("activityBar.activeBackground")
+            .unwrap_or_else(|| mix(bg_activity, accent, 0.18)),
+        tab_active: get("tab.activeBackground").unwrap_or_else(|| mix(bg_editor, accent, 0.16)),
         comment: token_color("comment", text_dim),
         keyword: token_color("keyword", accent),
         string: token_color("string", text),
@@ -378,6 +385,8 @@ accessors!(
     badge,
     badge_text,
     list_active,
+    nav_active,
+    tab_active,
     line_highlight,
     line_number,
 );

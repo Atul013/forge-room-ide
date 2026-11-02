@@ -16,8 +16,18 @@ pub struct Terminal {
     child: Box<dyn Child + Send + Sync>,
     exited: Arc<AtomicBool>,
     size: (u16, u16),
+    /// Dragged selection over the visible grid: (row, column) of both ends.
+    selection: Option<((u16, u16), (u16, u16))>,
+    /// The selected text, captured when the drag ends so that later output scrolling the grid
+    /// cannot change what Copy puts on the clipboard.
+    snapshot: Option<String>,
+    wheel_rows: f32,
     pub shell: String,
 }
+
+/// Rows scrolled per mouse-wheel notch, and the wheel distance egui reports per notch.
+const WHEEL_ROWS: f32 = 3.0;
+const WHEEL_UNIT: f32 = 50.0;
 
 fn default_shell() -> (String, Vec<String>) {
     #[cfg(windows)]
@@ -107,8 +117,56 @@ impl Terminal {
             child,
             exited,
             size: (size.rows, size.cols),
+            selection: None,
+            snapshot: None,
+            wheel_rows: 0.0,
             shell: program,
         })
+    }
+
+    /// Scroll the view back (positive) or forward (negative) by `rows`.
+    fn scroll(&mut self, rows: i64) {
+        let mut parser = self.parser.lock().expect("terminal parser");
+        let current = parser.screen().scrollback() as i64;
+        parser
+            .screen_mut()
+            .set_scrollback((current + rows).max(0) as usize);
+        drop(parser);
+        self.clear_selection();
+    }
+
+    /// Jump back to the live screen, as typing in a terminal does.
+    fn follow_output(&mut self) {
+        self.parser
+            .lock()
+            .expect("terminal parser")
+            .screen_mut()
+            .set_scrollback(0);
+        self.clear_selection();
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection = None;
+        self.snapshot = None;
+    }
+
+    /// The text under the selection as the grid looks now, clamped to the current size.
+    fn live_selected_text(&self) -> Option<String> {
+        let (a, b) = self.selection?;
+        let ((first_row, first_col), (last_row, last_col)) = if a <= b { (a, b) } else { (b, a) };
+        let parser = self.parser.lock().expect("terminal parser");
+        let screen = parser.screen();
+        let (rows, cols) = screen.size();
+        let (first_row, last_row) = (first_row.min(rows - 1), last_row.min(rows - 1));
+        let (first_col, last_col) = (first_col.min(cols - 1), last_col.min(cols - 1));
+        Some(screen.contents_between(first_row, first_col, last_row, last_col + 1))
+    }
+
+    /// What Copy should copy. `None` only when nothing is selected: a selection of blank cells is
+    /// still a selection, so Ctrl+C on it must not interrupt the running program.
+    fn selected_text(&self) -> Option<String> {
+        self.selection?;
+        self.snapshot.clone().or_else(|| self.live_selected_text())
     }
 
     pub fn has_exited(&self) -> bool {
@@ -129,6 +187,8 @@ impl Terminal {
             return;
         }
         self.size = (rows, cols);
+        // Stored cell positions belong to the old grid.
+        self.clear_selection();
         let _ = self.master.resize(PtySize {
             rows,
             cols,
@@ -138,6 +198,7 @@ impl Terminal {
         self.parser
             .lock()
             .expect("terminal parser")
+            .screen_mut()
             .set_size(rows, cols);
     }
 
@@ -151,9 +212,43 @@ impl Terminal {
         let rows = (available.y / cell_height).floor().max(1.0) as u16;
         self.resize(rows, cols);
 
-        let (rect, response) = ui.allocate_exact_size(available, Sense::click());
+        let (rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
         if response.clicked() || request_focus {
             response.request_focus();
+        }
+        let cell_at = |position: egui::Pos2| -> (u16, u16) {
+            let column = ((position.x - rect.left()) / cell_width).floor().max(0.0) as u16;
+            let row = ((position.y - rect.top()) / cell_height).floor().max(0.0) as u16;
+            (row.min(rows - 1), column.min(cols - 1))
+        };
+        if let Some(position) = response.interact_pointer_pos() {
+            if response.drag_started() {
+                // egui reports the drag a few pixels after the press: anchor where the press was.
+                let origin = ui
+                    .input(|input| input.pointer.press_origin())
+                    .unwrap_or(position);
+                self.selection = Some((cell_at(origin), cell_at(position)));
+            } else if response.dragged()
+                && let Some((anchor, _)) = self.selection
+            {
+                self.selection = Some((anchor, cell_at(position)));
+            }
+        }
+        if response.drag_stopped() {
+            self.snapshot = self.live_selected_text();
+        }
+        if response.clicked() {
+            self.clear_selection();
+        }
+        if response.hovered() {
+            // Smoothed wheel movement arrives in small pieces; keep the fraction between frames.
+            self.wheel_rows +=
+                ui.input(|input| input.smooth_scroll_delta.y) / WHEEL_UNIT * WHEEL_ROWS;
+            let step = self.wheel_rows.trunc() as i64;
+            if step != 0 {
+                self.wheel_rows -= step as f32;
+                self.scroll(step);
+            }
         }
         let focused = response.has_focus();
         if focused {
@@ -171,15 +266,37 @@ impl Terminal {
             let events = ui.input(|input| input.events.clone());
             for event in events {
                 match event {
-                    Event::Text(text) => self.send(text.as_bytes()),
-                    Event::Paste(text) => self.send(text.as_bytes()),
+                    Event::Text(text) | Event::Paste(text) => {
+                        self.follow_output();
+                        self.send(text.as_bytes());
+                    }
+                    // egui turns Ctrl+C into Copy and Ctrl+X into Cut, so a terminal must
+                    // translate them back: copy a selection, otherwise interrupt the program.
+                    Event::Copy => match self.selected_text() {
+                        Some(text) => {
+                            ui.ctx().copy_text(text);
+                            self.clear_selection();
+                        }
+                        None => {
+                            self.follow_output();
+                            self.send(&[0x03]);
+                        }
+                    },
+                    Event::Cut => {
+                        self.follow_output();
+                        self.send(&[0x18]);
+                    }
                     Event::Key {
                         key,
                         pressed: true,
                         modifiers,
                         ..
                     } => {
-                        if let Some(bytes) = key_bytes(key, modifiers) {
+                        if modifiers.shift && matches!(key, Key::PageUp | Key::PageDown) {
+                            let page = i64::from(self.size.0.saturating_sub(1));
+                            self.scroll(if key == Key::PageUp { page } else { -page });
+                        } else if let Some(bytes) = key_bytes(key, modifiers) {
+                            self.follow_output();
                             self.send(&bytes);
                         }
                     }
@@ -193,9 +310,33 @@ impl Terminal {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, background);
 
+        let selection = self
+            .selection
+            .map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
         let parser = self.parser.lock().expect("terminal parser");
         let screen = parser.screen();
         let (screen_rows, screen_cols) = screen.size();
+        if let Some(((first_row, first_col), (last_row, last_col))) = selection {
+            for row in first_row..=last_row.min(screen_rows.saturating_sub(1)) {
+                let from = if row == first_row { first_col } else { 0 };
+                let to = if row == last_row {
+                    last_col
+                } else {
+                    screen_cols.saturating_sub(1)
+                };
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(
+                            rect.left() + f32::from(from) * cell_width,
+                            rect.top() + f32::from(row) * cell_height,
+                        ),
+                        egui::vec2(f32::from(to - from.min(to) + 1) * cell_width, cell_height),
+                    ),
+                    0.0,
+                    palette.selection,
+                );
+            }
+        }
         for row in 0..screen_rows {
             let y = rect.top() + f32::from(row) * cell_height;
             let mut column = 0;
@@ -226,7 +367,7 @@ impl Terminal {
                         break;
                     }
                     let contents = next.contents();
-                    text.push_str(if contents.is_empty() { " " } else { &contents });
+                    text.push_str(if contents.is_empty() { " " } else { contents });
                     end += 1;
                 }
                 let (mut fg, mut bg) = (
@@ -268,7 +409,15 @@ impl Terminal {
                 column = end;
             }
         }
-        if !screen.hide_cursor() {
+        if screen.scrollback() > 0 {
+            painter.text(
+                rect.right_top() + egui::vec2(-10.0, 4.0),
+                egui::Align2::RIGHT_TOP,
+                format!("↑ {} lines back (type to return)", screen.scrollback()),
+                egui::FontId::proportional(12.0),
+                theme::text_dim(),
+            );
+        } else if !screen.hide_cursor() {
             let (cursor_row, cursor_col) = screen.cursor_position();
             let cursor = egui::Rect::from_min_size(
                 egui::pos2(
@@ -461,5 +610,97 @@ mod tests {
             "command output never appeared; screen was: {screen_text:?}; exited={}",
             terminal.has_exited()
         );
+    }
+
+    fn wait_for(terminal: &Terminal, needle: &str) -> bool {
+        for _ in 0..80 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if terminal
+                .parser
+                .lock()
+                .unwrap()
+                .screen()
+                .contents()
+                .contains(needle)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    #[ignore]
+    fn scrolling_back_reveals_older_output() {
+        let context = egui::Context::default();
+        let mut terminal = Terminal::spawn(&context, None).expect("spawn shell");
+        terminal.send(b"1..120 | ForEach-Object { \"row-$_\" }\r");
+        assert!(wait_for(&terminal, "row-120"), "output never finished");
+        terminal.scroll(60);
+        let scrolled = terminal.parser.lock().unwrap().screen().contents();
+        assert!(!scrolled.contains("row-120"), "view did not move back");
+        terminal.follow_output();
+        let live = terminal.parser.lock().unwrap().screen().contents();
+        assert!(live.contains("row-120"));
+    }
+
+    #[test]
+    #[ignore]
+    fn ctrl_c_at_the_prompt_discards_the_typed_line() {
+        let context = egui::Context::default();
+        let mut terminal = Terminal::spawn(&context, None).expect("spawn shell");
+        assert!(wait_for(&terminal, "PS "), "shell never showed a prompt");
+        terminal.send(b"echo should-not-run");
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        terminal.send(&[0x03]);
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        terminal.send(b"\r");
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let screen = terminal.parser.lock().unwrap().screen().contents();
+        assert!(
+            !screen.contains("should-not-run\nshould-not-run"),
+            "line ran: {screen:?}"
+        );
+        println!("SCREEN: {screen:?}");
+    }
+
+    /// Copy semantics that must hold however the grid changes under a selection.
+    #[test]
+    #[ignore]
+    fn selection_survives_output_resize_and_blank_cells() {
+        let context = egui::Context::default();
+        let mut terminal = Terminal::spawn(&context, None).expect("spawn shell");
+        assert!(wait_for(&terminal, "PS "), "shell never showed a prompt");
+        {
+            let mut parser = terminal.parser.lock().unwrap();
+            parser.process(b"\x1b[2J \x1b[H");
+            parser.process(b"SELECT-ME\r\nother line\r\n");
+        }
+        // Nothing selected: Copy is the interrupt key, so there is no text to copy.
+        assert_eq!(terminal.selected_text(), None);
+
+        terminal.selection = Some(((0, 0), (0, 8)));
+        terminal.snapshot = terminal.live_selected_text();
+        assert_eq!(terminal.selected_text().as_deref(), Some("SELECT-ME"));
+
+        // New output scrolls the grid, but the captured text is what gets copied.
+        {
+            let mut parser = terminal.parser.lock().unwrap();
+            for index in 0..60 {
+                parser.process(format!("filler {index}\r\n").as_bytes());
+            }
+        }
+        assert_eq!(terminal.selected_text().as_deref(), Some("SELECT-ME"));
+
+        // A selection of blank cells is still a selection.
+        terminal.clear_selection();
+        terminal.selection = Some(((20, 0), (20, 3)));
+        assert!(terminal.selected_text().is_some());
+
+        // Resizing drops positions that belong to the old grid; nothing panics.
+        terminal.selection = Some(((0, 80), (1, 90)));
+        terminal.resize(10, 20);
+        assert_eq!(terminal.selection, None);
+        assert_eq!(terminal.selected_text(), None);
     }
 }

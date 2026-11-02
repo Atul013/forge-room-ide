@@ -130,6 +130,18 @@ impl RoomView {
         self.store = Some(store);
     }
 
+    pub fn state(&self) -> Option<&RoomState> {
+        self.state.as_ref()
+    }
+
+    pub fn acting_as(&self) -> &str {
+        &self.acting_as
+    }
+
+    pub fn create_room(&mut self) {
+        self.apply(Intent::CreateRoom);
+    }
+
     /// Room name plus how many people and agents are in it, for the title and status bars.
     pub fn summary(&self) -> Option<(String, usize, usize)> {
         let state = self.state.as_ref()?;
@@ -1153,4 +1165,14 @@ fn section(
         return (true, false);
     }
     (false, plus_clicked)
+}
+
+/// `text` cut to at most `max` characters, with an ellipsis when it was longer.
+pub fn short(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut cut: String = text.chars().take(max.saturating_sub(1)).collect();
+    cut.push('…');
+    cut
 }
