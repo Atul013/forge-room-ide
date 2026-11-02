@@ -1,0 +1,980 @@
+FORGE IDE — AI-NATIVE EXPANSION MASTER HANDOFF
+================================================================================
+Version: 1.0 | Prepared: 2026-10-20
+Status: PRODUCT REQUIREMENTS AND IMPLEMENTATION HANDOFF, NOT IMPLEMENTED CODE
+Audience: An engineering/coding model taking over an EXISTING IDE repository.
+
+INSTRUCTIONS TO THE NEXT CODING MODEL
+-------------------------------------
+This document is a complete implementation-oriented product brief. Do NOT build
+another editor from scratch. The user already has an IDE under development.
+Inspect the actual repository, framework, modules, working behaviors, styles,
+existing Forge Room code/specification, and any tests FIRST. Preserve the base
+IDE, code editor, terminal, debugger, Git, preview, extensions, and established
+UI conventions. Adapt the plan to reality. Never pretend a mock UI is connected
+to working infrastructure. Never claim a third-party integration is supported
+unless you have verified its public APIs, permissions, licensing, and tested it.
+
+The user wants genuinely AI-NATIVE IDE architecture, not a collection of chat
+prompts labeled as inventions. AI agents, humans, tools, and projects should be
+first-class actors in a coherent, observable, permissioned software-development
+system. The flagship human+agent collaboration product is FORGE ROOM, a
+multiplayer hackathon lobby. The new expansion adds full IDE operability,
+prompt-based customization, portable Forge Packs, live collaborative sessions,
+mobile participation, and skill-driven capabilities.
+
+CORE INSTRUCTIONS / PRODUCT DECISIONS THAT MUST NOT BE LOST
+------------------------------------------------------------
+1. The existing desktop IDE must remain a complete, professional IDE.
+2. Hackathons are the flagship target; a team may contain multiple people and
+   multiple agents, often remote, with a shared 24-hour submission countdown.
+3. Forge Room is a multiplayer game-style lobby with join codes/invites,
+   participant/agent presence, real-time activity, tasks, chat, deadlines,
+   synchronized development context, optional voice calls, and session sharing.
+4. Both SPECTATE and SHARED EDIT modes are required, with separate permissions.
+5. Agent participants have an owner, an identity, permissions, a workspace,
+   progress feed, and meaningful controls. Humans coding manually must have
+   equal status, not be secondary to agents.
+6. Forge Morph: prompt-to-deep-customization of the IDE itself (not only themes).
+   This includes backgrounds, UI density, color, typography, dock/side panel
+   arrangements, window-style behavior, optional animations, layouts, shortcuts,
+   and styles resembling trading terminals/Bloomberg-like dashboards or
+   Calestia-inspired Linux desktop aesthetics. Do NOT reproduce proprietary
+   trade dress or copyrighted assets; translate inspirations into original design.
+7. Forge Widgets: prompt-to-working, project-aware IDE panels and dashboards.
+8. Forge Workshop: create installable reusable commands, mini-tools, widgets,
+   and extensions, through AI, with safe capability boundaries and preview.
+9. Forge Packs: portable bundles of layouts, themes, backgrounds/assets (when
+   licensed), widgets, tools/extensions, skills, team-room templates and workflows.
+10. Skills-first: favor standards-compatible SKILL.md agent skills for reusable
+    intelligence (code review, test strategy, context summarization, docs,
+    debugging procedures, handoffs, budgeting guidelines, demo preparation, etc.)
+    rather than inventing separate major branded subsystems for each behavior.
+11. Skills are NOT security boundaries, permanent memory, budget meters, debugger
+    APIs, communication protocols, event buses, schedulers, or remote execution.
+    Implement native infrastructure where reality demands it.
+12. Forge Sessions: room-based voice calling and deeply integrated shared IDE
+    sessions. A collaborator can follow a shared workspace, see code/agent
+    progress and permitted debug/terminal output, and request shared control.
+    The preferred experience is richer than a video call with screen share.
+13. Forge Pocket: phone-friendly companion for room/call participation, alerts,
+    approvals, agent task coordination, read-only diffs/diagnostics, and
+    permissioned remote session access. Do not claim local PC operations persist
+    when the PC is off; cloud-hosted runtime is a distinct capability.
+14. Forge Mesh/Pipeline: a native coordination/event/task graph, not a skill
+    alone. Agents can exchange task-relevant context, pass off work, collaborate
+    across teams, obey ownership, and validate dependencies.
+15. Forge Replay is a lower-priority optional add-on. Do NOT prioritize Forge
+    Twin, Ghost Developer, Forge Universe, or Forge What-If as independent flagship
+    projects. The user did not find them compelling. Similarly, avoid a new
+    product folder and branding layer for every minor skill-powered feature.
+16. Implement safe actions under explicit permissions, approvals, audits, and
+    reversible operations. AI should be capable, not silently omnipotent.
+17. A visually fancy static proof of concept is not delivery. Show live working
+    behavior and tests for every claimed completed vertical slice.
+18. Treat all externally researched product details as a snapshot; independently
+    re-check source links and legal requirements prior to engineering decisions.
+
+================================================================================
+PART A — NORTH STAR AND NON-GOALS
+================================================================================
+
+NORTH STAR EXPERIENCE
+Four humans join a hackathon lobby remotely. Their IDEs may differ; some type
+code themselves, some run Codex or Claude or other supported agents. A host sets
+a 24-hour timer, chooses a repository, invites participants, and starts a room
+call. Every authorized participant can inspect live work before it is committed,
+follow another participant's editor, view agent activity, exchange code-linked
+messages, request shared editing, and see real test/build/preview status.
+
+While the human team works, agents execute bounded tasks in isolated workspaces.
+An agreed API interface change updates the relevant participants' context,
+flags affected tasks, and triggers an approved test pipeline. Close to the
+submission deadline, the room prioritizes must-fix issues and proposes agent
+pickup or escalation based on preapproved rules. A participant can check status
+on a phone, join the call, review a diff, and approve a restricted operation.
+
+Meanwhile, a developer types: 'Make my Forge look like a dense trading terminal:
+center editor, floating status modules, animated background, compact widgets,
+live room dashboard on the right.' Forge previews a real, usable, reversible
+layout. They can ask for a custom project-status widget, build it in a sandbox,
+then publish the configuration and widget as a Forge Pack for their team.
+
+PRODUCT VALUES
+- AI is a first-class operator of structured IDE capabilities, not an
+  unrestricted owner of its native source code.
+- Collaboration is a working development environment, not just chat.
+- Skills implement reusable behavior; the platform supplies tools and guarantees.
+- No mandatory heavyweight task board; a light room workflow must remain quick.
+- Real user control, clear privacy, granular capabilities, predictable recovery.
+- Offline solo IDE functionality remains intact.
+- Incremental development; prove each mechanism before adding automation.
+
+NON-GOALS
+- Replacing Git or mandatory auto-committing of every edit.
+- Universal unsaved-buffer access in all third-party IDEs regardless of APIs.
+- Building a proprietary collaboration protocol where mature public protocols
+  suffice, but custom integration is allowed where genuinely required.
+- Giving users or agents unaudited unrestricted remote shell by default.
+- Advertising features, platform compatibility, or model support not tested.
+- Treating standalone SKILL.md instructions as evidence of a working product.
+- Rebuilding the whole app or completely replacing current workbench UI.
+- Replicating Bloomberg branding, assets, proprietary layouts, or other IP.
+
+================================================================================
+PART B — EXPERIENCE AND INFORMATION ARCHITECTURE
+================================================================================
+
+B1. EXISTING IDE INTEGRATION
+Locate current home/workspace navigation, editor tabs, file tree, terminal,
+debugger, preview, Git panels, existing agent/chat/tasks/team panels, global
+command palette, and top-right controls. Reuse these wherever appropriate.
+
+Potential unobtrusive integration points:
+- Top-right or title bar: Room presence indicator, connected participant avatars,
+  call status, 'Live' switch, hackathon countdown, one-click invite.
+- Right dock: Tabs for Chat, Agents, Tasks, Team, Live. All resizable/dockable.
+- Bottom panel: Existing terminal, debug, tests, logs, agent execution output.
+- Center/editor area: Code must remain primary. Shared session/follow view can
+  occupy a secondary editor group or user-requested pane.
+- Command palette: 'Create Room', 'Join Room', 'Start Call', 'Follow Alex',
+  'Request Edit', 'Share Terminal Read Only', 'Morph Workspace', 'Create Widget',
+  'Install Pack', 'Show Agent Tasks', 'Stop Sharing'.
+- Settings: Privacy, room permissions, automation rules, skill trust,
+  widget/extension capabilities, remote access, appearance/motion preferences.
+- Mobile responsive room surface does not imply porting full desktop IDE.
+
+B2. DO NOT HARD-CODE UI DESIGNS FROM A CONCEPT IMAGE
+The image previously discussed was visionary, not pixel-perfect requirements.
+Keep existing style system and make adaptive, polished UI with keyboard
+accessibility, scalable fonts, adjustable motion, drag/resize, dark/light themes,
+contrast, screen readers, and low distraction. No meaningless AI dashboard bloat.
+
+B3. ROOM LOBBY FLOW
+Room selection -> create/join -> session details -> repo/project binding ->
+invite code/link -> invited participant authentication -> capability/sharing
+consent -> presence -> live activity/call/tasks -> checkpoint/merge -> demo /
+submission readiness -> archived room, exportable decisions/logs.
+
+Creation options:
+- Private/invite-only default; public room only if explicitly implemented safely.
+- Internet-hosted room, LAN room, optional local solo room.
+- Session template: Hackathon / Pairing / Team Sprint / Review / General.
+- Duration: default only if a '24-hour hackathon' template is chosen; otherwise
+  configurable with organizer-controlled authoritative start/pause/end policies.
+- Room roles: owner, facilitator, contributor, reviewer, spectator/guest.
+- Participant types: human, human-owned agent, service/test runner.
+- Joining from supported external IDE adapter/CLI/browser should show a
+  capability/sync-level badge, not pretend all clients support identical actions.
+
+B4. HACKATHON COUNTDOWN AND SCHEDULING
+- Shared server-authoritative event start timestamp, deadline, timezone display,
+  resync after reconnect, pause/resume permissions, deadline history.
+- Subdeadlines, milestones, task due times, critical-path dependencies.
+- Human-owned/agent-owned tasks; status with explicit verification states.
+- When deadline threshold hits, run deterministic scheduler rules:
+  notify -> escalate -> suggest backup owner/agent -> request permission or
+  dispatch automatically ONLY if policy was preapproved for that task/scope.
+- Never unilaterally mutate another person's workspace, spend unlimited tokens,
+  merge protected branches, deploy, or change permissions on deadline alone.
+- Countdown urgency modes: Build, Integration, Ship, Demo, optional 'Panic Mode'
+  that changes prioritization/notifications, not authorization boundaries.
+- 'Demo readiness': functional build, critical tests, preview, deploy target,
+  submission links, pitch/deck checklist, unresolved blockers.
+- Expired tasks should not be auto-marked completed. Agent pickup is a
+  scheduled action with idempotency and concurrency checks.
+
+B5. ROOM COMMUNICATION
+- Project room chat, threads, direct message, mention, code/diff-anchored
+  comments, agent-authored updates clearly labeled.
+- Native voice call with join/leave/mute/deafen, device choice, speaking
+  indicators, connection diagnostics, volume, per-person controls.
+- Optional video/screenshare as conventional fallback but not a substitute for
+  integrated development session sharing.
+- Room call participant overlay stays available while editing, with quick
+  'Follow', 'Inspect', 'Request Control', 'Message', 'Request Agent Help'.
+- Recording/transcription only with explicit consent, clear UI, policy, retention
+  and export controls. Voice/video encryption and relay topology must be
+  documented accurately. WebRTC is a candidate, not a guarantee of E2EE.
+- Resilience to dropped connection and background app state.
+
+B6. FORGE SESSIONS: MORE THAN SCREENSHARE
+Three deliberate modes:
+ (1) WATCH: permissioned live editor presence, file navigation, cursor/selection,
+     diffs, approved agent progress, tests/build state. Watching another pane
+     should not hijack your active coding context.
+ (2) JOIN: shared editing on explicitly shared resources. Concurrent editing
+     should use a tested collaboration engine (CRDT/OT where applicable),
+     document undo and conflict semantics, and preserve user data.
+ (3) INSPECT/ASSIST: request controlled debugger, terminal-output, preview or
+     agent-session access. Terminal has read-only and separate write/run scope;
+     never expose shell/secret output by default.
+- Participants can grant and revoke scope-specific access in real time.
+- Visible indicators: 'Alex is following', 'Sarah has edit access', 'Agent X
+  is reading test results', 'Terminal sharing OFF'.
+- 'Session Takeover' means restricted explicit capability delegation, never
+  silent remote desktop/full-PC control. Permission must be time-bounded and
+  revalidated server-side for each protected operation.
+- Preserve local unsaved buffers on disconnect. No silent overwrite.
+- Privacy: default no full screen capture, keystroke logging, clipboard sharing,
+  microphone auto-enable, secret/env propagation, hidden file streaming.
+
+B7. PARTICIPANT FEEDS
+- Humans and agents have actor IDs, ownership, room membership, session and
+  workspace IDs, capability manifests, event timestamps, scopes, status.
+- Events: current shared file (optional), planned action, edit snapshot, task
+  start/finish, changed contract, shell command summary, test pass/fail,
+  debugger state, review decision, approval request, checkpoint, Git integration.
+- Show source links and confidence; no made-up private agent reasoning.
+- A human's manual file editing remains first-class even if they use no AI.
+- Feeds use event subscriptions and capability-based adapters. No fake
+  real-time claims when the external IDE only supports periodic working-tree
+  snapshots or Git events.
+- Filters: actor, team, agent, file, task, error/blocker, type, time range.
+
+B8. CROSS-IDE PARTICIPATION
+- Primary Forge desktop app: first-class deep integration.
+- VS Code/compatible extension: investigate stable API for file activity,
+  editor selections, collaboration view, chat and read-only diff.
+- CLI: connect room, post status, show tasks, share approved working-tree diff.
+- Browser viewer: room, call, tasks, reviews, chat and limited code view.
+- Future integrations: JetBrains, Zed, Cursor, Windsurf using only supported APIs;
+  don't promise full feature parity.
+- Capability taxonomy per client:
+  A: Native live-buffer/cursor integration;
+  B: working-tree delta/snapshot without Git commit;
+  C: activity/task/Git-only updates.
+- Remote context is project/resource-scoped and authorization-aware.
+
+================================================================================
+PART C — AI-NATIVE CONTROL PLANE
+================================================================================
+
+C1. WHY THIS EXISTS
+Any authorized agent should use the IDE's native capabilities in a structured,
+observable way rather than resorting exclusively to screen-click automation or
+shell commands. The editor, debugger, test runner, preview, terminal, settings,
+workspace, extensions, and Forge Room are backed by an IDE Capability API.
+The human UI consumes the same domain services where feasible.
+
+C2. MINIMUM CAPABILITY CATALOG
+Read-only / observation:
+- workspace/list, files/read, files/status, diagnostics/list, symbols/find,
+  git/status, diff/get, tests/discover, tests/results, debugger/frames,
+  terminal/output (only explicitly shared), preview/status, room/presence,
+  room/events, room/task-read, agent/status, skill/list, pack/list.
+Mutations / controlled tools:
+- editor/open, editor/reveal, files/apply-patch, editor/format,
+  debugger/start/stop/breakpoint, tests/run, task/run, terminal/command,
+  workspace/create-isolated-worktree, preview/start, room/comment-post,
+  room/task-propose, room/task-dispatch, room/handoff, settings/preview,
+  layout/apply, widget/install, skill/install, pack/install,
+  git/stage/commit/push/merge (distinct scopes), deployment/trigger.
+- Not every provider can use every tool. Capability negotiation and fallback
+  are mandatory. No undocumented agent/provider private APIs.
+
+C3. EXECUTION AND SECURITY
+- Local IDE service exposes typed, versioned commands with a capability registry.
+- Separate request parsing and authorization from execution. Log requested tool,
+  actor, affected project, workspace, exact scope, time, approval decision,
+  result and rollback/checkpoint if applicable.
+- Permission categories: inspect, change local files, share code with team,
+  edit remote shared resource, execute process, access network, access secret,
+  install code, modify UI, remote debug, Git push, merge, deploy.
+- Agents' read/write scopes don't expand merely because a skill requested it.
+- Sensitive actions require exact previews and explicit approval unless narrowly
+  approved policy grants apply. Implement kill switch and cancellation.
+- Sandboxed tool execution where possible; no unrestricted access from widget
+  webviews, packs, untrusted scripts or mobile session tokens.
+- Undo/rollback: settings/layout snapshots, patch checkpoints, backup of prior
+  config, safe extension installation rollback.
+- Explicitly log failures, partial results, retryability, and costs where known.
+
+C4. AGENT ADAPTERS / PROTOCOLS
+- Investigate Agent Client Protocol (ACP) as editor-to-agent session interface.
+- Investigate Model Context Protocol (MCP) as tool/resource interface. Do not
+  conflate them; neither guarantees live collaborative editor-buffer access.
+- Provider adapters for supported Codex, Claude Code and others, based on their
+  real documented interfaces and permissions. Discover capabilities.
+- Sessions: create, resume where supported, prompt, update, status, cancel,
+  approval request, tool result, artifacts, error, lifecycle, version.
+- Own agent session / shared agent session / delegated help must be distinct.
+- Multiple agents in separate worktrees when concurrent writes are expected.
+- No hidden chain-of-thought collection, invented cost metrics, or implicit
+  access to another teammate's agent tokens or environment.
+
+C5. PROJECT CONTEXT AS STRUCTURED STATE
+- Durable room/project decisions, interface contracts, task dependencies,
+  references to committed/uncommitted revisions, human owners, test evidence.
+- Lightweight 'project brain' is a service/index and searchable references,
+  not just ever-growing magic prompt memory.
+- Separate durable facts from model-generated summaries; mark stale and inferred
+  facts, cite source event/file/decision. Use privacy-aware access checks.
+- Route changed contracts and affected-file events to relevant agents instead
+  of broadcasting enormous context to everyone.
+- Skills may dictate how to summarize context, but storage, events, access,
+  dependency detection and invalidation require actual platform services.
+
+================================================================================
+PART D — AI CUSTOMIZATION: FORGE STUDIO
+================================================================================
+
+D1. FORGE MORPH: PROMPT-TO-IDE EXPERIENCE
+Desired prompts:
+- 'Transform Forge into an original professional trading terminal aesthetic,
+   dense panels, dark glass, chart-friendly layout; code editor must remain main.'
+- 'Give me a Calestia-inspired Linux desktop look with original wallpaper,
+   rounded floating docks, translucent surfaces, fluid transitions.'
+- 'Minimal clean coding mode; hide activity except notifications and terminal.'
+- 'Create a team command center for my hackathon with countdown and agent feeds.'
+
+Supported scope:
+- Core layout presets, positions/splits, dock placement, resizable panels.
+- Density, typography, icon style, color theme, accent, background/wallpaper,
+  status/title bars, borders, window decorations if OS/framework allows.
+- Background effects and animations bounded by performance/accessibility policy.
+- Workspace-specific appearance and mode changes (debugging/review/hackathon).
+- Keybindings and commands when applicable.
+- Layout snapshots, preview/diff, Apply, Undo, Reset, versioned profiles.
+- Custom CSS/theme tokens in isolated surfaces, not uncontrolled global CSS
+  injection that can hide safety prompts or break core accessibility.
+- No raw agent rewrite of arbitrary protected IDE internals as the default
+  customization path; use declarative configuration and controlled plugin slots.
+- If a requested effect cannot be supported by current workbench, show exact
+  limitations and optionally generate an experimental extension proposal.
+- Respect reduced-motion, high-contrast and performance budgets.
+- Theme inspiration must be original; no third-party logos/assets/trade dress.
+
+D2. FORGE WIDGETS: NATURAL-LANGUAGE FUNCTIONAL PANELS
+Examples:
+- 'Show each room member's open tasks, active agent and current test status.'
+- 'Show my project's API endpoints and last verification result.'
+- 'Show critical build failures and countdown to submission.'
+- 'Build a Roblox development widget for asset status and Luau tasks.'
+- 'Make a trading-dev workspace chart status panel.'
+
+Widget generator lifecycle:
+1. Parse request and proposed data requirements.
+2. Resolve allowed data sources from capability registry.
+3. Generate typed widget manifest, restricted UI and binding contract.
+4. Validate schema, forbidden API usage, resource/CPU/network limits.
+5. Render preview with sample data clearly marked simulated.
+6. Ask the user to grant required data and action permissions.
+7. Install into optional dock/panel; persist widget version and configuration.
+8. Monitor crashes, recover, disable, uninstall and revert safely.
+
+Widget API is controlled: data query, subscriptions, navigation/commands,
+limited actions with permission, serialization, lifecycle cleanup. Sandboxed
+webview/process if appropriate. No direct filesystem or shell from generated UI.
+
+D3. FORGE WORKSHOP: CUSTOM FUNCTIONAL TOOLS
+- AI can generate a new IDE command, widget, workflow, mini-extension or pack.
+- Uses documented extension points / stable APIs rather than randomly altering
+  protected source files.
+- Generated code is staged in an isolated workspace and test harness.
+- Manifest declares publisher, version, required capabilities, dependencies,
+  network access, filesystem scopes, hooks and update policy.
+- User reviews diff/permissions before install. Supports rollback/uninstall,
+  project-local vs account-wide installs and extension signing/trust strategy.
+- Optional high-risk 'fork developer mode' can propose source patches with
+  explicit build/test/restart, backup, ownership and separate approval; do NOT
+  make raw core-source modification the everyday UX.
+- Workshop output is publishable as a Forge Pack component if licensed/allowed.
+
+D4. FORGE PACKS: THE COMPOSABLE SHARING UNIT
+Pack components (some optional):
+- manifest with pack ID, version, author, license, compatibility/engine ranges;
+- workbench appearance/theme tokens, wallpapers, animation/motion preset;
+- declarative layout and view placements;
+- widgets and config, enabled workbench commands;
+- Workshop mini-extensions with permission declarations;
+- Agent Skills references/bundles (SKILL.md plus optional scripts/assets);
+- agent configuration templates/provider-neutral defaults;
+- task/room templates, hackathon milestone presets, preview/test workflows;
+- optionally keybinding and shortcuts with conflict resolution.
+
+Pack user journey:
+Discover/import -> trust/review requested permissions -> preview look + panels
+-> validate compatibility and extension dependency resolution -> install into
+project/profile/team -> activate/disable components -> update/rollback/uninstall
+-> export or publish.
+
+Security and governance:
+- Treat packs as potentially executable supply-chain dependencies.
+- A 'theme-only' pack must never be granted terminal/network/file write access.
+- Static manifest validation, provenance/signature where available, sandboxed
+  execution, exact grant controls, user trust warnings, updates reviewed when
+  privilege scope changes, revocation, offline pack import policy.
+- Avoid automatically executing arbitrary downloaded SKILL.md scripts.
+- Bring-your-own-asset licenses must be respected. Never embed proprietary
+  Bloomberg/Calestia wallpaper/icon assets without rights.
+- Do not assume a marketplace/backend is available. Start local import/export
+  and team sharing, then curated discovery/catalog.
+- Pack schema/version migration tests and graceful handling of unsupported
+  components are essential.
+
+D5. SHARE WORKSPACE LOOKS THROUGH FORGE ROOM
+- Publish a read-only layout preview for teammates.
+- Apply as local workspace profile without forcing anyone's private settings.
+- Shared room 'mission control' layout can be suggested to team; each user opts in.
+- Avoid broadcasting secrets, tokens, private window state or personal history
+  in exported packs/layouts. Custom widgets use recipients' own permissions.
+
+================================================================================
+PART E — SKILLS-FIRST AI FEATURES
+================================================================================
+
+E1. WHAT A SKILL IS
+Use the public Agent Skills convention: SKILL.md with YAML metadata (name,
+description) and Markdown instructions, optional scripts/references/assets.
+Progressively load skill metadata, then content/resources when selected. Verify
+versioned official specification and implement validation. A skill is a
+REUSABLE PROCEDURE, not an automatic guarantee of tool access or safety.
+
+E2. SKILL DISCOVERY STRATEGY
+Before writing any new skill:
+1. Search user-installed/agent-native skills and local skills directories.
+2. Search trustworthy public catalog/repository sources and official providers.
+3. Check license, maintainer, release recency, quality, scripts, network access,
+   dependency chain, provider requirements and compatibility.
+4. Test skill in a sandbox with synthetic project data and defined success cases.
+5. Integrate through common Forge skill registry/adapter; do not fork into
+   duplicated skill folders unless provider compatibility requires it.
+6. If no appropriate skill exists, author a small standards-compatible skill.
+7. Record which native IDE tool capabilities are necessary for it to work.
+
+E3. EXAMPLE SKILL-POWERED CAPABILITIES
+- Change review and security review.
+- Test generation and test-driven bug-fixing workflow.
+- Project onboarding / documentation / readme generation.
+- Context summarization / structured handoff / session continuity.
+- Token-efficient context selection strategies.
+- Debugging playbook and failure diagnosis.
+- Dependency/API contract checking procedures.
+- Hackathon pitch/checklist/demo rehearsal.
+- UI/UX implementation guidance and accessibility review.
+- Code explanation / learning mode.
+- Migration planning and release checklist.
+- Agent artifact/report formatting.
+- Workflow optimization and task decomposition.
+- Budget recommendations (only if token/price/usage metrics are real).
+- Merge review and change verification playbook.
+
+E4. COMMON SKILL REGISTRY / USER INTERFACE
+- A single Skills page, filterable by source/provider/capabilities/trust.
+- Import/install/remove/enable/disable/update; inspect SKILL.md and bundled
+  scripts; project vs user scope; capability requirements.
+- Search skills by task intent, with manual override.
+- Show exactly which skill and tool permissions were used for an agent action.
+- Per-provider mapping and fallback if native skill support is missing.
+- Skills bundled in Packs use the same registry; no copy-paste subsystem.
+- Failed validation or incompatible skills remain disabled with reasons.
+
+E5. WHAT MUST REMAIN NATIVE
+- Real scheduler and timekeeping, job queue, task assignment, retries.
+- Actual model token usage/cost accounting and budget enforcement.
+- Auth, permission engine, remote sessions, network transports.
+- Shared file editing, consistency/conflict resolution, presence/event bus.
+- Persistent verified project-state storage, source-of-truth metadata.
+- Test/debugger/terminal execution and artifact collection.
+- Cross-agent context exchange, notifications and event routing.
+- Deployment/branch protection and verification gates.
+- Trust and sandbox boundaries for third-party executable skills.
+
+E6. NO UNFOUNDED SKILL CLAIMS
+Do not list an invented 'official budget skill' or arbitrary third-party skill
+as verified. Produce a skill inventory with repo URL, commit/version, license,
+required tools, security review, tested providers, tests/results, and whether
+it is used as-is, adapted, newly authored, or rejected.
+
+================================================================================
+PART F — MULTI-HUMAN / MULTI-AGENT PIPELINE
+================================================================================
+
+F1. FORGE MESH (NATIVE COLLABORATION BACKBONE)
+- Real actor graph for humans, agent instances, workspaces and teams.
+- Task/state event routing through room and project scope.
+- Human-agent, agent-agent and team-team messages with per-resource ACLs.
+- Agent discoveries, decisions and changes have source references.
+- Relevant context updates targeted to affected actor/task/dependency.
+- Ownership model: human owns agent, tasks and resources may be separately
+  owned; messages do not grant execution access to another actor's workspace.
+- Actors need heartbeat/lease, online/offline/failure states, reconnect tokens,
+  idempotent events and authenticated identity.
+
+F2. FORGE PIPELINE (DEPENDENCY-AWARE ORCHESTRATION)
+- DAG/workflow nodes may be human task, agent task, approval gate, test/build,
+  integration review, preview, deploy, documentation, demo checklist.
+- Nodes declare input artifact/ref/revision, allowed resources, owner,
+  dependencies, acceptance criteria, output artifacts, deadlines, timeouts,
+  retry/budget policy, run location, credentials policy.
+- Human can edit proposed pipeline before it starts.
+- Parallelize independent tasks, serialize conflicting/critical writes.
+- Run within isolated worktree or other known safe environment per agent.
+- Publish progress; capture logs/diffs/test results/exit status.
+- No automatic conclusion that a green agent status means working software.
+- Retry only bounded errors; detect loops and escalate. Job state is durable.
+- Trigger from events/scheduler under preapproved policy, with exactly-once
+  effect semantics where feasible or idempotent implementation.
+- Agent providers are swappable adapters; no 'agents talking' via magical prompt
+  text without explicit messages, permissions and versioned artifacts.
+- Never automatically merge protected branches/deploy to production without
+  policy-based human confirmation.
+
+F3. CONTRACT-AWARE COORDINATION
+- Lightweight interface declarations (REST route, schema, shared types,
+  design component props, database migration/event contract).
+- Mark changes pending/agreed/breaking and notify consuming tasks/agents.
+- Combine deterministic symbol import/reference analysis with AI suggestions;
+  label inferred relationships and uncertain results.
+- Avoid a required complex architecture board for tiny hackathons.
+
+F4. GUARDRAILS AND VERIFICATION
+- Guardian-style checks should be native guard rules plus optional analysis
+  skill, not a separate omniscient AI constantly reading everything.
+- Detect overlapping write scopes, stale base revisions, wrong branch,
+  unexpected high-impact commands, repeated agent failures, stalled agents,
+  excessive runs, misaligned task output.
+- Verification is independent of implementation: selected tests, builds,
+  preview checks and reviewer signoff with provenance.
+- Agent can propose fix; no silent approval of its own unresolved test failures.
+- Cost ceilings use actual provider usage or explicitly stated estimates.
+
+F5. TEAM WORKFLOW EXAMPLE
+Hackathon with frontend, backend, testing teams:
+1. Human organizer creates room, timer, team permissions, repo link.
+2. Participants (humans + agent sessions) join and see live status.
+3. Architect/humans approve an auth API contract.
+4. Frontend and backend work in parallel isolated boundaries.
+5. Backend modifies contract -> mesh identifies dependency and notifies
+   frontend and test tasks with a versioned contract link.
+6. Test pipeline runs, fails -> failing artifact published and triaged.
+7. Approved debug agent receives bounded task; isolated fix/test cycle.
+8. Human reviews, merges through ordinary Git path.
+9. Final countdown -> demo gates, critical alerts, task prioritization.
+10. Every outcome has proof and cannot be reported verified without checks.
+
+================================================================================
+PART G — FORGE POCKET / REMOTE PARTICIPATION
+================================================================================
+
+G1. PURPOSE
+A mobile-friendly companion offering remote supervision and team participation,
+not a false promise of a fully featured desktop code editor on a phone.
+A user can keep working in a Forge Room away from a laptop and manage approved
+agent work. Local work requires a reachable running host; cloud work requires
+an intentionally provisioned remote environment.
+
+G2. MOBILE FEATURES
+V2 candidate:
+- Authenticate, view rooms, join room voice call/chat, participants.
+- Countdown/milestones, task progress and real notifications.
+- Read-only activity feeds, file diffs, test failures and agent artifacts.
+- Approve/deny narrowly scoped agent operations; pause/cancel/resume where the
+  agent provider supports it, with authenticated confirmations.
+- Dispatch preconfigured tasks to online/local or hosted agent runners.
+- Review and comment on pending changes.
+V3 candidate:
+- Request/watch restricted shared remote workspace panes and debugging output.
+- Safe limited remote terminal interactions requiring elevated explicit grants.
+- Low-bandwidth adaptive UI, notifications even when laptop is unavailable.
+- Cloud runner support with lifecycle, secrets policy, budget and isolation.
+
+G3. REMOTE SECURITY
+- Pairing flow with short-lived tokens, device registration, session revoke,
+  MFA/security confirmation as appropriate, transport TLS, scoped access.
+- Mobile never automatically receives desktop tokens/secrets or unrestricted
+  execution privileges. Risky commands/release actions require reauthentication
+  or step-up approval where appropriate.
+- Every remote action displayed/audited; host can cut connection immediately.
+- Clear unavailable/offline state. No forged 'task started' when host is off.
+
+================================================================================
+PART H — DATA MODEL / PROTOCOLS / INFRASTRUCTURE
+================================================================================
+
+H1. MINIMUM DOMAIN ENTITIES
+- User, Organization (optional), Project, Room, RoomSession, Invitation, Role.
+- Participant, ClientConnection, CapabilityManifest, SharingGrant.
+- Workspace, WorkspaceSnapshot, LiveEditDocument, CursorPresence.
+- VoiceCall, CallMember, SharedDebugSession, SharedTerminalGrant.
+- AgentSession, AgentOwner, AgentProviderAdapter, ToolCall, ToolPermissionGrant.
+- Task, Deadline, Milestone, TaskDependency, PipelineRun, PipelineNodeRun.
+- ActivityEvent (versioned), DiscussionThread, CodeAnchor, Decision, Contract.
+- ValidationRun, Artifact, Checkpoint, GitRevision, ConflictRecord.
+- Skill, SkillInstallation, SkillCapability, SkillValidationReport.
+- Widget, WidgetManifest, WidgetInstance, LayoutProfile, Theme, MorphPreview.
+- WorkshopExtension, ExtensionPermission, ForgePack, PackInstallation.
+- RemoteDevice, RemoteSession, AuditEvent, Notification.
+
+H2. SYSTEM BOUNDARIES
+Desktop workbench: existing editor/UI, panels, commands, debugging, preview.
+Local runtime: filesystem snapshotting, LSP/DAP, Git worktrees, agent process
+manager, permissions, secret redaction, local cache, extension host.
+Collaboration backend: identities, rooms, events, tasks, milestones, permissions,
+artifact manifest, invite links, notifications, call signaling/relays.
+Real-time transports: WebSocket or comparable for structured room events;
+WebRTC or evaluated alternative for audio/video/data when appropriate.
+Persistence: relational DB for durable state; object storage for artifacts; use
+in-memory cache/pubsub only if needed for scale. Exact stack chosen from repo.
+Mobile: secure authenticated client consuming limited documented APIs.
+Sandbox: isolated extension/widget/skill script execution where feasible.
+
+H3. EVENT PROTOCOL
+- project/room IDs, actor ID and kind, client capabilities, event ID, sequence
+  or cursor, server time, schema version, visibility/scope, payload hash/reference.
+- Idempotency, replay/reconnect, gap detection, stale revision handling,
+  optimistic UI with authoritative confirmation, backpressure, deduplication.
+- Room membership changes trigger permission checks for new subscriptions.
+- Secret/path allowlist before upload, encrypted transport and storage.
+- Events may link a separate authorized artifact; not broadcast huge code files.
+
+H4. EDITING CONSISTENCY
+- Distinguish true shared live-buffer edits from async working-tree diffs.
+- Use tested CRDT/OT approach for jointly editable buffers, with concurrent
+  selections, undo, presence and permission revocation understood.
+- For worktree diffs, base revision/content hash required; reject stale patch
+  or present 3-way merge. Never blindly force remote filesystem changes.
+- Unsaved editor state and Git state should remain recoverable across network
+  failures. Keep explicit copy/checkpoint before potentially destructive merge.
+- Ignore/redact secrets and generated outputs by default.
+
+H5. RELIABILITY
+- Room recreation/reconnect, host migration policy where relevant,
+  incomplete call cleanup, offline messages, client version negotiation.
+- Retry transient events with idempotency; do not duplicate job dispatch.
+- Rate-limit activity feed, queue growth, room joins and pack downloads.
+- Operational diagnostics and structured logging with no secrets.
+- Graceful degradation: no call connection -> chat works; no internet ->
+  solo IDE works; agent down -> manual coding still works.
+
+================================================================================
+PART I — ROADMAP: V1, V2, V3, AND LATER
+================================================================================
+
+IMPORTANT: The earlier Forge Room spec already defined a staged V1-V3 vision.
+This document is the consolidated expansion and MUST be reconciled against the
+actual completed work; do not rebuild features that exist, and do not claim an
+unfinished concept is implemented. Feature labels below are targets, not
+calendar-date commitments.
+
+V0 / FEASIBILITY + REPOSITORY AUDIT (BEFORE CODING)
+- Inventory repo architecture and implemented feature matrix.
+- Verify extensibility hooks and UI framework constraints.
+- Research Code - OSS licensing/marketplace if applicable.
+- Prove typed native IDE tool command, local activity event and view subscription.
+- Prove two participant clients can exchange presence/diff/comment securely.
+- Prototype WebRTC or room calling strategy and permission boundaries.
+- Choose validated Agent Skills specification and ACP/MCP scope.
+- Document threat model and success criteria.
+
+V1 — WORKING MULTIPLAYER + AI-NATIVE FOUNDATIONS
+Deliver:
+1. Integrate Forge Room entry/control into current IDE.
+2. Private room create/join/invite, identity, roles, online presence.
+3. Room chat and code-linked comments.
+4. Hackathon countdown, basic task/milestone deadlines and event updates.
+5. Working-tree diff streaming before commits, activity feed and participant
+   view with honest sync-level indicators; no secret files shared.
+6. Spectate/follow, and an explicit shared-edit request path; pilot supported
+   native shared editing on a defined narrow set of file/client conditions.
+7. First call MVP: working voice call and device/permission controls where
+   platform feasibility is verified, plus shared IDE context view; screen
+   share fallback may follow if required.
+8. Agent owner+session presence, real provider adapter, basic task dispatch,
+   log/test/status evidence, cancel/approval.
+9. IDE Capability API initial scope: editor, tasks/tests, Git status,
+   read-only diagnostics and controlled patch application.
+10. Skills registry MVP with real SKILL.md validation, enable/disable and
+    at least two sandbox-tested useful skills.
+11. Forge Morph v1: natural-language layout/theme/background preview, apply,
+    undo and saved profiles. Avoid raw core source mutations.
+12. Pack local import/export v1: layouts, widgets/config, skills references and
+    manifest trust preview. Function only for components implemented in V1.
+13. Initial widget host and one working generated/custom widget proof of concept.
+14. End-to-end CI/tests, privacy controls, reconnect and no silent data loss.
+EXIT: Two people can code independently, see authorized uncommitted changes,
+comment and follow, coordinate one real agent, join a working voice session,
+create/apply/revert a prompted layout, and import/export a safe pack.
+
+V2 — COLLABORATIVE AI WORKFLOWS + CUSTOM BUILDER
+Deliver:
+1. Mature co-edit, follow mode, shared permitted debugger/terminal output,
+   granular request-control and revocation, privacy indicators.
+2. Room call improvements (optional screen sharing and voice QoS/diagnostics).
+3. Agent-to-agent and team-to-team versioned handoffs via Forge Mesh.
+4. Dependency-aware Forge Pipeline execution, bounded retries, gates and
+   isolated worktrees with real evidence.
+5. Interface contract relay, stale context notification, conflict prechecks.
+6. Deadline rules: notify/priority/escalate and preapproved agent pickup.
+7. Skill routing + per-provider compatibility; audited skill installation,
+   test and trust metadata, project-local bundled skills.
+8. Morph v2: full declarative backgrounds, rich style/layout profiles,
+   constrained animation, custom modes and original visual inspirations.
+9. Forge Widgets generator: real bound data, tested sandbox and permissions.
+10. Forge Workshop mini-extension/command authoring with isolated build/test,
+    preview, approval, rollback and lifecycle management.
+11. Forge Packs v2: install/uninstall/version, team sharing, dependency checks,
+    permissions and component-level selective activation.
+12. Forge Pocket v1: mobile room view, notifications, voice/chat, diff review,
+    agent approvals and secure status.
+13. Verification/readiness improvements: independent tests/review evidence,
+    previews and demo-mode checklist.
+EXIT: A real hackathon team can collaborate across humans and multiple agents,
+inspect/test handoffs, run a constrained pipeline, install/share a working
+AI-generated widget and control approved tasks from phone.
+
+V3 — POLISHED HACKATHON MISSION CONTROL AND ECOSYSTEM
+Deliver:
+1. Expanded documented cross-IDE adapters based on stable public APIs.
+2. Cross-project/team pipeline templates and advanced conflict routing.
+3. Advanced room modes: build/review/integration/ship/demo, Panic Mode,
+   auto-rescue proposals, limited approved auto-dispatch.
+4. Robust performance + verified build/deployment and demo flows.
+5. Forge Pocket v2: restricted remote session viewing/control with identity,
+   access scopes, step-up approval and cloud-runner option.
+6. Forge Packs curated discovery, publishing, signatures/trust metadata,
+   dependency/version handling, review and rollback.
+7. Rich Studio/Workshop templates, team-shared profiles, compatibility badges,
+   performance/accessibility audits for AI-generated UX.
+8. Room/project context intelligence, selective validation, verifiable
+   'since you left' summaries, audit/replay optional.
+9. Cost/usage visibility and enforced budgets where provider APIs expose data.
+10. Extensive telemetry opt-in, user studies, external security review,
+    stability/load tests, abuse prevention, scale.
+EXIT: Distributed hackathon teams can run a complete room-based collaborative
+software delivery process with auditable, permissioned automation and strong
+customization, without requiring every participant to use identical tools.
+
+POST-V3 OPTIONAL, NOT BLOCKING
+- Detailed Forge Replay time machine of actor events/checkpoints/diffs.
+- Advanced cloud workspaces and remote development environments.
+- Sophisticated room-aware agent budget routing/optimization.
+- Third-party Pack marketplace economics and moderation.
+- Voice captions/transcription subject to privacy/consent/regional law.
+- Public Forge Room + Workshop extension SDK and richer mobile editing.
+
+================================================================================
+PART J — SECURITY, PRIVACY, COST AND QUALITY BAR
+================================================================================
+
+KEY THREATS
+- Secret leakage through snapshots, screen/voice or terminal sharing.
+- Rogue pack/skill/extension requesting excessive powers or exfiltration.
+- Prompt injection in repo files, task descriptions, docs, web and tool results.
+- Agent executing harmful commands, accidental overwrite, race conditions.
+- Cross-tenant/room leak, unauthorized live spectator or session takeover.
+- Compromised mobile session, stolen invite links, replayed remote actions.
+- Token exhaustion/unbounded agent loops and budget overruns.
+- Misleading preview/test completion or false context facts.
+- Data retention of private code, recordings, transcripts and agent prompts.
+
+MINIMUM CONTROLS
+- Documented threat model and abuse cases; least privilege default.
+- Explicit scope-aware grants, guest read-only defaults and instant revocation.
+- Short-lived tokens, OS keychain secrets, encryption in transit and at rest.
+- Authenticate and authorize on EVERY server/resource operation.
+- Redact common secrets and ignore restricted paths locally before any sharing.
+- No screen, microphone, terminal or unsaved-buffer sharing without consent.
+- Widget and plugin sandbox, strict CSP and IPC restrictions.
+- Skill script inspection / signed or trusted sources / staged installation.
+- High-risk actions require approvals, with step-up auth when appropriate.
+- Agent-owned isolated working trees, patch review, undo, test evidence.
+- Rate limits, per-run caps, bounded retries, audit trail and emergency stop.
+- Clear retention/export/deletion, opt-in usage metrics, user-facing privacy UI.
+- Supply-chain checks and dependency/version pinning.
+- Accessibility, responsiveness, crash recovery, reduced-motion mode.
+
+DEFINITION OF DONE FOR EACH FEATURE
+- Real user-visible working implementation, not a purely static drawing.
+- Handles empty/loading/error/offline/denied/revoked and incompatible versions.
+- Has security/capability guard and clear UI status.
+- Has unit + integration tests; E2E for core flow; OS/platform compatibility
+  documented truthfully.
+- Leaves existing IDE features functional and does not destroy project files.
+- Source/reference links updated, code/docs/migrations kept in sync.
+- Actual test commands and outcomes reported, not fabricated.
+
+================================================================================
+PART K — ESSENTIAL ACCEPTANCE TEST SCENARIOS
+================================================================================
+
+ROOM / COLLAB
+[ ] Two distinct users create/join same room; presence, invites, role checks.
+[ ] A edits tracked nonsecret file WITHOUT commit; B sees authorized diff.
+[ ] B follows A's file while keeping own editor independent.
+[ ] B requests edit; A approves; both safely co-edit supported document.
+[ ] Concurrent incompatible edits never cause silent overwrite.
+[ ] Secret/ignored file never appears in shared snapshot/activity.
+[ ] Code comment from B reaches A, with proper anchor/stale handling.
+[ ] Revoked B loses feed/file/terminal/call access after revocation.
+[ ] Disconnection/reconnection preserves state and avoids duplicate events.
+[ ] LAN and internet behavior conform to separately documented support paths.
+
+CALL / SESSION
+[ ] Join room voice call, select device, mute/deafen/leave.
+[ ] User sees who is speaking and knows mic/share status.
+[ ] Follow teammate's editor from call without full-screen share.
+[ ] A explicitly shares terminal READ ONLY; B cannot execute command.
+[ ] Restricted control request and approval; revocation stops access.
+[ ] Video/screenshare fallback if included does not expose by default.
+
+AGENT / PIPELINE
+[ ] Real adapter starts an agent and shows genuine status/errors.
+[ ] Agent changes file in isolated workspace; diff and tests visible.
+[ ] Agent stops on cancel; UI reflects if shutdown is incomplete.
+[ ] B cannot instruct A's agent to access files without A's permission.
+[ ] Contract change invalidates dependent task and causes bounded alert.
+[ ] Deadline trigger dispatches at most once under approved rule.
+[ ] Unapproved deadline trigger sends suggestion, not automatic code writes.
+[ ] Test failure is marked failure even if agent reports 'done'.
+[ ] Integration into Git requires normal review and branch permissions.
+
+STUDIO / PACK / SKILLS
+[ ] User prompts for a dense trading-terminal-inspired layout; preview works.
+[ ] Applying layout preserves editor usability; undo restores exact prior state.
+[ ] Untrusted layout cannot hide high-risk permission prompts.
+[ ] User creates data-bound widget; preview distinguishes dummy/live data.
+[ ] Widget cannot access filesystem or network without grant.
+[ ] Workshop builds/tests/reviews a mini-extension before install.
+[ ] Importing theme-only pack requests no shell/filesystem privileges.
+[ ] Pack install/update shows dependencies, permissions and compatibility.
+[ ] Pack update with added privileges requires renewed approval.
+[ ] Valid SKILL.md loads; invalid metadata and unsafe scripts rejected/disabled.
+[ ] Skill requiring unavailable tool shows 'unavailable' rather than fake result.
+[ ] Skills can be bundled with Pack without duplicating registry state.
+
+MOBILE / REMOTE
+[ ] Phone can join room, see timer, review diff, receive real notification.
+[ ] Phone user can approve scoped operation while host online.
+[ ] If host offline, local action fails clearly and is not marked executed.
+[ ] Revoking paired phone immediately denies further remote tool calls.
+
+PERFORMANCE / RELIABILITY
+[ ] Smooth editing while live streams/voice call/agents run.
+[ ] No event flood or runaway agent cost.
+[ ] Startup and crash recovery preserve existing user work.
+[ ] Generated themes/widgets respect accessibility and reduced-motion.
+
+================================================================================
+PART L — WHAT TO RESEARCH IN THE EXISTING REPO / PRODUCE FIRST
+================================================================================
+
+FIRST, INSPECT; DO NOT IMMEDIATELY IMPLEMENT EVERYTHING.
+
+Deliver the following in order:
+A. REPOSITORY AUDIT
+   - Stack, framework, folders, tests, CI, editor/workbench, extension API,
+     terminal/debugger integration, agent providers, IPC, settings persistence.
+   - Identify Forge Room/Studio functionality already coded vs concept-only.
+   - Locate available local and installed SKILL.md files and skill adapters.
+   - Detect permission boundaries, update mechanism and compatibility issues.
+B. FEATURE GAP MATRIX
+   Columns: requirement | implemented/partial/missing | code path | dependency |
+   provider/API constraints | effort/risk | V1/V2/V3 | test plan.
+C. ARCHITECTURE DECISIONS
+   - Which existing services are reused, which modules genuinely must be built.
+   - IDE capability API, collaboration events, CRDT/patch strategy, permissions,
+     skills registry, widget sandbox, pack manifest, mobile API and call stack.
+   - ADRs with trade-offs and rollback strategy.
+D. SKILL SOURCING REPORT
+   - Search official/local/open skills; links, license, source revision, actual
+     tool needs, security risks and pilot results. Do not invent found skills.
+E. VERTICAL SLICE PLAN
+   - Small coherent milestones that can be run locally and automated tests.
+   - First mandatory slice: two clients, presence, uncommitted diff, anchored
+     comment, reconnect/revoke and real audit logs.
+   - Second: working voice call, room-follow, restricted shared output.
+   - Third: agent adapter + native IDE capability + task execution evidence.
+   - Fourth: Morph preview/apply/undo and a functioning widget/pack slice.
+F. IMPLEMENTATION
+   - Start only after audit, with minimal changes that preserve existing app.
+   - Keep changelog: completed, partial, blocked, not implemented.
+   - Keep docs, migrations, tests, config examples and install instructions.
+   - Build and test locally; report EXACT commands/results and limitations.
+
+If this document is supplied alongside prior Forge Room V1-V3 or earlier Forge
+research prompts, treat this as the consolidated CURRENT decision source on
+new features and priorities. Preserve compatible earlier requirements and
+explicitly flag any unresolved contradictions. Do not simply concatenate
+old lists and claim every marketing idea is a mandatory V1 implementation.
+
+================================================================================
+PART M — VERIFIED OFFICIAL REFERENCES / PRIOR ART / FACT CHECK
+================================================================================
+
+These references are starting points, not evidence Forge has implemented them.
+Always check current support, version, licensing and access date. Some product
+features may change or require paid accounts.
+
+Agent Skills standard and verification:
+- https://agentskills.io/specification
+- https://github.com/agentskills/agentskills/blob/main/docs/specification.mdx
+- https://developers.openai.com/api/docs/guides/tools-skills
+- https://agentskills.io/home
+
+Agent interoperability and tool security:
+- https://agentclientprotocol.com/
+- https://github.com/agentclientprotocol/agent-client-protocol
+- https://github.com/agentclientprotocol/agent-client-protocol/blob/main/docs/protocol/v2/overview.mdx
+- https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
+
+Existing IDE foundation and extension points:
+- https://code.visualstudio.com/api/
+- https://code.visualstudio.com/api/extension-capabilities/extending-workbench
+- https://code.visualstudio.com/api/extension-guides/webview
+- https://code.visualstudio.com/Docs/supporting/faq
+- https://code.visualstudio.com/docs/getstarted/personalize-vscode
+
+Collaboration prior art:
+- https://zed.dev/docs/collaboration/overview
+- https://zed.dev/features
+- https://github.com/zed-industries/docs/blob/main/general/collaboration.md
+- https://learn.microsoft.com/visualstudio/liveshare/
+- https://learn.microsoft.com/en-us/visualstudio/liveshare/use/share-server-visual-studio
+
+Remote/mobile prior art:
+- https://prod.cursor.com/docs/cloud-agent/mobile
+
+AI coding agents/provider references:
+- https://github.com/openai/codex
+- https://docs.anthropic.com/en/docs/claude-code/overview
+- https://zed.dev/docs/ai/agents
+- https://www.jetbrains.com/acp/
+- https://docs.windsurf.com/
+
+Project/privacy/safety engineering reminders:
+- Code - OSS licensing is distinct from Microsoft's VS Code binaries and
+  marketplace terms. Audit any fork/distribution plan before release.
+- Existing Zed/Live Share already offer substantial live collaboration;
+  Cross-agent hackathon orchestration + programmable IDE customization +
+  cohesive session/pipeline UX are PROPOSED differentiation, not 'world first'.
+- Cursor already documents phone-based remote steering for eligible users;
+  Forge Pocket must offer a distinct cohesive IDE/team experience.
+- This document does not claim exhaustive competitor market research; collect
+  dated primary sources and user interviews before marketing differentiation.
+
+================================================================================
+FINAL DIRECTIVE TO CODING MODEL
+================================================================================
+
+Do not answer with another brainstorming list. Produce a reality-based repo audit,
+feature gap map, ADRs and actionable milestone sequence, then execute the first
+small tested milestone when safe to do so. This project is an EXISTING desktop
+IDE being upgraded into an AI-native multiplayer development environment.
+
+Make the main dream real:
+- PEOPLE AND AGENTS share an authenticated real-time hackathon room;
+- EVERY PARTICIPANT has useful, permissioned live development presence;
+- HUMANS can CALL, FOLLOW, INSPECT, and REQUEST SHARED CONTROL;
+- AGENTS can use structured IDE capabilities and coordinate dependencies;
+- SKILLS power reusable AI behaviors without duplicating infrastructure;
+- USERS can morph and extend the IDE and share the result as FORGE PACKS;
+- MOBILE participants can safely supervise the live project remotely;
+- GIT and tests remain reliable validation/delivery mechanisms;
+- EVERY AUTOMATION is inspectable, limited, reversible where feasible, and
+  never pretends unverified work is complete.
+
+Do not sacrifice editor usability, user privacy, security, or testability to
+create a prettier dashboard. The experience must be functional, transparent,
+and reliable under real hackathon time pressure.

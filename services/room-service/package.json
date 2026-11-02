@@ -1,0 +1,9 @@
+{
+  "name": "forge-room-service",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TLS-only account and room-invitation control plane for Forge Room self-hosted deployments.",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node src/server.js", "test": "node --test test/*.test.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}
