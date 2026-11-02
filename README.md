@@ -2,15 +2,17 @@
 
 A light, fast, native IDE written in Rust. No Electron, no webview, no bundled Node runtime.
 
-**Status:** early preview (`0.110.0-alpha.1`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [project_rust_progress.md](project_rust_progress.md).
+**Status:** early preview (`0.110.0-alpha.1`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [progress.md](progress.md).
 
 ## What works today
 
-- IDE shell: explorer sidebar with a folder tree, multi-file tabs, menu bar, status bar, native Open/Save dialogs.
-- Open, edit and save UTF-8 text files, with unsaved-change prompts.
-- A per-user Windows installer with in-place updates and a themed uninstaller.
+- IDE shell: folder explorer, multi-file tabs, native dialogs, UTF-8 editing and saving, and unsaved-change prompts.
+- Line numbers, syntax highlighting, command palette, quick open, find/replace, file search, and an integrated terminal.
+- Source Control with staging, commits, branches, synchronization, diffs, history, and blame.
+- Local project rooms with people, agents, tasks, handoffs, evidence, and activity. Network collaboration and AI provider execution are not yet implemented in the native app.
+- Six appearance themes and a per-user Windows installer with in-place updates and a themed uninstaller.
 
-Line numbers and syntax highlighting, command palette and search, terminal and Git are next; see the roadmap.
+Current gaps and the shared work plan are in [progress.md](progress.md).
 
 ## Build and run
 
@@ -40,7 +42,7 @@ docs/
   native/           Early preview notes and migration compatibility
   design/           Approved installer mockups and installer status
 COLLAB.md           Shared hand-off log between coding agents
-project_rust_progress.md   Status and roadmap
+progress.md   Status and roadmap
 ```
 
 ## License
