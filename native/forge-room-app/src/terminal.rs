@@ -169,6 +169,11 @@ impl Terminal {
         self.snapshot.clone().or_else(|| self.live_selected_text())
     }
 
+    /// The text currently on the screen, for noticing a dev server's address.
+    pub fn screen_text(&self) -> String {
+        self.parser.lock().unwrap().screen().contents()
+    }
+
     pub fn has_exited(&self) -> bool {
         self.exited.load(Ordering::Relaxed)
     }

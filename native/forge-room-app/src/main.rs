@@ -17,6 +17,7 @@ mod lobby;
 mod mark;
 mod palette;
 mod position;
+mod preview;
 mod room_state;
 mod rooms;
 mod search;
@@ -198,6 +199,8 @@ struct ForgeRoomApp {
     terminal: Option<terminal::Terminal>,
     show_terminal: bool,
     show_right: bool,
+    show_preview: bool,
+    preview: preview::Preview,
     ai: ai_panel::State,
     right_tab: RightTab,
     terminal_focus_request: bool,
@@ -293,6 +296,8 @@ impl ForgeRoomApp {
             terminal: None,
             show_terminal: true,
             show_right: true,
+            show_preview: true,
+            preview: preview::Preview::default(),
             ai: ai_panel::State::default(),
             right_tab: RightTab::Ai,
             terminal_focus_request: false,
@@ -326,6 +331,7 @@ impl ForgeRoomApp {
                 .load_for(root.as_deref().map(room_state::lobby_path_for));
             self.runtimes = root.as_deref().map(detect_runtimes).unwrap_or_default();
             self.search.reset();
+            self.preview.forget_project();
             self.status = match kept {
                 Ok(()) => format!("Opened folder {}", path.display()),
                 Err(error) => format!("Opened folder {}. {error}", path.display()),
@@ -452,6 +458,7 @@ impl ForgeRoomApp {
             Command::ShowSourceControl => self.switch_view(SidebarView::SourceControl),
             Command::ShowRoom => self.switch_view(SidebarView::Room),
             Command::ShowLobby => self.show_lobby = !self.show_lobby,
+            Command::TogglePreview => self.show_preview = !self.show_preview,
             Command::ShowSearch => {
                 self.view = SidebarView::Search;
                 self.show_sidebar = true;
@@ -2649,6 +2656,44 @@ impl ForgeRoomApp {
             [rect.left_bottom(), rect.right_bottom()],
             egui::Stroke::new(1.0, theme::border()),
         );
+        let toggle = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 104.0, rect.center().y - 12.0),
+            egui::vec2(96.0, 24.0),
+        );
+        let label = if self.show_preview {
+            "Hide Preview"
+        } else {
+            "Preview"
+        };
+        let response = ui
+            .interact(
+                toggle,
+                ui.make_persistent_id("preview-toggle"),
+                egui::Sense::click(),
+            )
+            .on_hover_text("Show or hide the Preview pane");
+        let fill = if response.hovered() {
+            theme::overlay(18)
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        painter.rect(
+            toggle,
+            6.0,
+            fill,
+            egui::Stroke::new(1.0, theme::border()),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            toggle.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(12.5),
+            theme::text(),
+        );
+        if response.clicked() {
+            self.show_preview = !self.show_preview;
+        }
         ui.horizontal_centered(|ui| {
             let (icon, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
             icons::draw(ui.painter(), "pulse", icon.center(), 18.0, theme::accent());
@@ -2674,7 +2719,7 @@ impl ForgeRoomApp {
                 .map(|since| since.as_secs())
                 .unwrap_or(0);
             // An overflowing row would widen the panels below it, so only what fits is shown.
-            let slots = ((ui.available_width() - 20.0) / 250.0).floor().max(0.0) as usize;
+            let slots = ((ui.available_width() - 130.0) / 250.0).floor().max(0.0) as usize;
             for event in state.activity.iter().rev().take(slots.min(4)) {
                 let actor = state
                     .participants
@@ -2851,6 +2896,22 @@ impl eframe::App for ForgeRoomApp {
                     bottom: 0,
                 }))
                 .show(ui, |ui| self.terminal_panel(ui));
+        }
+
+        if self.show_preview && !self.show_lobby && ui.available_width() > 760.0 {
+            if let Some(terminal) = &self.terminal {
+                self.preview.detect(&terminal.screen_text());
+            }
+            let mut close = false;
+            egui::Panel::right("preview")
+                .default_size(220.0)
+                .size_range(170.0..=420.0)
+                .resizable(true)
+                .frame(card(theme::bg_sidebar()))
+                .show(ui, |ui| close = self.preview.show(ui));
+            if close {
+                self.show_preview = false;
+            }
         }
 
         egui::CentralPanel::default()
