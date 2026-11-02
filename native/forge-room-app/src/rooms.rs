@@ -78,6 +78,7 @@ pub struct RoomView {
     people_open: bool,
     tasks_open: bool,
     activity_open: bool,
+    show_more_activity: bool,
     expanded: Option<String>,
     task_query: String,
     task_status_filter: Option<TaskStatus>,
@@ -103,6 +104,7 @@ impl Default for RoomView {
             people_open: true,
             tasks_open: true,
             activity_open: true,
+            show_more_activity: false,
             expanded: None,
             task_query: String::new(),
             task_status_filter: None,
@@ -1107,8 +1109,22 @@ impl RoomView {
         if !self.activity_open {
             return;
         }
+        if state.activity.len() > 10 {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                let label = if self.show_more_activity {
+                    "Show recent 10"
+                } else {
+                    "Show up to 50"
+                };
+                if ui.button(label).clicked() {
+                    self.show_more_activity = !self.show_more_activity;
+                }
+            });
+        }
         let now = now_epoch_seconds();
-        for event in state.activity.iter().rev().take(10) {
+        let limit = if self.show_more_activity { 50 } else { 10 };
+        for event in state.activity.iter().rev().take(limit) {
             ui.horizontal_wrapped(|ui| {
                 ui.add_space(14.0);
                 ui.label(
