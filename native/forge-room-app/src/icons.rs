@@ -12,10 +12,21 @@ struct Line {
     points: Vec<Pos2>,
 }
 
-const SOURCES: [(&str, &str); 24] = [
+const SOURCES: [(&str, &str); 64] = [
+    (
+        "accessibility-off",
+        include_str!("../assets/icons/accessibility-off.svg"),
+    ),
     ("ai", include_str!("../assets/icons/ai.svg")),
     ("arrow-down", include_str!("../assets/icons/arrow-down.svg")),
+    (
+        "arrow-right",
+        include_str!("../assets/icons/arrow-right.svg"),
+    ),
     ("arrow-up", include_str!("../assets/icons/arrow-up.svg")),
+    ("bell", include_str!("../assets/icons/bell.svg")),
+    ("bot", include_str!("../assets/icons/bot.svg")),
+    ("calendar", include_str!("../assets/icons/calendar.svg")),
     ("check", include_str!("../assets/icons/check.svg")),
     (
         "chevron-down",
@@ -25,36 +36,89 @@ const SOURCES: [(&str, &str); 24] = [
         "chevron-right",
         include_str!("../assets/icons/chevron-right.svg"),
     ),
+    ("circle", include_str!("../assets/icons/circle.svg")),
+    (
+        "circle-check",
+        include_str!("../assets/icons/circle-check.svg"),
+    ),
+    ("circle-dot", include_str!("../assets/icons/circle-dot.svg")),
+    ("clock", include_str!("../assets/icons/clock.svg")),
     ("close", include_str!("../assets/icons/close.svg")),
+    ("cloud", include_str!("../assets/icons/cloud.svg")),
+    ("code", include_str!("../assets/icons/code.svg")),
     (
         "commit-dropdown",
         include_str!("../assets/icons/commit-dropdown.svg"),
     ),
     ("explorer", include_str!("../assets/icons/explorer.svg")),
     ("extensions", include_str!("../assets/icons/extensions.svg")),
+    (
+        "external-link",
+        include_str!("../assets/icons/external-link.svg"),
+    ),
+    ("eye", include_str!("../assets/icons/eye.svg")),
+    ("file", include_str!("../assets/icons/file.svg")),
     ("file-json", include_str!("../assets/icons/file-json.svg")),
     ("file-ts", include_str!("../assets/icons/file-ts.svg")),
-    ("file", include_str!("../assets/icons/file.svg")),
+    ("flag", include_str!("../assets/icons/flag.svg")),
     (
         "folder-open",
         include_str!("../assets/icons/folder-open.svg"),
     ),
+    ("github", include_str!("../assets/icons/github.svg")),
+    ("hourglass", include_str!("../assets/icons/hourglass.svg")),
+    ("layers", include_str!("../assets/icons/layers.svg")),
+    ("lock", include_str!("../assets/icons/lock.svg")),
+    ("models", include_str!("../assets/icons/models.svg")),
     ("more", include_str!("../assets/icons/more.svg")),
     ("new-file", include_str!("../assets/icons/new-file.svg")),
+    (
+        "panel-bottom",
+        include_str!("../assets/icons/panel-bottom.svg"),
+    ),
+    ("panel-left", include_str!("../assets/icons/panel-left.svg")),
+    (
+        "panel-right",
+        include_str!("../assets/icons/panel-right.svg"),
+    ),
     ("plus", include_str!("../assets/icons/plus.svg")),
+    ("pulse", include_str!("../assets/icons/pulse.svg")),
     ("refresh", include_str!("../assets/icons/refresh.svg")),
+    ("rocket", include_str!("../assets/icons/rocket.svg")),
+    ("room", include_str!("../assets/icons/room.svg")),
     (
         "room-active",
         include_str!("../assets/icons/room-active.svg"),
     ),
-    ("room", include_str!("../assets/icons/room.svg")),
     ("run-debug", include_str!("../assets/icons/run-debug.svg")),
     ("search", include_str!("../assets/icons/search.svg")),
+    ("send", include_str!("../assets/icons/send.svg")),
+    ("settings", include_str!("../assets/icons/settings.svg")),
+    ("share", include_str!("../assets/icons/share.svg")),
+    ("shield", include_str!("../assets/icons/shield.svg")),
     (
         "source-control",
         include_str!("../assets/icons/source-control.svg"),
     ),
+    ("studio", include_str!("../assets/icons/studio.svg")),
+    ("tag", include_str!("../assets/icons/tag.svg")),
+    ("target", include_str!("../assets/icons/target.svg")),
     ("terminal", include_str!("../assets/icons/terminal.svg")),
+    ("tests", include_str!("../assets/icons/tests.svg")),
+    ("upload-box", include_str!("../assets/icons/upload-box.svg")),
+    ("user", include_str!("../assets/icons/user.svg")),
+    ("user-plus", include_str!("../assets/icons/user-plus.svg")),
+    ("users", include_str!("../assets/icons/users.svg")),
+    ("warning", include_str!("../assets/icons/warning.svg")),
+    (
+        "window-maximize",
+        include_str!("../assets/icons/window-maximize.svg"),
+    ),
+    (
+        "window-minimize",
+        include_str!("../assets/icons/window-minimize.svg"),
+    ),
+    ("workflows", include_str!("../assets/icons/workflows.svg")),
 ];
 
 /// Every `d="..."` attribute in an SVG, in order.
@@ -224,24 +288,12 @@ pub fn more(painter: &Painter, center: Pos2, color: Color32) {
 }
 
 /// Play triangle for Run/Debug.
-pub fn play(painter: &Painter, rect: Rect, color: Color32) {
-    boxed(painter, "run-debug", rect, 1.1, color);
-}
-
-pub fn extensions(painter: &Painter, rect: Rect, color: Color32) {
-    boxed(painter, "extensions", rect, 1.1, color);
-}
-
 /// Four-point sparkle for the AI entry.
 pub fn sparkle(painter: &Painter, rect: Rect, color: Color32) {
     boxed(painter, "ai", rect, 1.1, color);
 }
 
 /// Terminal window with a prompt for the Terminal entry.
-pub fn terminal(painter: &Painter, rect: Rect, color: Color32) {
-    boxed(painter, "terminal", rect, 1.1, color);
-}
-
 pub fn plus(painter: &Painter, center: Pos2, color: Color32) {
     draw(painter, "plus", center, 16.0, color);
 }

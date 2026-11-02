@@ -38,13 +38,7 @@ use workspace::Workspace;
 const APP_NAME: &str = "Forge Room Early Preview";
 const TAB_HEIGHT: f32 = 42.0;
 const TITLE_HEIGHT: f32 = 46.0;
-const ACTIVITY_WIDTH: f32 = 64.0;
-
-#[derive(Clone, Copy)]
-enum RailIcon {
-    Play,
-    Extensions,
-}
+const ACTIVITY_WIDTH: f32 = 132.0;
 
 /// One entry of the navigation rail on the left.
 #[derive(Clone, Copy)]
@@ -53,8 +47,9 @@ enum Rail {
     Terminal,
     Room,
     Ai,
+    Studio,
     /// Shown in the design but not built yet: drawn dim and inert.
-    Soon(RailIcon),
+    Soon,
 }
 
 /// Tabs of the dock on the right.
@@ -1111,115 +1106,207 @@ impl ForgeRoomApp {
     }
 
     fn activity_bar(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, 6.0);
-        ui.add_space(12.0);
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
+        ui.add_space(10.0);
         let badge = self.change_count();
-        let items: [(Rail, &str); 8] = [
-            (Rail::View(SidebarView::Explorer), "Explorer (Ctrl+Shift+E)"),
-            (Rail::View(SidebarView::Search), "Search (Ctrl+Shift+F)"),
-            (
+        let rooms = self.room.open_task_count();
+        // (item, icon, label, tooltip); `None` is a divider.
+        type Entry = Option<(Rail, &'static str, &'static str, &'static str)>;
+        let top: [Entry; 13] = [
+            Some((
+                Rail::View(SidebarView::Explorer),
+                "code",
+                "Code",
+                "Code (Ctrl+Shift+E)",
+            )),
+            Some((
+                Rail::View(SidebarView::Search),
+                "search",
+                "Search",
+                "Search (Ctrl+Shift+F)",
+            )),
+            Some((Rail::Room, "room", "Rooms", "Room Lobby")),
+            Some((Rail::Studio, "studio", "Studio", "Studio: themes")),
+            Some((
+                Rail::Soon,
+                "workflows",
+                "Workflows",
+                "Workflows: coming soon",
+            )),
+            Some((Rail::Soon, "models", "Models", "Models: coming soon")),
+            None,
+            Some((
                 Rail::View(SidebarView::SourceControl),
+                "source-control",
+                "Source\nControl",
                 "Source Control (Ctrl+Shift+G)",
-            ),
-            (Rail::Soon(RailIcon::Play), "Run/Debug: coming soon"),
-            (Rail::Soon(RailIcon::Extensions), "Extensions: coming soon"),
-            (Rail::Ai, "AI Assistant"),
-            (Rail::Terminal, "Terminal (Ctrl+`)"),
-            (Rail::Room, "Room (Ctrl+Shift+R)"),
+            )),
+            Some((
+                Rail::Soon,
+                "run-debug",
+                "Run & Debug",
+                "Run & Debug: coming soon",
+            )),
+            Some((Rail::Soon, "tests", "Tests", "Tests: coming soon")),
+            Some((
+                Rail::Soon,
+                "extensions",
+                "Extensions",
+                "Extensions: coming soon",
+            )),
+            None,
+            Some((Rail::Ai, "ai", "AI Assistant", "AI Assistant")),
         ];
-        for (item, tip) in items {
-            ui.horizontal(|ui| {
-                ui.add_space((ACTIVITY_WIDTH - 44.0) / 2.0);
-                let soon = matches!(item, Rail::Soon(_));
-                let sense = if soon {
-                    egui::Sense::hover()
-                } else {
-                    egui::Sense::click()
-                };
-                let (rect, response) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), sense);
-                let active = match item {
-                    Rail::View(view) => self.show_sidebar && self.view == view,
-                    Rail::Terminal => self.show_terminal,
-                    Rail::Room => self.show_lobby,
-                    Rail::Ai => self.show_right && self.right_tab == RightTab::Ai,
-                    Rail::Soon(_) => false,
-                };
-                let hovered = response.hovered() && !soon;
-                let painter = ui.painter();
-                if active && matches!(item, Rail::Room) {
-                    painter.rect_filled(
-                        rect,
-                        10.0,
-                        theme::mix(theme::bg_activity(), theme::accent(), 0.25),
+        for entry in top {
+            match entry {
+                None => {
+                    ui.add_space(4.0);
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 1.0),
+                        egui::Sense::hover(),
                     );
-                    painter.rect_stroke(
-                        rect,
-                        10.0,
-                        egui::Stroke::new(
-                            1.0,
-                            theme::mix(theme::bg_activity(), theme::accent(), 0.65),
-                        ),
-                        egui::StrokeKind::Inside,
+                    ui.painter().line_segment(
+                        [
+                            rect.left_center() + egui::vec2(12.0, 0.0),
+                            rect.right_center() - egui::vec2(12.0, 0.0),
+                        ],
+                        egui::Stroke::new(1.0, theme::border()),
                     );
-                } else if active {
-                    painter.rect_filled(rect, 10.0, theme::overlay(20));
-                } else if hovered {
-                    painter.rect_filled(rect, 10.0, theme::overlay(10));
+                    ui.add_space(4.0);
                 }
-                let color = if soon {
-                    theme::mix(theme::bg_activity(), theme::text_dim(), 0.55)
-                } else if active || hovered {
-                    theme::text()
-                } else {
-                    theme::text_dim()
-                };
-                let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(22.0, 22.0));
-                match item {
-                    Rail::View(SidebarView::Explorer) => icons::folder(
-                        painter,
-                        egui::Rect::from_center_size(icon_rect.center(), egui::vec2(18.0, 14.0)),
-                        color,
-                    ),
-                    Rail::View(SidebarView::Search) => icons::search(painter, icon_rect, color),
-                    Rail::View(SidebarView::SourceControl) => {
-                        icons::branch(painter, icon_rect, color)
-                    }
-                    Rail::View(SidebarView::Room) | Rail::Room => {
-                        icons::room(painter, icon_rect, color)
-                    }
-                    Rail::Soon(RailIcon::Play) => icons::play(painter, icon_rect, color),
-                    Rail::Soon(RailIcon::Extensions) => {
-                        icons::extensions(painter, icon_rect, color)
-                    }
-                    Rail::Ai => icons::sparkle(painter, icon_rect, color),
-                    Rail::Terminal => icons::terminal(painter, icon_rect, color),
+                Some((item, icon, label, tip)) => {
+                    let count = match item {
+                        Rail::View(SidebarView::SourceControl) => badge,
+                        Rail::Room => rooms,
+                        _ => 0,
+                    };
+                    self.rail_item(ui, item, icon, label, tip, count);
                 }
-                let count = match item {
-                    Rail::View(SidebarView::SourceControl) => badge,
-                    Rail::Room => self.room.open_task_count(),
-                    _ => 0,
-                };
-                if count > 0 {
-                    let center = egui::pos2(rect.right() - 4.0, rect.top() + 6.0);
-                    painter.circle_filled(center, 8.0, theme::badge());
-                    painter.text(
-                        center,
-                        egui::Align2::CENTER_CENTER,
-                        count.min(99),
-                        egui::FontId::proportional(10.5),
-                        theme::badge_text(),
-                    );
-                }
-                if response.on_hover_text(tip).clicked() {
-                    match item {
-                        Rail::View(view) => self.switch_view(view),
-                        Rail::Terminal => self.run_command(Command::ToggleTerminal, false),
-                        Rail::Room => self.show_lobby = !self.show_lobby,
-                        Rail::Ai => self.show_dock(RightTab::Ai),
-                        Rail::Soon(_) => {}
+            }
+        }
+        ui.add_space(4.0);
+        self.rail_item(
+            ui,
+            Rail::Terminal,
+            "terminal",
+            "Terminal",
+            "Terminal (Ctrl+`)",
+            0,
+        );
+
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
+            ui.add_space(10.0);
+            for (icon, tip) in [
+                ("settings", "Settings: coming soon"),
+                ("cloud", "Cloud: coming soon"),
+                ("accessibility-off", "Accessibility: coming soon"),
+            ] {
+                self.rail_item(ui, Rail::Soon, icon, "", tip, 0);
+            }
+        });
+    }
+
+    fn rail_item(
+        &mut self,
+        ui: &mut egui::Ui,
+        item: Rail,
+        icon: &str,
+        label: &str,
+        tip: &str,
+        count: usize,
+    ) {
+        let soon = matches!(item, Rail::Soon);
+        let height = if label.contains('\n') { 48.0 } else { 38.0 };
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ACTIVITY_WIDTH - 12.0, height),
+            if soon {
+                egui::Sense::hover()
+            } else {
+                egui::Sense::click()
+            },
+        );
+        let rect = rect.translate(egui::vec2(6.0, 0.0));
+        let active = match item {
+            Rail::View(view) => !self.show_lobby && self.show_sidebar && self.view == view,
+            Rail::Terminal => !self.show_lobby && self.show_terminal,
+            Rail::Room => self.show_lobby,
+            Rail::Ai => !self.show_lobby && self.show_right && self.right_tab == RightTab::Ai,
+            Rail::Studio | Rail::Soon => false,
+        };
+        let hovered = response.hovered() && !soon;
+        let painter = ui.painter();
+        if active {
+            painter.rect_filled(
+                rect,
+                8.0,
+                theme::mix(theme::bg_activity(), theme::accent(), 0.22),
+            );
+        } else if hovered {
+            painter.rect_filled(rect, 8.0, theme::overlay(12));
+        }
+        let color = if soon {
+            theme::mix(theme::bg_activity(), theme::text_dim(), 0.6)
+        } else if active || hovered {
+            theme::text()
+        } else {
+            theme::text_dim()
+        };
+        let icon_name = if active && matches!(item, Rail::Room) {
+            "room-active"
+        } else {
+            icon
+        };
+        icons::draw(
+            painter,
+            icon_name,
+            egui::pos2(rect.left() + 22.0, rect.center().y),
+            20.0,
+            color,
+        );
+        if !label.is_empty() {
+            painter.text(
+                egui::pos2(rect.left() + 42.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(13.0),
+                color,
+            );
+        }
+        if count > 0 {
+            let center = egui::pos2(rect.right() - 12.0, rect.center().y);
+            painter.circle_filled(center, 7.0, theme::badge());
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                count.min(99),
+                egui::FontId::proportional(9.5),
+                theme::badge_text(),
+            );
+        }
+        if response.on_hover_text(tip).clicked() {
+            match item {
+                Rail::View(view) => {
+                    if self.show_lobby {
+                        self.show_lobby = false;
+                        self.view = view;
+                        self.show_sidebar = true;
+                    } else {
+                        self.switch_view(view);
                     }
                 }
-            });
+                Rail::Terminal => {
+                    self.show_lobby = false;
+                    self.run_command(Command::ToggleTerminal, false);
+                }
+                Rail::Room => self.show_lobby = !self.show_lobby,
+                Rail::Ai => {
+                    self.show_lobby = false;
+                    self.show_dock(RightTab::Ai);
+                }
+                Rail::Studio => self.gallery.open(),
+                Rail::Soon => {}
+            }
         }
     }
 
