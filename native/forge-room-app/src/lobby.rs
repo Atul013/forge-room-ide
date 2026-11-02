@@ -810,43 +810,26 @@ impl Lobby {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             for ((tab, label), tab_width) in TABS.into_iter().zip(sizes) {
-                let galley = ui.painter().layout_no_wrap(
-                    label.to_string(),
-                    FontId::proportional(15.0),
-                    if self.tab == tab {
-                        theme::text()
-                    } else {
-                        theme::text_dim()
-                    },
+                let selected = self.tab == tab;
+                let response = ui.add_sized(
+                    vec2(tab_width, 37.0),
+                    egui::Button::new(
+                        RichText::new(label).size(15.0).color(if selected {
+                            theme::text()
+                        } else {
+                            theme::text_dim()
+                        }),
+                    )
+                    .fill(if selected { theme::tab_active() } else { card_fill() })
+                    .stroke(Stroke::NONE),
                 );
-                let (rect, response) =
-                    ui.allocate_exact_size(vec2(tab_width, 37.0), Sense::click());
+                let rect = response.rect;
                 if self.tab == tab {
-                    ui.painter().rect_filled(
-                        rect,
-                        egui::CornerRadius {
-                            nw: 5,
-                            ne: 5,
-                            sw: 0,
-                            se: 0,
-                        },
-                        theme::tab_active(),
-                    );
                     ui.painter().line_segment(
                         [rect.left_bottom(), rect.right_bottom()],
                         Stroke::new(2.0, theme::accent()),
                     );
-                } else if response.hovered() {
-                    ui.painter().rect_filled(rect, 6.0, card_fill());
                 }
-                ui.painter().galley(
-                    egui::pos2(
-                        rect.center().x - galley.size().x / 2.0,
-                        rect.center().y - galley.size().y / 2.0,
-                    ),
-                    galley,
-                    theme::text(),
-                );
                 if response.clicked() {
                     self.tab = tab;
                 }
