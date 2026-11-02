@@ -816,14 +816,16 @@ impl Lobby {
                 let selected = self.tab == tab;
                 let response = ui.add_sized(
                     vec2(tab_width, 37.0),
-                    egui::Button::new(
-                        RichText::new(label).size(15.0).color(if selected {
-                            theme::text()
-                        } else {
-                            theme::text_dim()
-                        }),
-                    )
-                    .fill(if selected { theme::tab_active() } else { card_fill() })
+                    egui::Button::new(RichText::new(label).size(15.0).color(if selected {
+                        theme::text()
+                    } else {
+                        theme::text_dim()
+                    }))
+                    .fill(if selected {
+                        theme::tab_active()
+                    } else {
+                        card_fill()
+                    })
                     .stroke(Stroke::NONE),
                 );
                 let rect = response.rect;
@@ -1087,11 +1089,10 @@ impl Lobby {
                                         self.config.goals.iter_mut().enumerate()
                                     {
                                         ui.horizontal(|ui| {
-                                            ui.checkbox(done, "")
-                                                .on_hover_text(format!(
-                                                    "Complete checklist item {}",
-                                                    index + 1
-                                                ));
+                                            ui.checkbox(done, "").on_hover_text(format!(
+                                                "Complete checklist item {}",
+                                                index + 1
+                                            ));
                                             let response = ui.add(
                                                 egui::TextEdit::singleline(text)
                                                     .frame(egui::Frame::NONE)
