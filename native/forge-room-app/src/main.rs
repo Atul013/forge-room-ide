@@ -2629,6 +2629,68 @@ impl ForgeRoomApp {
         self.focus_editor = true;
     }
 
+    /// A slim Room Pulse strip over the workspace: the latest real room events, or a hint.
+    fn pulse_strip(&mut self, ui: &mut egui::Ui) {
+        let painter = ui.painter().clone();
+        let rect = ui.max_rect();
+        painter.line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            egui::Stroke::new(1.0, theme::border()),
+        );
+        ui.horizontal_centered(|ui| {
+            let (icon, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+            icons::draw(ui.painter(), "pulse", icon.center(), 18.0, theme::accent());
+            ui.label(
+                egui::RichText::new("Room Pulse")
+                    .family(fonts::semibold())
+                    .color(theme::text()),
+            );
+            ui.add_space(10.0);
+            let Some(state) = self.room.state() else {
+                ui.label(
+                    egui::RichText::new("No room yet. Create one from the Lobby.")
+                        .color(theme::text_dim()),
+                );
+                return;
+            };
+            if state.activity.is_empty() {
+                ui.label(egui::RichText::new("No activity yet").color(theme::text_dim()));
+                return;
+            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_secs())
+                .unwrap_or(0);
+            // An overflowing row would widen the panels below it, so only what fits is shown.
+            let slots = ((ui.available_width() - 20.0) / 250.0).floor().max(0.0) as usize;
+            for event in state.activity.iter().rev().take(slots.min(4)) {
+                let actor = state
+                    .participants
+                    .iter()
+                    .find(|person| person.id == event.actor_id)
+                    .map(|person| person.name.as_str())
+                    .unwrap_or("Someone");
+                let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+                ui.painter().circle_filled(
+                    dot.center(),
+                    3.5,
+                    egui::Color32::from_rgb(110, 200, 120),
+                );
+                let text = format!(
+                    "{actor}: {}  ·  {}",
+                    rooms::short(&event.detail, 30),
+                    room_state::ago(now, event.recorded_at_epoch_seconds)
+                );
+                ui.label(
+                    egui::RichText::new(text)
+                        .size(13.0)
+                        .color(theme::text_dim()),
+                );
+                ui.add_space(10.0);
+            }
+        });
+    }
+
     fn lobby_page(&mut self, ui: &mut egui::Ui) {
         let name = self
             .workspace
@@ -2729,6 +2791,18 @@ impl eframe::App for ForgeRoomApp {
             .resizable(false)
             .frame(egui::Frame::new().fill(theme::bg_activity()))
             .show(ui, |ui| self.activity_bar(ui));
+
+        if !self.show_lobby {
+            egui::Panel::top("pulse")
+                .exact_size(34.0)
+                .resizable(false)
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::bg_sidebar())
+                        .inner_margin(egui::Margin::symmetric(12, 0)),
+                )
+                .show(ui, |ui| self.pulse_strip(ui));
+        }
 
         if self.show_sidebar && !self.show_lobby {
             egui::Panel::left("sidebar")
