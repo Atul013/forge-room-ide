@@ -1860,4 +1860,66 @@ mod tests {
                 .all(|w| w[0].due_epoch <= w[1].due_epoch)
         );
     }
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "forge-room-lobby-{}-{}-{name}.json",
+            std::process::id(),
+            crate::room_state::now()
+        ))
+    }
+
+    #[test]
+    fn saved_settings_round_trip() {
+        let path = temp_path("roundtrip");
+        let mut lobby = Lobby::default();
+        lobby.load_for(Some(path.clone()));
+        lobby.config.goal = "Ship the MVP".into();
+        lobby.config.goals.push(("Demo".into(), true));
+        lobby.config.milestones[1].status = MilestoneStatus::Done;
+        lobby.config.labels.insert("ada".into(), "Lead".into());
+        lobby.save();
+
+        let mut reopened = Lobby::default();
+        reopened.load_for(Some(path.clone()));
+        assert_eq!(reopened.config.goal, "Ship the MVP");
+        assert_eq!(reopened.config.goals, vec![("Demo".to_string(), true)]);
+        assert!(reopened.config.milestones[1].status == MilestoneStatus::Done);
+        assert_eq!(
+            reopened.config.labels.get("ada").map(String::as_str),
+            Some("Lead")
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn partial_or_damaged_files_fall_back_to_defaults() {
+        // A file from an older version with only some fields still loads.
+        let partial = temp_path("partial");
+        std::fs::write(&partial, r#"{"goal": "Only a goal"}"#).unwrap();
+        let mut lobby = Lobby::default();
+        lobby.load_for(Some(partial.clone()));
+        assert_eq!(lobby.config.goal, "Only a goal");
+        assert_eq!(lobby.config.milestones.len(), 5);
+        assert_eq!(lobby.config.duration_hours, 24);
+        let _ = std::fs::remove_file(partial);
+
+        // Garbage is ignored rather than blocking the lobby.
+        let damaged = temp_path("damaged");
+        std::fs::write(&damaged, "{ not json").unwrap();
+        let mut lobby = Lobby::default();
+        lobby.load_for(Some(damaged.clone()));
+        assert_eq!(lobby.config.duration_hours, 24);
+        let _ = std::fs::remove_file(damaged);
+    }
+
+    #[test]
+    fn countdown_never_goes_below_zero() {
+        let mut lobby = Lobby::default();
+        lobby.config.start_epoch = now().saturating_sub(48 * 3600);
+        lobby.config.duration_hours = 24;
+        assert_eq!(lobby.remaining(), 0);
+        lobby.config.start_epoch = now();
+        assert!(lobby.remaining() > 23 * 3600);
+    }
 }
