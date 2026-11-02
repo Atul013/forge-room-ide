@@ -1534,6 +1534,9 @@ impl ForgeRoomApp {
             }
             Action::UndoCommit => git::undo_last_commit(&root)
                 .map(|_| "Undid the last commit (changes kept staged)".into()),
+            Action::Resolve { path, side } => {
+                git::resolve_conflict(&root, &path, side).map(|_| format!("Resolved {path}"))
+            }
             Action::DiscardAsk(changes) => {
                 self.pending_discard = Some(changes);
                 return;
