@@ -167,6 +167,8 @@ pub struct Lobby {
     invite: String,
     invite_role: usize,
     invite_note: Option<String>,
+    /// Set when a checklist item was just added, so its text field takes focus.
+    focus_new_goal: bool,
 }
 
 impl Default for Lobby {
@@ -181,6 +183,7 @@ impl Default for Lobby {
             invite: String::new(),
             invite_role: 0,
             invite_note: None,
+            focus_new_goal: false,
         }
     }
 }
@@ -1036,6 +1039,7 @@ impl Lobby {
                                                     .clicked()
                                                 {
                                                     self.config.goals.push((String::new(), false));
+                                                    self.focus_new_goal = true;
                                                 }
                                             },
                                         );
@@ -1049,22 +1053,27 @@ impl Lobby {
                                     );
                                     ui.add_space(4.0);
                                     let mut remove = None;
+                                    let last = self.config.goals.len().saturating_sub(1);
+                                    let focus_new = std::mem::take(&mut self.focus_new_goal);
                                     for (index, (text, done)) in
                                         self.config.goals.iter_mut().enumerate()
                                     {
                                         ui.horizontal(|ui| {
                                             check_box(ui, done, "");
-                                            ui.add(
+                                            let response = ui.add(
                                                 egui::TextEdit::singleline(text)
                                                     .frame(egui::Frame::NONE)
                                                     .font(FontId::proportional(13.0))
                                                     .desired_width(f32::INFINITY),
                                             );
+                                            if focus_new && index == last {
+                                                response.request_focus();
+                                            }
+                                            // An item left empty when the cursor moves away is dropped.
+                                            if response.lost_focus() && text.trim().is_empty() {
+                                                remove = Some(index);
+                                            }
                                         });
-                                        if text.is_empty() && !ui.memory(|m| m.focused().is_some())
-                                        {
-                                            remove = Some(index);
-                                        }
                                     }
                                     if let Some(index) = remove {
                                         self.config.goals.remove(index);
