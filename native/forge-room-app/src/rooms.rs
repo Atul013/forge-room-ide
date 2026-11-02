@@ -761,11 +761,11 @@ impl RoomView {
                         ui.painter()
                             .circle_filled(dot.center(), 4.0, status_color(task.status));
                         ui.add(
-                            egui::Label::new(
+                            egui::Button::new(
                                 RichText::new(&task.title).strong().color(theme::text()),
                             )
-                            .wrap()
-                            .sense(Sense::click()),
+                            .frame(false)
+                            .wrap(),
                         )
                     })
                     .inner;
