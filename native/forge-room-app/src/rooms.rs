@@ -1004,61 +1004,6 @@ impl RoomView {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn damaged_room_cannot_be_replaced_by_create_room() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("forge-room-damaged-{nonce}.json"));
-        let store = StateStore::new(&path);
-        fs::write(&path, b"damaged room").unwrap();
-        fs::write(store.backup_path(), b"damaged backup").unwrap();
-
-        let mut view = RoomView::default();
-        view.load_store(store.clone());
-        assert!(view.load_failed);
-        assert!(!view.create_room());
-        assert_eq!(fs::read(&path).unwrap(), b"damaged room");
-        assert_eq!(fs::read(store.backup_path()).unwrap(), b"damaged backup");
-
-        fs::remove_file(&path).unwrap();
-        fs::remove_file(store.backup_path()).unwrap();
-    }
-
-    #[test]
-    fn missing_primary_recovers_existing_backup() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("forge-room-backup-{nonce}.json"));
-        let store = StateStore::new(&path);
-        let state = room_state::new_room("sample", "Admin");
-        fs::write(store.backup_path(), serde_json::to_vec(&state).unwrap()).unwrap();
-
-        let mut view = RoomView::default();
-        view.load_store(store.clone());
-        assert!(view.state().is_some());
-        assert!(!view.load_failed);
-        assert!(
-            view.error
-                .as_deref()
-                .unwrap()
-                .contains("restored from backup")
-        );
-        assert!(!path.exists());
-
-        fs::remove_file(store.backup_path()).unwrap();
-    }
-}
-
 fn name_of(state: &RoomState, id: &str) -> String {
     state
         .participants
@@ -1242,4 +1187,59 @@ pub fn short(text: &str, max: usize) -> String {
     let mut cut: String = text.chars().take(max.saturating_sub(1)).collect();
     cut.push('…');
     cut
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn damaged_room_cannot_be_replaced_by_create_room() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("forge-room-damaged-{nonce}.json"));
+        let store = StateStore::new(&path);
+        fs::write(&path, b"damaged room").unwrap();
+        fs::write(store.backup_path(), b"damaged backup").unwrap();
+
+        let mut view = RoomView::default();
+        view.load_store(store.clone());
+        assert!(view.load_failed);
+        assert!(!view.create_room());
+        assert_eq!(fs::read(&path).unwrap(), b"damaged room");
+        assert_eq!(fs::read(store.backup_path()).unwrap(), b"damaged backup");
+
+        fs::remove_file(&path).unwrap();
+        fs::remove_file(store.backup_path()).unwrap();
+    }
+
+    #[test]
+    fn missing_primary_recovers_existing_backup() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("forge-room-backup-{nonce}.json"));
+        let store = StateStore::new(&path);
+        let state = room_state::new_room("sample", "Admin");
+        fs::write(store.backup_path(), serde_json::to_vec(&state).unwrap()).unwrap();
+
+        let mut view = RoomView::default();
+        view.load_store(store.clone());
+        assert!(view.state().is_some());
+        assert!(!view.load_failed);
+        assert!(
+            view.error
+                .as_deref()
+                .unwrap()
+                .contains("restored from backup")
+        );
+        assert!(!path.exists());
+
+        fs::remove_file(store.backup_path()).unwrap();
+    }
 }
