@@ -2649,7 +2649,11 @@ impl ForgeRoomApp {
         };
         match self.lobby.show(ui, &context) {
             Some(lobby::Action::EnterRoom) => self.show_lobby = false,
-            Some(lobby::Action::CreateRoom) => self.room.create_room(),
+            Some(lobby::Action::CreateRoom) => {
+                if !self.room.create_room() {
+                    self.show_dock(RightTab::Room);
+                }
+            }
             Some(lobby::Action::AddMember | lobby::Action::AddAgent) => {
                 self.show_dock(RightTab::Room)
             }
