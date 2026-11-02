@@ -320,31 +320,84 @@ impl Lobby {
                                 items.len(),
                                 if items.len() == 1 { "" } else { "s" }
                             );
-                            egui::Frame::new()
-                                .fill(Color32::from_rgba_unmultiplied(226, 160, 60, 30))
-                                .stroke(Stroke::new(
+                            let amber = Color32::from_rgb(226, 160, 60);
+                            let galley = ui.painter().layout_no_wrap(
+                                label,
+                                FontId::proportional(14.0),
+                                theme::text(),
+                            );
+                            let review = ui.painter().layout_no_wrap(
+                                "Review".into(),
+                                FontId::proportional(14.0),
+                                theme::text(),
+                            );
+                            let width = 14.0
+                                + 20.0
+                                + 8.0
+                                + galley.size().x
+                                + 14.0
+                                + review.size().x
+                                + 22.0
+                                + 6.0;
+                            let (rect, _) =
+                                ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
+                            let painter = ui.painter();
+                            painter.rect_filled(
+                                rect,
+                                8.0,
+                                Color32::from_rgba_unmultiplied(226, 160, 60, 30),
+                            );
+                            painter.rect_stroke(
+                                rect,
+                                8.0,
+                                Stroke::new(
                                     1.0,
                                     Color32::from_rgba_unmultiplied(226, 160, 60, 140),
-                                ))
-                                .corner_radius(8.0)
-                                .inner_margin(Margin::symmetric(10, 4))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let (rect, _) = ui
-                                            .allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-                                        icons::draw(
-                                            ui.painter(),
-                                            "warning",
-                                            rect.center(),
-                                            16.0,
-                                            Color32::from_rgb(226, 160, 60),
-                                        );
-                                        ui.label(RichText::new(label).color(theme::text()));
-                                        if ghost_button(ui, "Review", None).clicked() {
-                                            self.tab = Tab::Setup;
-                                        }
-                                    });
-                                });
+                                ),
+                                egui::StrokeKind::Inside,
+                            );
+                            icons::draw(
+                                painter,
+                                "warning",
+                                egui::pos2(rect.left() + 24.0, rect.center().y),
+                                20.0,
+                                amber,
+                            );
+                            painter.galley(
+                                egui::pos2(
+                                    rect.left() + 42.0,
+                                    rect.center().y - galley.size().y / 2.0,
+                                ),
+                                galley.clone(),
+                                theme::text(),
+                            );
+                            let button = Rect::from_min_max(
+                                egui::pos2(
+                                    rect.left() + 42.0 + galley.size().x + 12.0,
+                                    rect.top() + 4.0,
+                                ),
+                                egui::pos2(rect.right() - 4.0, rect.bottom() - 4.0),
+                            );
+                            let response =
+                                ui.interact(button, ui.scope_id().with("review"), Sense::click());
+                            let painter = ui.painter();
+                            painter.rect_filled(
+                                button,
+                                6.0,
+                                if response.hovered() {
+                                    theme::overlay(40)
+                                } else {
+                                    theme::overlay(22)
+                                },
+                            );
+                            painter.galley(
+                                button.center() - review.size() / 2.0,
+                                review,
+                                theme::text(),
+                            );
+                            if response.clicked() {
+                                self.tab = Tab::Setup;
+                            }
                         }
                     });
                 });

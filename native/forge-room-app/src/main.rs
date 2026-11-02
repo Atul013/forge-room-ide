@@ -2475,7 +2475,7 @@ impl eframe::App for ForgeRoomApp {
             .frame(egui::Frame::new().fill(theme::bg_activity()))
             .show(ui, |ui| self.activity_bar(ui));
 
-        if self.show_sidebar {
+        if self.show_sidebar && !self.show_lobby {
             egui::Panel::left("sidebar")
                 .default_size(250.0)
                 .size_range(180.0..=560.0)
@@ -2484,7 +2484,7 @@ impl eframe::App for ForgeRoomApp {
                 .show(ui, |ui| self.sidebar(ui));
         }
 
-        if self.show_right {
+        if self.show_right && !self.show_lobby {
             egui::Panel::right("right-dock")
                 .default_size(364.0)
                 .size_range(280.0..=640.0)
@@ -2493,7 +2493,7 @@ impl eframe::App for ForgeRoomApp {
                 .show(ui, |ui| self.right_dock(ui));
         }
 
-        if self.show_terminal {
+        if self.show_terminal && !self.show_lobby {
             egui::Panel::bottom("terminal")
                 .resizable(true)
                 .default_size(200.0)
