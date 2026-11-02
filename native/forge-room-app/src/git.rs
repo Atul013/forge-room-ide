@@ -362,14 +362,23 @@ pub enum Side {
     Incoming,
 }
 
-/// Resolve a conflicted file by taking one whole side, then stage it.
+/// Resolve a conflicted file by taking one whole side, then stage it. The path is matched
+/// literally (`a[1].txt` must not also match `a1.txt`). When the chosen side deleted the file
+/// there is no version of it to check out, so the resolution is the deletion.
 pub fn resolve_conflict(root: &Path, path: &str, side: Side) -> Result<(), String> {
-    let flag = match side {
-        Side::Current => "--ours",
-        Side::Incoming => "--theirs",
+    let (flag, stage) = match side {
+        Side::Current => ("--ours", "2"),
+        Side::Incoming => ("--theirs", "3"),
     };
-    run(root, &["checkout", flag, "--", path])?;
-    run(root, &["add", "--", path]).map(|_| ())
+    let stages = run(root, &["--literal-pathspecs", "ls-files", "-u", "--", path])?;
+    let has_side = stages
+        .lines()
+        .any(|line| line.split(['\t', ' ']).nth(2) == Some(stage));
+    if !stages.trim().is_empty() && !has_side {
+        return run(root, &["--literal-pathspecs", "rm", "-f", "--", path]).map(|_| ());
+    }
+    run(root, &["--literal-pathspecs", "checkout", flag, "--", path])?;
+    run(root, &["--literal-pathspecs", "add", "--", path]).map(|_| ())
 }
 
 pub fn stash_push(root: &Path, message: &str) -> Result<String, String> {
@@ -609,6 +618,80 @@ mod tests {
             ],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn resolving_matches_the_path_literally_and_handles_a_deleted_side() {
+        if !git_available() {
+            return;
+        }
+        let dir = temp_repo();
+        let git = |args: &[&str]| {
+            let mut full = vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ];
+            full.extend_from_slice(args);
+            run(&dir, &full)
+        };
+        for name in ["a[1].txt", "a1.txt", "gone.txt"] {
+            fs::write(
+                dir.join(name),
+                "base
+",
+            )
+            .unwrap();
+        }
+        git(&["add", "."]).unwrap();
+        git(&["commit", "-q", "-m", "base"]).unwrap();
+        let main = git(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        git(&["checkout", "-q", "-b", "feature"]).unwrap();
+        for name in ["a[1].txt", "a1.txt"] {
+            fs::write(
+                dir.join(name),
+                "from feature
+",
+            )
+            .unwrap();
+        }
+        git(&["rm", "-q", "gone.txt"]).unwrap();
+        git(&["commit", "-q", "-am", "feature"]).unwrap();
+        git(&["checkout", "-q", &main]).unwrap();
+        for name in ["a[1].txt", "a1.txt", "gone.txt"] {
+            fs::write(
+                dir.join(name),
+                "from main
+",
+            )
+            .unwrap();
+        }
+        git(&["commit", "-q", "-am", "main"]).unwrap();
+        assert!(git(&["merge", "feature"]).is_err());
+
+        resolve_conflict(&dir, "a[1].txt", Side::Incoming).unwrap();
+        let unmerged = git(&["ls-files", "-u"]).unwrap();
+        assert!(!unmerged.contains("a[1].txt"));
+        assert!(
+            unmerged.contains("a1.txt"),
+            "the other file stays conflicted"
+        );
+        assert!(
+            fs::read_to_string(dir.join("a1.txt"))
+                .unwrap()
+                .contains("<<<<<<<")
+        );
+
+        // The incoming branch deleted gone.txt: accepting it means deleting the file.
+        resolve_conflict(&dir, "gone.txt", Side::Incoming).unwrap();
+        assert!(!dir.join("gone.txt").exists());
+        assert!(!git(&["ls-files", "-u"]).unwrap().contains("gone.txt"));
     }
 
     #[test]

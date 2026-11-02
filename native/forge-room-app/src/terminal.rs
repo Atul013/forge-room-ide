@@ -169,6 +169,11 @@ impl Terminal {
         self.snapshot.clone().or_else(|| self.live_selected_text())
     }
 
+    /// The text currently on the screen, for noticing a dev server's address.
+    pub fn screen_text(&self) -> String {
+        self.parser.lock().unwrap().screen().contents()
+    }
+
     pub fn has_exited(&self) -> bool {
         self.exited.load(Ordering::Relaxed)
     }
@@ -223,6 +228,8 @@ impl Terminal {
         };
         if let Some(position) = response.interact_pointer_pos() {
             if response.drag_started() {
+                // The previous selection's copy must not answer Ctrl+C during this new drag.
+                self.snapshot = None;
                 // egui reports the drag a few pixels after the press: anchor where the press was.
                 let origin = ui
                     .input(|input| input.pointer.press_origin())

@@ -5,7 +5,7 @@
   #error OutputDir must point to the artifact output directory
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.110.0-alpha.1"
+  #define AppVersion "0.110.0-alpha.2"
 #endif
 ; build-ember.ps1 compiles this as the install/uninstall engine (suffix "-engine") inside the
 ; branded setup host. It is also usable on its own as a plain Inno installer.

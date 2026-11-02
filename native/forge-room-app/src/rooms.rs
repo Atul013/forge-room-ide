@@ -58,8 +58,18 @@ struct NewPerson {
     owner: String,
 }
 
+/// Which part of the room a dock tab shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Team,
+    Agents,
+    Tasks,
+    Activity,
+}
+
 pub struct RoomView {
     state: Option<RoomState>,
+    filter: Option<Role>,
     store: Option<StateStore>,
     workspace_name: String,
     acting_as: String,
@@ -81,6 +91,7 @@ impl Default for RoomView {
     fn default() -> Self {
         Self {
             state: None,
+            filter: None,
             store: None,
             workspace_name: String::new(),
             acting_as: String::new(),
@@ -291,15 +302,20 @@ impl RoomView {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, has_workspace: bool) {
+    pub fn show(&mut self, ui: &mut egui::Ui, has_workspace: bool, part: Section) {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.add_space(14.0);
             ui.label(
-                RichText::new("ROOM")
-                    .size(11.0)
-                    .strong()
-                    .color(theme::text_dim()),
+                RichText::new(match part {
+                    Section::Team => "TEAM",
+                    Section::Agents => "AI AGENTS",
+                    Section::Tasks => "TASKS",
+                    Section::Activity => "ACTIVITY",
+                })
+                .size(11.0)
+                .strong()
+                .color(theme::text_dim()),
             );
         });
         ui.add_space(8.0);
@@ -374,10 +390,21 @@ impl RoomView {
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
-                self.header(ui, &state, &mut intents);
-                self.people(ui, &state, &mut intents);
-                self.tasks(ui, &state, &mut intents);
-                self.activity(ui, &state);
+                match part {
+                    Section::Team | Section::Agents => {
+                        self.filter = Some(if part == Section::Team {
+                            Role::Human
+                        } else {
+                            Role::Agent
+                        });
+                        if part == Section::Team {
+                            self.header(ui, &state, &mut intents);
+                        }
+                        self.people(ui, &state, &mut intents);
+                    }
+                    Section::Tasks => self.tasks(ui, &state, &mut intents),
+                    Section::Activity => self.activity(ui, &state),
+                }
                 ui.add_space(16.0);
             });
 
@@ -432,9 +459,16 @@ impl RoomView {
     fn people(&mut self, ui: &mut egui::Ui, state: &RoomState, intents: &mut Vec<Intent>) {
         let (_, add) = section(
             ui,
-            "PEOPLE",
+            match self.filter {
+                Some(Role::Agent) => "AI AGENTS",
+                _ => "HUMANS",
+            },
             &mut self.people_open,
-            state.participants.len(),
+            state
+                .participants
+                .iter()
+                .filter(|person| self.filter.as_ref().is_none_or(|role| &person.role == role))
+                .count(),
             true,
         );
         if add && self.acting_as == state.host_id {
@@ -446,7 +480,24 @@ impl RoomView {
         if !self.people_open {
             return;
         }
-        for person in &state.participants {
+        let shown = state
+            .participants
+            .iter()
+            .filter(|person| self.filter.as_ref().is_none_or(|role| &person.role == role));
+        if shown.clone().next().is_none() {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new(if self.filter == Some(Role::Agent) {
+                        "No coding agents yet. Use + to add one."
+                    } else {
+                        "Nobody here yet."
+                    })
+                    .color(theme::text_dim()),
+                );
+            });
+        }
+        for person in shown {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
                 avatar(ui, person);
