@@ -33,3 +33,6 @@ design-assets/forge-room-ui-spec/measurements/crops/
 design-assets/forge-room-ui-spec/measurements/all-colors.csv
 design-assets/forge-room-ui-spec/measurements/redraw-difference.png
 design-assets/forge-room-ui-spec/annotations/
+
+# Local agent mailbox
+CODEX_BRIDGE.md
