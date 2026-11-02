@@ -13,6 +13,7 @@ mod git;
 mod graph;
 mod gutter;
 mod icons;
+mod lobby;
 mod palette;
 mod position;
 mod room_state;
@@ -156,6 +157,9 @@ struct ForgeRoomApp {
     pending: Option<Pending>,
     allow_close: bool,
     last_disk_check: std::time::Instant,
+    lobby: lobby::Lobby,
+    show_lobby: bool,
+    runtimes: Vec<String>,
     focus_editor: bool,
     cursor: (usize, usize),
     last_title: String,
@@ -247,6 +251,9 @@ impl ForgeRoomApp {
             pending: None,
             allow_close: false,
             last_disk_check: std::time::Instant::now(),
+            lobby: lobby::Lobby::default(),
+            show_lobby: false,
+            runtimes: Vec::new(),
             focus_editor: false,
             cursor: (1, 1),
             last_title: String::new(),
@@ -300,6 +307,9 @@ impl ForgeRoomApp {
             self.refresh_git();
             let root = self.repo_root();
             self.room.load_for(root.as_deref());
+            self.lobby
+                .load_for(root.as_deref().map(room_state::lobby_path_for));
+            self.runtimes = root.as_deref().map(detect_runtimes).unwrap_or_default();
             self.search.reset();
             self.status = format!("Opened folder {}", path.display());
             return;
@@ -420,6 +430,7 @@ impl ForgeRoomApp {
             Command::ShowExplorer => self.switch_view(SidebarView::Explorer),
             Command::ShowSourceControl => self.switch_view(SidebarView::SourceControl),
             Command::ShowRoom => self.switch_view(SidebarView::Room),
+            Command::ShowLobby => self.show_lobby = !self.show_lobby,
             Command::ShowSearch => {
                 self.view = SidebarView::Search;
                 self.show_sidebar = true;
@@ -1129,7 +1140,7 @@ impl ForgeRoomApp {
                 let active = match item {
                     Rail::View(view) => self.show_sidebar && self.view == view,
                     Rail::Terminal => self.show_terminal,
-                    Rail::Room => self.show_right && self.right_tab == RightTab::Room,
+                    Rail::Room => self.show_lobby,
                     Rail::Ai => self.show_right && self.right_tab == RightTab::Ai,
                     Rail::Soon(_) => false,
                 };
@@ -1203,7 +1214,7 @@ impl ForgeRoomApp {
                     match item {
                         Rail::View(view) => self.switch_view(view),
                         Rail::Terminal => self.run_command(Command::ToggleTerminal, false),
-                        Rail::Room => self.show_dock(RightTab::Room),
+                        Rail::Room => self.show_lobby = !self.show_lobby,
                         Rail::Ai => self.show_dock(RightTab::Ai),
                         Rail::Soon(_) => {}
                     }
@@ -2364,6 +2375,29 @@ impl ForgeRoomApp {
         self.focus_editor = true;
     }
 
+    fn lobby_page(&mut self, ui: &mut egui::Ui) {
+        let name = self
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.name())
+            .unwrap_or_else(|| "Forge Room".into());
+        let context = lobby::Context {
+            workspace: &name,
+            branch: self.branch.as_deref(),
+            runtimes: &self.runtimes,
+            state: self.room.state(),
+            acting_as: self.room.acting_as(),
+        };
+        match self.lobby.show(ui, &context) {
+            Some(lobby::Action::EnterRoom) => self.show_lobby = false,
+            Some(lobby::Action::CreateRoom) => self.room.create_room(),
+            Some(lobby::Action::AddMember | lobby::Action::AddAgent) => {
+                self.show_dock(RightTab::Room)
+            }
+            None => {}
+        }
+    }
+
     fn update_title(&mut self, context: &egui::Context) {
         let mut title = String::new();
         if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
@@ -2476,6 +2510,10 @@ impl eframe::App for ForgeRoomApp {
         egui::CentralPanel::default()
             .frame(card(theme::bg_editor()))
             .show(ui, |ui| {
+                if self.show_lobby {
+                    self.lobby_page(ui);
+                    return;
+                }
                 if !self.tabs.tabs.is_empty() {
                     self.tab_bar(ui);
                     self.breadcrumbs(ui);
@@ -2544,6 +2582,28 @@ impl eframe::App for ForgeRoomApp {
         self.pending_dialog(&context);
         self.update_title(&context);
     }
+}
+
+/// Languages and runtimes a project folder uses, judged from its marker files.
+fn detect_runtimes(root: &std::path::Path) -> Vec<String> {
+    [
+        ("Cargo.toml", "Rust"),
+        ("package.json", "Node"),
+        ("tsconfig.json", "TypeScript"),
+        ("pyproject.toml", "Python"),
+        ("requirements.txt", "Python"),
+        ("go.mod", "Go"),
+        ("pom.xml", "Java"),
+    ]
+    .into_iter()
+    .filter(|(file, _)| root.join(file).exists())
+    .map(|(_, name)| name.to_string())
+    .fold(Vec::new(), |mut found, name| {
+        if !found.contains(&name) {
+            found.push(name);
+        }
+        found
+    })
 }
 
 /// A text tab with a red underline when active, as in the editor, dock and terminal headers.

@@ -18,6 +18,11 @@ pub fn store_for(workspace: &Path) -> StateStore {
     )
 }
 
+/// Where the lobby settings for `workspace` are saved, beside its room file.
+pub fn lobby_path_for(workspace: &Path) -> PathBuf {
+    store_for(workspace).path().with_extension("lobby.json")
+}
+
 fn fnv1a(text: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in text.to_lowercase().bytes() {
