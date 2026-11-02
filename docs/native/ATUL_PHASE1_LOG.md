@@ -63,7 +63,8 @@ measurements were not taken.
 ### Independent code review (Codex), all eight findings fixed
 
 Codex reviewed the Rust changes read-only (`design-assets/forge-room-ui-spec/CODE_REVIEW_NOTES.md`), reproducing most
-findings with probes. Each fix has a regression test unless noted.
+findings with probes. Each fix has a regression test unless noted (3, 6 and 7 share one real-terminal test that is
+`#[ignore]`d and run by hand, because it needs a console).
 
 1. Saving trusted an unchanged file size and time, so an outside tool that rewrote the bytes and restored the time
    was overwritten silently. Saves now compare content; `open()` takes the fingerprint before reading.
