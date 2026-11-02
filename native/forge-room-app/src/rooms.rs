@@ -79,6 +79,7 @@ pub struct RoomView {
     tasks_open: bool,
     activity_open: bool,
     expanded: Option<String>,
+    task_query: String,
     checked: HashSet<(String, String)>,
     new_task: NewTask,
     new_person: NewPerson,
@@ -101,6 +102,7 @@ impl Default for RoomView {
             tasks_open: true,
             activity_open: true,
             expanded: None,
+            task_query: String::new(),
             checked: HashSet::new(),
             new_task: NewTask::default(),
             new_person: NewPerson::default(),
@@ -598,6 +600,19 @@ impl RoomView {
         if self.new_task.open {
             self.new_task_form(ui, state, intents);
         }
+        if !state.tasks.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.task_query)
+                        .hint_text("Filter tasks by title or owner")
+                        .desired_width((ui.available_width() - 80.0).max(140.0)),
+                );
+                if !self.task_query.is_empty() && ui.button("Clear").clicked() {
+                    self.task_query.clear();
+                }
+            });
+        }
         if state.tasks.is_empty() && !self.new_task.open {
             empty_state(
                 ui,
@@ -605,6 +620,7 @@ impl RoomView {
                 "Add the first task with the + button. Give it an owner and what counts as done.",
             );
         }
+        let mut visible = 0;
         for (status, label) in [
             (TaskStatus::InProgress, "In progress"),
             (TaskStatus::Open, "Open"),
@@ -613,7 +629,10 @@ impl RoomView {
             let group: Vec<&Task> = state
                 .tasks
                 .iter()
-                .filter(|task| task.status == status)
+                .filter(|task| {
+                    task.status == status
+                        && task_matches_query(&task.title, &task.owner_name, &self.task_query)
+                })
                 .collect();
             if group.is_empty() {
                 continue;
@@ -627,8 +646,12 @@ impl RoomView {
                 );
             });
             for task in group {
+                visible += 1;
                 self.task_card(ui, state, task, intents);
             }
+        }
+        if visible == 0 && !state.tasks.is_empty() {
+            empty_state(ui, "No matching tasks", "Try another title or owner.");
         }
         ui.add_space(8.0);
     }
@@ -1244,11 +1267,26 @@ pub fn short(text: &str, max: usize) -> String {
     cut
 }
 
+fn task_matches_query(title: &str, owner: &str, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    query.is_empty()
+        || title.to_lowercase().contains(&query)
+        || owner.to_lowercase().contains(&query)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn task_filter_matches_title_or_owner_without_case() {
+        assert!(task_matches_query("Fix parser", "Atul", " PARSER "));
+        assert!(task_matches_query("Fix parser", "Atul", "atul"));
+        assert!(task_matches_query("Fix parser", "Atul", " "));
+        assert!(!task_matches_query("Fix parser", "Atul", "Zayed"));
+    }
 
     #[test]
     fn damaged_room_cannot_be_replaced_by_create_room() {
