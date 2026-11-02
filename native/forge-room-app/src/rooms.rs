@@ -153,6 +153,10 @@ impl RoomView {
         self.state.as_ref()
     }
 
+    pub fn is_unavailable(&self) -> bool {
+        self.load_failed
+    }
+
     pub fn acting_as(&self) -> &str {
         &self.acting_as
     }

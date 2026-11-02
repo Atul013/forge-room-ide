@@ -2759,10 +2759,15 @@ impl ForgeRoomApp {
             branch: self.branch.as_deref(),
             runtimes: &self.runtimes,
             state: self.room.state(),
+            room_unavailable: self.room.is_unavailable(),
             acting_as: self.room.acting_as(),
         };
         match self.lobby.show(ui, &context) {
-            Some(lobby::Action::EnterRoom) => self.show_lobby = false,
+            Some(lobby::Action::EnterRoom) => {
+                self.show_lobby = false;
+                self.show_right = true;
+                self.right_tab = RightTab::Room;
+            }
             Some(lobby::Action::CreateRoom) => {
                 if !self.room.create_room() {
                     self.show_dock(RightTab::Room);
