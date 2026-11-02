@@ -924,7 +924,7 @@ impl ForgeRoomApp {
                     }
                     ui.add_space(10.0);
                 }
-                if bar.width() > 1180.0 && self.lobby.timer_active() {
+                if bar.width() > 1440.0 && self.lobby.timer_active() {
                     let remaining = self.lobby.remaining();
                     ui.label(
                         egui::RichText::new(format!(
@@ -971,7 +971,7 @@ impl ForgeRoomApp {
         {
             self.run_command(Command::SwitchBranch, false);
         }
-        if width < 1180.0 {
+        if width < 1260.0 {
             return;
         }
         let dot = Some(egui::Color32::from_rgb(240, 113, 120));
@@ -979,7 +979,9 @@ impl ForgeRoomApp {
             self.show_lobby = true;
         }
         title_chip(ui, Some("lock"), "Private", None, false);
-        if let Some(state) = self.room.state() {
+        if width >= 1360.0
+            && let Some(state) = self.room.state()
+        {
             let people: Vec<&str> = state
                 .participants
                 .iter()

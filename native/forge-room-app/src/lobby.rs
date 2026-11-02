@@ -387,7 +387,11 @@ impl Lobby {
                         if state.activity.is_empty() {
                             ui.label(RichText::new("No activity yet").color(theme::text_dim()));
                         }
-                        for event in state.activity.iter().rev().take(4) {
+                        // An overflowing row would also widen everything laid out below it, so only
+                        // as many recent events as fit (about 230 px each) are shown.
+                        let slots = ((ui.available_width() - 430.0) / 230.0).floor().max(0.0);
+                        let shown = (slots as usize).min(4);
+                        for event in state.activity.iter().rev().take(shown) {
                             let actor = state
                                 .participants
                                 .iter()
@@ -509,81 +513,24 @@ impl Lobby {
 
     fn header(&mut self, ui: &mut Ui, context: &Context, action: &mut Option<Action>) {
         let width = ui.available_width();
+        // The countdown, Enter Room and the more button keep their size; the project identity
+        // takes whatever is left, and the countdown is dropped when even that would be cramped.
+        let show_countdown = width >= 960.0;
+        let right_width = if show_countdown { 242.0 + 22.0 } else { 0.0 } + 165.0 + 22.0 + 40.0;
+        let left_width = (width - right_width - 22.0).max(260.0);
         egui::Frame::new().show(ui, |ui| {
             ui.set_width(width);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 22.0;
-                // Project mark.
-                let (mark, _) = ui.allocate_exact_size(vec2(103.0, 84.0), Sense::hover());
-                ui.painter().rect_filled(
-                    mark,
-                    7.0,
-                    theme::mix(theme::bg_editor(), theme::accent(), 0.10),
+                ui.allocate_ui_with_layout(
+                    vec2(left_width, 92.0),
+                    Layout::left_to_right(Align::TOP),
+                    |ui| {
+                        ui.set_width(left_width);
+                        ui.spacing_mut().item_spacing.x = 22.0;
+                        self.identity(ui, context, left_width);
+                    },
                 );
-                ui.painter().rect_stroke(
-                    mark,
-                    7.0,
-                    Stroke::new(1.0, theme::mix(theme::bg_editor(), theme::accent(), 0.4)),
-                    egui::StrokeKind::Inside,
-                );
-                project_mark(ui.painter(), mark.center(), 58.0, theme::accent());
-
-                ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new(crate::rooms::short(context.workspace, 18))
-                            .size(32.0)
-                            .family(crate::fonts::semibold())
-                            .color(theme::text()),
-                    )
-                    .on_hover_text(context.workspace);
-                    ui.label(
-                        RichText::new("Project Lobby")
-                            .size(20.0)
-                            .color(theme::text_dim()),
-                    );
-                });
-
-                ui.vertical(|ui| {
-                    ui.add_space(6.0);
-                    let tagline = &mut self.config.tagline;
-                    ui.add(
-                        egui::TextEdit::singleline(tagline)
-                            .hint_text("One line about this room")
-                            .frame(egui::Frame::NONE)
-                            .desired_width(360.0)
-                            .font(FontId::proportional(16.0)),
-                    );
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        let hackathon = self.config.kind.clone();
-                        chip_icon(ui, "rocket", &hackathon, theme::accent(), true);
-                        chip_icon(
-                            ui,
-                            "clock",
-                            &format!("{} Hours", self.config.duration_hours),
-                            theme::text_dim(),
-                            false,
-                        );
-                        let humans = context
-                            .state
-                            .map(|state| {
-                                state
-                                    .participants
-                                    .iter()
-                                    .filter(|person| person.role == Role::Human)
-                                    .count()
-                            })
-                            .unwrap_or(1);
-                        chip_icon(
-                            ui,
-                            "users",
-                            if humans > 1 { "Multiplayer" } else { "Solo" },
-                            theme::text_dim(),
-                            false,
-                        );
-                    });
-                });
-
                 ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
                     if square_button(ui, "···").clicked() {
                         self.tab = Tab::Settings;
@@ -591,8 +538,91 @@ impl Lobby {
                     if accent_button(ui, "Enter Room", Some("arrow-right")).clicked() {
                         *action = Some(Action::EnterRoom);
                     }
-                    self.countdown(ui);
+                    if show_countdown {
+                        self.countdown(ui);
+                    }
                 });
+            });
+        });
+    }
+
+    /// Project mark, name, tagline and tags, sized to `width`.
+    fn identity(&mut self, ui: &mut Ui, context: &Context, width: f32) {
+        let (mark, _) = ui.allocate_exact_size(vec2(103.0, 84.0), Sense::hover());
+        ui.painter().rect_filled(
+            mark,
+            7.0,
+            theme::mix(theme::bg_editor(), theme::accent(), 0.10),
+        );
+        ui.painter().rect_stroke(
+            mark,
+            7.0,
+            Stroke::new(1.0, theme::mix(theme::bg_editor(), theme::accent(), 0.4)),
+            egui::StrokeKind::Inside,
+        );
+        project_mark(ui.painter(), mark.center(), 58.0, theme::accent());
+
+        let title_width = 210.0;
+        ui.vertical(|ui| {
+            ui.set_max_width(title_width);
+            ui.label(
+                RichText::new(crate::rooms::short(context.workspace, 14))
+                    .size(32.0)
+                    .family(crate::fonts::semibold())
+                    .color(theme::text()),
+            )
+            .on_hover_text(context.workspace);
+            ui.label(
+                RichText::new("Project Lobby")
+                    .size(20.0)
+                    .color(theme::text_dim()),
+            );
+        });
+
+        let rest = (width - 103.0 - 22.0 - title_width - 22.0).max(120.0);
+        ui.vertical(|ui| {
+            ui.set_width(rest);
+            ui.add_space(6.0);
+            // With too little room the tagline is dropped instead of running under the buttons.
+            if rest >= 170.0 {
+                let tagline = &mut self.config.tagline;
+                ui.add(
+                    egui::TextEdit::singleline(tagline)
+                        .hint_text("One line about this room")
+                        .frame(egui::Frame::NONE)
+                        .desired_width(rest.min(420.0))
+                        .font(FontId::proportional(16.0)),
+                );
+                ui.add_space(4.0);
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
+                let hackathon = self.config.kind.clone();
+                chip_icon(ui, "rocket", &hackathon, theme::accent(), true);
+                chip_icon(
+                    ui,
+                    "clock",
+                    &format!("{} Hours", self.config.duration_hours),
+                    theme::text_dim(),
+                    false,
+                );
+                let humans = context
+                    .state
+                    .map(|state| {
+                        state
+                            .participants
+                            .iter()
+                            .filter(|person| person.role == Role::Human)
+                            .count()
+                    })
+                    .unwrap_or(1);
+                chip_icon(
+                    ui,
+                    "users",
+                    if humans > 1 { "Multiplayer" } else { "Solo" },
+                    theme::text_dim(),
+                    false,
+                );
             });
         });
     }
@@ -714,9 +744,28 @@ impl Lobby {
     }
 
     fn tabs(&mut self, ui: &mut Ui) {
+        // Comfortable tabs (at least 104 px) when they fit; otherwise just the label plus padding,
+        // so the row never makes the page wider than the window.
+        let available = ui.available_width();
+        let widths = |padding: f32, minimum: f32| -> Vec<f32> {
+            TABS.iter()
+                .map(|(_, label)| {
+                    let galley = ui.painter().layout_no_wrap(
+                        (*label).to_string(),
+                        FontId::proportional(15.0),
+                        theme::text(),
+                    );
+                    (galley.size().x + padding).max(minimum)
+                })
+                .collect()
+        };
+        let mut sizes = widths(52.0, 104.0);
+        if sizes.iter().sum::<f32>() + 4.0 * TABS.len() as f32 > available {
+            sizes = widths(24.0, 0.0);
+        }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            for (tab, label) in TABS {
+            for ((tab, label), tab_width) in TABS.into_iter().zip(sizes) {
                 let galley = ui.painter().layout_no_wrap(
                     label.to_string(),
                     FontId::proportional(15.0),
@@ -726,10 +775,8 @@ impl Lobby {
                         theme::text_dim()
                     },
                 );
-                let (rect, response) = ui.allocate_exact_size(
-                    vec2((galley.size().x + 52.0).max(104.0), 37.0),
-                    Sense::click(),
-                );
+                let (rect, response) =
+                    ui.allocate_exact_size(vec2(tab_width, 37.0), Sense::click());
                 if self.tab == tab {
                     ui.painter().rect_filled(
                         rect,
@@ -777,70 +824,100 @@ impl Lobby {
         let total = ui.available_width();
         let gap = 12.0;
         let tab = self.tab;
+        // Below this the two columns would both be cramped, so the second goes under the first.
+        let stacked = total < 900.0;
         let right = if tab == Tab::Milestones {
             0.0
+        } else if stacked {
+            total
         } else {
             ((total - gap) * 0.33).clamp(300.0, 520.0)
         };
-        let left = if right == 0.0 {
+        let left = if right == 0.0 || stacked {
             total
         } else {
             total - right - gap
         };
+        if stacked {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(gap, 12.0);
+                self.left_column(ui, context, action, left);
+                if right > 0.0 {
+                    self.right_column(ui, context, right);
+                }
+            });
+            return;
+        }
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing = vec2(gap, 12.0);
             ui.allocate_ui_with_layout(vec2(left, 10.0), Layout::top_down(Align::Min), |ui| {
-                ui.set_width(left);
-                ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
-                if matches!(tab, Tab::Lobby | Tab::Settings) {
-                    self.overview(ui, context);
-                }
-                if matches!(tab, Tab::Lobby | Tab::Team | Tab::Agents) {
-                    let both = tab == Tab::Lobby;
-                    ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = 12.0;
-                        let team_width = if both { (left - 12.0) * 0.48 } else { left };
-                        let agents_width = if both { left - 12.0 - team_width } else { left };
-                        if tab != Tab::Agents {
-                            ui.allocate_ui_with_layout(
-                                vec2(team_width, 10.0),
-                                Layout::top_down(Align::Min),
-                                |ui| {
-                                    ui.set_width(team_width);
-                                    self.team(ui, context, action);
-                                },
-                            );
-                        }
-                        if tab != Tab::Team {
-                            ui.allocate_ui_with_layout(
-                                vec2(agents_width, 10.0),
-                                Layout::top_down(Align::Min),
-                                |ui| {
-                                    ui.set_width(agents_width);
-                                    self.agents(ui, context, action);
-                                },
-                            );
-                        }
-                    });
-                }
-                if matches!(tab, Tab::Lobby | Tab::Milestones) {
-                    self.milestones(ui);
-                }
+                self.left_column(ui, context, action, left);
             });
             ui.allocate_ui_with_layout(vec2(right, 10.0), Layout::top_down(Align::Min), |ui| {
-                ui.set_width(right);
-                ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
-                if matches!(tab, Tab::Lobby | Tab::Setup | Tab::Repository) {
-                    self.project_setup(ui, context);
-                }
-                if matches!(tab, Tab::Lobby | Tab::Setup | Tab::Settings) {
-                    self.hackathon(ui);
-                }
-                if matches!(tab, Tab::Lobby | Tab::Team) {
-                    self.invite(ui);
-                }
+                self.right_column(ui, context, right);
             });
         });
+    }
+
+    fn left_column(
+        &mut self,
+        ui: &mut Ui,
+        context: &Context,
+        action: &mut Option<Action>,
+        left: f32,
+    ) {
+        let tab = self.tab;
+        ui.set_width(left);
+        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+        if matches!(tab, Tab::Lobby | Tab::Settings) {
+            self.overview(ui, context);
+        }
+        if matches!(tab, Tab::Lobby | Tab::Team | Tab::Agents) {
+            let both = tab == Tab::Lobby;
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                let team_width = if both { (left - 12.0) * 0.48 } else { left };
+                let agents_width = if both { left - 12.0 - team_width } else { left };
+                if tab != Tab::Agents {
+                    ui.allocate_ui_with_layout(
+                        vec2(team_width, 10.0),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            ui.set_width(team_width);
+                            self.team(ui, context, action);
+                        },
+                    );
+                }
+                if tab != Tab::Team {
+                    ui.allocate_ui_with_layout(
+                        vec2(agents_width, 10.0),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            ui.set_width(agents_width);
+                            self.agents(ui, context, action);
+                        },
+                    );
+                }
+            });
+        }
+        if matches!(tab, Tab::Lobby | Tab::Milestones) {
+            self.milestones(ui);
+        }
+    }
+
+    fn right_column(&mut self, ui: &mut Ui, context: &Context, right: f32) {
+        let tab = self.tab;
+        ui.set_width(right);
+        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+        if matches!(tab, Tab::Lobby | Tab::Setup | Tab::Repository) {
+            self.project_setup(ui, context);
+        }
+        if matches!(tab, Tab::Lobby | Tab::Setup | Tab::Settings) {
+            self.hackathon(ui);
+        }
+        if matches!(tab, Tab::Lobby | Tab::Team) {
+            self.invite(ui);
+        }
     }
 
     fn overview(&mut self, ui: &mut Ui, context: &Context) {
@@ -1479,7 +1556,15 @@ impl Lobby {
                 kv(ui, "users", "Team Size", |ui| {
                     combo(ui, "team-size", &mut self.config.team_size, &TEAM_SIZES);
                 });
-                ui.horizontal_top(|ui| {
+                // Beside its label when there is room; under it when the card is narrow, so the
+                // long option names are never cut off.
+                let beside = ui.available_width() >= 440.0;
+                let mut sharing = |ui: &mut Ui| {
+                    for (name, on) in SHARING.iter().zip(self.config.sharing.iter_mut()) {
+                        check_box(ui, on, name);
+                    }
+                };
+                let heading = |ui: &mut Ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                     icons::draw(
                         ui.painter(),
@@ -1490,13 +1575,20 @@ impl Lobby {
                     );
                     ui.add_space(14.0);
                     ui.label(RichText::new("Content Sharing").color(theme::text()));
-                    ui.add_space(10.0);
-                    ui.vertical(|ui| {
-                        for (name, on) in SHARING.iter().zip(self.config.sharing.iter_mut()) {
-                            check_box(ui, on, name);
-                        }
+                };
+                if beside {
+                    ui.horizontal_top(|ui| {
+                        heading(ui);
+                        ui.add_space(10.0);
+                        ui.vertical(&mut sharing);
                     });
-                });
+                } else {
+                    ui.horizontal(heading);
+                    ui.horizontal(|ui| {
+                        ui.add_space(32.0);
+                        ui.vertical(&mut sharing);
+                    });
+                }
             },
         );
     }
