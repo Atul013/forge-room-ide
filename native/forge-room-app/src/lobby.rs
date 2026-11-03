@@ -220,14 +220,15 @@ impl Lobby {
     /// Switch to the lobby saved at `path` (or a fresh one), for the project that was just opened.
     /// Unsaved edits are written first; the error says why they could not be kept.
     pub fn load_for(&mut self, path: Option<PathBuf>) -> Result<(), String> {
-        let result = self.finish();
+        // Unsaved edits that cannot be written must not be replaced: the switch is refused.
+        self.finish()?;
         let config = path.as_deref().and_then(load_config);
         *self = Self {
             config: config.unwrap_or_default(),
             path,
             ..Self::default()
         };
-        result
+        Ok(())
     }
 
     /// Save pending edits now (leaving the project or quitting).
@@ -1525,12 +1526,11 @@ impl Lobby {
                     } else {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let url = self.config.repo_url.clone();
-                            let full = if url.starts_with("http") {
-                                url.clone()
-                            } else {
-                                format!("https://{url}")
-                            };
-                            if icon_button(ui, "external-link", "Open in browser").clicked() {
+                            // Only http(s) addresses ever reach the browser.
+                            let target = crate::preview::web_url(&url);
+                            let clicked =
+                                icon_button(ui, "external-link", "Open in browser").clicked();
+                            if clicked && let Some(full) = target {
                                 ui.ctx().open_url(egui::OpenUrl::new_tab(full));
                             }
                             if ui
@@ -2274,6 +2274,24 @@ mod tests {
         let _ = reopened.load_for(Some(path.clone()));
         assert_eq!(reopened.config.goal, "important");
         let _ = std::fs::remove_dir_all(blocker);
+    }
+
+    #[test]
+    fn switching_projects_is_refused_while_edits_cannot_be_saved() {
+        let blocker = temp_path("blocker-switch");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let mut lobby = Lobby::default();
+        let _ = lobby.load_for(Some(blocker.join("lobby.json")));
+        lobby.config.goal = "ONLY UNSAVED COPY".into();
+        lobby.dirty = true;
+
+        assert!(lobby.load_for(None).is_err());
+        assert_eq!(
+            lobby.config.goal, "ONLY UNSAVED COPY",
+            "the edits must survive"
+        );
+        assert!(lobby.dirty);
+        let _ = std::fs::remove_file(blocker);
     }
 
     #[test]
