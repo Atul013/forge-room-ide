@@ -540,9 +540,9 @@ impl ForgeRoomApp {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(12.0);
-            underline_tab(ui, "Terminal", true, true, None);
+            underline_tab(ui, "Terminal", true, true);
             for label in ["Output", "Problems", "Debug Console", "Ports"] {
-                underline_tab(ui, label, false, false, None).on_hover_text("Coming soon");
+                underline_tab(ui, label, false, false).on_hover_text("Coming soon");
             }
             if ui.available_width() > 760.0
                 && let Some(terminal) = &self.terminal
@@ -2343,23 +2343,37 @@ impl ForgeRoomApp {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(8.0);
-            for (tab, label) in [
-                (RightTab::Room, "Team"),
-                (RightTab::Agents, "Agents"),
-                (RightTab::Tasks, "Tasks"),
-                (RightTab::Activity, "Activity"),
-                (RightTab::Ai, "AI"),
-            ] {
-                if underline_tab(ui, label, self.right_tab == tab, true, None).clicked() {
-                    self.right_tab = tab;
-                }
+            let tabs_width = (ui.available_width() - 40.0).max(160.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(tabs_width, 36.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    egui::ScrollArea::horizontal()
+                        .auto_shrink([false, true])
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                for (tab, label) in [
+                                    (RightTab::Room, "Team"),
+                                    (RightTab::Agents, "Agents"),
+                                    (RightTab::Tasks, "Tasks"),
+                                    (RightTab::Activity, "Activity"),
+                                    (RightTab::Ai, "AI"),
+                                ] {
+                                    if underline_tab(ui, label, self.right_tab == tab, true)
+                                        .clicked()
+                                    {
+                                        self.right_tab = tab;
+                                    }
+                                }
+                            });
+                        });
+                },
+            );
+            if icons::icon_button(ui, "Hide panel", icons::close_cross).clicked() {
+                self.show_right = false;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(6.0);
-                if icons::icon_button(ui, "Hide panel", icons::close_cross).clicked() {
-                    self.show_right = false;
-                }
-            });
         });
         ui.painter().line_segment(
             [
@@ -3223,57 +3237,29 @@ fn detect_runtimes(root: &std::path::Path) -> Vec<String> {
     })
 }
 
-/// A text tab with a red underline when active, as in the editor, dock and terminal headers.
-fn underline_tab(
-    ui: &mut egui::Ui,
-    label: &str,
-    active: bool,
-    enabled: bool,
-    icon: Option<fn(&egui::Painter, egui::Rect, egui::Color32)>,
-) -> egui::Response {
+/// Native tab button with the active theme underline, shared by dock and terminal headers.
+fn underline_tab(ui: &mut egui::Ui, label: &str, active: bool, enabled: bool) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_string(),
         egui::FontId::proportional(14.0),
         theme::text(),
     );
-    let icon_width = if icon.is_some() { 26.0 } else { 0.0 };
-    let sense = if enabled {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    };
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(galley.size().x + icon_width + 30.0, 36.0), sense);
-    let color = if active || (enabled && response.hovered()) {
+    let color = if active {
         theme::text()
     } else if enabled {
         theme::text_dim()
     } else {
         theme::mix(theme::bg_editor(), theme::text_dim(), 0.55)
     };
-    let painter = ui.painter();
-    let mut x = rect.left() + 15.0;
-    if let Some(icon) = icon {
-        icon(
-            painter,
-            egui::Rect::from_center_size(
-                egui::pos2(x + 8.0, rect.center().y),
-                egui::vec2(16.0, 16.0),
-            ),
-            if active { theme::accent() } else { color },
-        );
-        x += icon_width;
-    }
-    painter.galley(
-        egui::pos2(x, rect.center().y - galley.size().y / 2.0),
-        galley,
-        color,
-    );
+    let button = egui::Button::new(egui::RichText::new(label).size(14.0).color(color))
+        .frame(false)
+        .min_size(egui::vec2(galley.size().x + 30.0, 36.0));
+    let response = ui.add_enabled(enabled, button);
     if active {
-        painter.rect_filled(
+        ui.painter().rect_filled(
             egui::Rect::from_min_max(
-                egui::pos2(rect.left() + 8.0, rect.bottom() - 2.0),
-                egui::pos2(rect.right() - 8.0, rect.bottom()),
+                egui::pos2(response.rect.left() + 8.0, response.rect.bottom() - 2.0),
+                egui::pos2(response.rect.right() - 8.0, response.rect.bottom()),
             ),
             1.0,
             theme::accent(),
