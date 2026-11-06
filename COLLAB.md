@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-06 Codex: PR #21 merged real Git changes/conflict review status into the Room dock. PR #22 merged native dock/terminal tab buttons and a horizontally scrollable Room tab row for narrow widths. Both passed Windows CI; desktop layout and keyboard interaction are still open.
+
 - 2026-11-06 Codex: PR #19 and #20 integrated the saved Aether concept's segmented Room Pulse into the coding workspace and Project Lobby, with local event buttons opening Activity. The default right dock is Team; Lobby setup Review is a native button. Windows CI passed. A portable archive hash matched; an isolated app launched, but the minimized window blocked screenshot/keyboard acceptance.
 
 - 2026-11-06 Codex: PR #18 merged Copy task summary into `main`, with a focused test that excludes another task's evidence. Windows core and graphical CI passed; desktop clipboard trial remains open.
