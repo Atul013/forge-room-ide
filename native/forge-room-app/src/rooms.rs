@@ -1202,8 +1202,7 @@ impl RoomView {
         }
         let now = now_epoch_seconds();
         let limit = if self.show_more_activity { 50 } else { 10 };
-        let mut visible = 0;
-        for event in state
+        let visible_events: Vec<_> = state
             .activity
             .iter()
             .rev()
@@ -1215,8 +1214,27 @@ impl RoomView {
                 )
             })
             .take(limit)
-        {
-            visible += 1;
+            .collect();
+        if !visible_events.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                if ui.button("Copy visible activity").clicked() {
+                    let lines: Vec<String> = visible_events
+                        .iter()
+                        .map(|event| {
+                            format!(
+                                "{}: {} ({})",
+                                name_of(state, &event.actor_id),
+                                event.detail,
+                                room_state::ago(now, event.recorded_at_epoch_seconds)
+                            )
+                        })
+                        .collect();
+                    ui.ctx().copy_text(lines.join("\n"));
+                }
+            });
+        }
+        for event in visible_events.iter().copied() {
             ui.horizontal_wrapped(|ui| {
                 ui.add_space(14.0);
                 ui.label(
@@ -1236,7 +1254,7 @@ impl RoomView {
                 );
             });
         }
-        if visible == 0 {
+        if visible_events.is_empty() {
             empty_state(ui, "No matching activity", "Try another person or detail.");
         }
     }
