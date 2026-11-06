@@ -2350,9 +2350,7 @@ impl ForgeRoomApp {
                 |ui| {
                     egui::ScrollArea::horizontal()
                         .auto_shrink([false, true])
-                        .scroll_bar_visibility(
-                            egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
-                        )
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
