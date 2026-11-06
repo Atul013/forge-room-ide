@@ -728,7 +728,11 @@ impl RoomView {
             }
         }
         if visible == 0 && !state.tasks.is_empty() {
-            empty_state(ui, "No matching tasks", "Try another title, owner, or status.");
+            empty_state(
+                ui,
+                "No matching tasks",
+                "Try another title, owner, or status.",
+            );
         }
         ui.add_space(8.0);
     }
