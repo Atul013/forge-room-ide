@@ -83,6 +83,7 @@ pub struct RoomView {
     expanded: Option<String>,
     task_query: String,
     task_status_filter: Option<TaskStatus>,
+    task_owner_filter: Option<String>,
     focus_new_task: bool,
     checked: HashSet<(String, String)>,
     new_task: NewTask,
@@ -109,6 +110,7 @@ impl Default for RoomView {
             activity_query: String::new(),
             expanded: None,
             task_query: String::new(),
+            task_owner_filter: None,
             task_status_filter: None,
             focus_new_task: false,
             checked: HashSet::new(),
@@ -645,11 +647,39 @@ impl RoomView {
                             "Done",
                         );
                     });
-                if (!self.task_query.is_empty() || self.task_status_filter.is_some())
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                let selected_owner = self
+                    .task_owner_filter
+                    .as_ref()
+                    .and_then(|id| state.tasks.iter().find(|task| &task.owner_id == id))
+                    .map(|task| task.owner_name.as_str())
+                    .unwrap_or("All owners");
+                egui::ComboBox::from_id_salt("task-owner-filter")
+                    .selected_text(selected_owner)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.task_owner_filter, None, "All owners");
+                        let mut seen = HashSet::new();
+                        for task in &state.tasks {
+                            if !seen.insert(&task.owner_id) {
+                                continue;
+                            }
+                            ui.selectable_value(
+                                &mut self.task_owner_filter,
+                                Some(task.owner_id.clone()),
+                                &task.owner_name,
+                            );
+                        }
+                    });
+                if (!self.task_query.is_empty()
+                    || self.task_status_filter.is_some()
+                    || self.task_owner_filter.is_some())
                     && ui.button("Clear filters").clicked()
                 {
                     self.task_query.clear();
                     self.task_status_filter = None;
+                    self.task_owner_filter = None;
                 }
             });
         }
@@ -674,6 +704,10 @@ impl RoomView {
                         && self
                             .task_status_filter
                             .is_none_or(|selected| selected == status)
+                        && self
+                            .task_owner_filter
+                            .as_ref()
+                            .is_none_or(|owner_id| &task.owner_id == owner_id)
                         && task_matches_query(&task.title, &task.owner_name, &self.task_query)
                 })
                 .collect();
@@ -694,7 +728,7 @@ impl RoomView {
             }
         }
         if visible == 0 && !state.tasks.is_empty() {
-            empty_state(ui, "No matching tasks", "Try another title or owner.");
+            empty_state(ui, "No matching tasks", "Try another title, owner, or status.");
         }
         ui.add_space(8.0);
     }
