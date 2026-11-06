@@ -512,6 +512,8 @@ Seven original concept PNGs from Downloads are preserved in [`docs/design/concep
 
 ### Phase 1 evidence — 2 November 2026
 
+- **6 November Room task owner filter:** [PR #15](https://github.com/ZayedBH/forge-room-ide/pull/15) merged into `main` (`d58e2e0`). The local Tasks dock can select an assigned owner and combine that choice with title/name and status filters; Clear filters resets all three. Choices include owners on saved tasks even after a participant leaves. [Windows CI run 42206725868](https://github.com/ZayedBH/forge-room-ide/actions/runs/42206725868) passed core and graphical formatting, locked checks, tests, and Clippy. The first run failed only on rustfmt layout and was corrected. The owner-filter desktop trial remains open; this is local UI filtering, not shared synchronization.
+
 - **6 November integration:** PR #14 merged the Room keyboard, task, and activity stack (#10-#13) with four newer commits from `Atul013/native-rust-ide` into `main` (`45e934b`). [Windows CI run 42198613453](https://github.com/ZayedBH/forge-room-ide/actions/runs/42198613453) passed core and graphical formatting, locked checks, tests, and Clippy. PR packaging was skipped by workflow design. The Phase 1 hands-on checklist is in `docs/native/PHASE1_TRIAL_CHECKLIST.md`; desktop, installer, and multi-client acceptance remain open.
 
 - **Room activity filter, source changed 3 November 2026:** Activity dock can filter local events by person or detail, ignoring case and surrounding query spaces. Clear filter restores the list; no-match state is explicit. One focused match test was added. Windows CI passed in run 42198613453; desktop interaction is pending. This remains local history, not cross-client sync.

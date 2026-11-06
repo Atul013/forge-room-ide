@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-06 Codex: PR #15 merged a local Room task owner selector into `main`. It combines with text/status filters and includes owners from saved tasks. Windows CI passed core and graphical checks; desktop interaction remains open.
+
 - 2026-11-03 Codex: started `feat/room-activity-filter` atop PR #12. Activity dock filters local events by actor or detail, with Clear filter and no-match state. Focused match test added; CI and desktop trial pending.
 - 2026-11-03 Codex: started `feat/room-activity-history` atop task PR #11. Activity dock shows an empty state and toggles between latest 10 and up to 50 local events. No local Rust toolchain; CI and desktop trial pending.
 - 2026-11-03 Codex: started `feat/room-task-filter` from `main`, then stacked it on keyboard-access PR #10. Tasks dock filters by title, owner, or status, with Clear filters and no-match state; new-task title gets focus; expanded tasks show Add evidence. Focused query-match test added. No local Rust toolchain; CI and desktop trial pending.
