@@ -84,6 +84,7 @@ pub struct RoomView {
     task_query: String,
     task_status_filter: Option<TaskStatus>,
     task_owner_filter: Option<String>,
+    blocked_tasks_only: bool,
     focus_new_task: bool,
     checked: HashSet<(String, String)>,
     new_task: NewTask,
@@ -112,6 +113,7 @@ impl Default for RoomView {
             task_query: String::new(),
             task_owner_filter: None,
             task_status_filter: None,
+            blocked_tasks_only: false,
             focus_new_task: false,
             checked: HashSet::new(),
             new_task: NewTask::default(),
@@ -672,14 +674,17 @@ impl RoomView {
                             );
                         }
                     });
+                ui.checkbox(&mut self.blocked_tasks_only, "Blocked only");
                 if (!self.task_query.is_empty()
                     || self.task_status_filter.is_some()
-                    || self.task_owner_filter.is_some())
+                    || self.task_owner_filter.is_some()
+                    || self.blocked_tasks_only)
                     && ui.button("Clear filters").clicked()
                 {
                     self.task_query.clear();
                     self.task_status_filter = None;
                     self.task_owner_filter = None;
+                    self.blocked_tasks_only = false;
                 }
             });
         }
@@ -708,6 +713,8 @@ impl RoomView {
                             .task_owner_filter
                             .as_ref()
                             .is_none_or(|owner_id| &task.owner_id == owner_id)
+                        && (!self.blocked_tasks_only
+                            || !unfinished_dependency_ids(state, task).is_empty())
                         && task_matches_query(&task.title, &task.owner_name, &self.task_query)
                 })
                 .collect();
@@ -731,7 +738,7 @@ impl RoomView {
             empty_state(
                 ui,
                 "No matching tasks",
-                "Try another title, owner, or status.",
+                "Try another title, owner, status, or blocker setting.",
             );
         }
         ui.add_space(8.0);
@@ -829,19 +836,7 @@ impl RoomView {
         intents: &mut Vec<Intent>,
     ) {
         let expanded = self.expanded.as_deref() == Some(task.id.as_str());
-        let blocked: Vec<&str> = task
-            .dependencies
-            .iter()
-            .filter(|dependency| {
-                state
-                    .tasks
-                    .iter()
-                    .find(|item| &item.id == *dependency)
-                    .map(|item| item.status)
-                    != Some(TaskStatus::Done)
-            })
-            .map(String::as_str)
-            .collect();
+        let blocked = unfinished_dependency_ids(state, task);
         let pending = state
             .pending_handoffs
             .iter()
@@ -927,6 +922,29 @@ impl RoomView {
 
                 if expanded {
                     ui.add_space(6.0);
+                    for dependency_id in &blocked {
+                        if let Some(dependency) =
+                            state.tasks.iter().find(|item| item.id == *dependency_id)
+                        {
+                            if ui
+                                .button(format!("Open dependency: {}", dependency.title))
+                                .clicked()
+                            {
+                                self.expanded = Some(dependency.id.clone());
+                                self.checked = dependency
+                                    .completed_criteria
+                                    .iter()
+                                    .map(|criterion| (dependency.id.clone(), criterion.clone()))
+                                    .collect();
+                                self.task_query.clear();
+                                self.task_status_filter = None;
+                                self.task_owner_filter = None;
+                                self.blocked_tasks_only = false;
+                            }
+                        } else {
+                            ui.label(format!("Missing dependency: {dependency_id}"));
+                        }
+                    }
                     self.task_details(ui, state, task, pending.is_some(), intents);
                 }
             });
@@ -1409,6 +1427,24 @@ pub fn short(text: &str, max: usize) -> String {
     cut
 }
 
+fn unfinished_dependency_ids<'a>(state: &RoomState, task: &'a Task) -> Vec<&'a str> {
+    if task.status == TaskStatus::Done {
+        return Vec::new();
+    }
+    task.dependencies
+        .iter()
+        .filter(|dependency| {
+            state
+                .tasks
+                .iter()
+                .find(|item| &item.id == *dependency)
+                .map(|item| item.status)
+                != Some(TaskStatus::Done)
+        })
+        .map(String::as_str)
+        .collect()
+}
+
 fn task_matches_query(title: &str, owner: &str, query: &str) -> bool {
     let query = query.trim().to_lowercase();
     query.is_empty()
@@ -1435,6 +1471,42 @@ mod tests {
         assert!(task_matches_query("Fix parser", "Atul", "atul"));
         assert!(task_matches_query("Fix parser", "Atul", " "));
         assert!(!task_matches_query("Fix parser", "Atul", "Zayed"));
+    }
+
+    #[test]
+    fn unresolved_dependencies_include_missing_tasks_and_clear_when_done() {
+        let host = Participant {
+            id: "host".into(),
+            name: "Host".into(),
+            role: Role::Human,
+            owner_id: None,
+        };
+        let mut state = RoomState::new("room", host);
+        let dependency = Task {
+            id: "first".into(),
+            title: "First".into(),
+            owner_id: "host".into(),
+            owner_name: "Host".into(),
+            status: TaskStatus::Open,
+            dependencies: Vec::new(),
+            acceptance_criteria: Vec::new(),
+            completed_criteria: Vec::new(),
+            worktree_branch: None,
+            updated_at_epoch_seconds: 0,
+        };
+        let task = Task {
+            id: "second".into(),
+            title: "Second".into(),
+            dependencies: vec!["first".into(), "missing".into()],
+            ..dependency.clone()
+        };
+        state.tasks.push(dependency);
+        assert_eq!(
+            unfinished_dependency_ids(&state, &task),
+            ["first", "missing"]
+        );
+        state.tasks[0].status = TaskStatus::Done;
+        assert_eq!(unfinished_dependency_ids(&state, &task), ["missing"]);
     }
 
     #[test]
