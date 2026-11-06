@@ -1401,7 +1401,11 @@ mod tests {
 
     #[test]
     fn activity_filter_matches_detail_or_actor_without_case() {
-        assert!(activity_matches_query("Closed task T-1", "Zayed", " CLOSED "));
+        assert!(activity_matches_query(
+            "Closed task T-1",
+            "Zayed",
+            " CLOSED "
+        ));
         assert!(activity_matches_query("Closed task T-1", "Zayed", "zayed"));
         assert!(!activity_matches_query("Closed task T-1", "Zayed", "Atul"));
     }
