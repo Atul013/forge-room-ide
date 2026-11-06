@@ -448,18 +448,13 @@ impl Lobby {
                                     "{}: {}\n{}",
                                     crate::rooms::short(actor, 12),
                                     crate::rooms::short(&event.detail, 22),
-                                    crate::room_state::ago(
-                                        clock,
-                                        event.recorded_at_epoch_seconds
-                                    )
+                                    crate::room_state::ago(clock, event.recorded_at_epoch_seconds)
                                 );
                                 if ui
                                     .add_sized(
                                         [216.0, 28.0],
                                         egui::Button::new(
-                                            RichText::new(text)
-                                                .size(12.0)
-                                                .color(theme::text_dim()),
+                                            RichText::new(text).size(12.0).color(theme::text_dim()),
                                         )
                                         .frame(false),
                                     )
@@ -495,8 +490,7 @@ impl Lobby {
                             if ui
                                 .add(
                                     egui::Button::new(
-                                        RichText::new(label)
-                                            .color(Color32::from_rgb(226, 160, 60)),
+                                        RichText::new(label).color(Color32::from_rgb(226, 160, 60)),
                                     )
                                     .fill(theme::overlay(18))
                                     .stroke(Stroke::new(1.0, theme::border())),
