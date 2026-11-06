@@ -170,6 +170,8 @@ pub struct Lobby {
     invite_note: Option<String>,
     /// Set when a checklist item was just added, so its text field takes focus.
     focus_new_goal: bool,
+    /// Focus the recovery action once when an unreadable room is first shown.
+    recovery_warning_shown: bool,
 }
 
 impl Default for Lobby {
@@ -185,6 +187,7 @@ impl Default for Lobby {
             invite_role: 0,
             invite_note: None,
             focus_new_goal: false,
+            recovery_warning_shown: false,
         }
     }
 }
@@ -220,14 +223,15 @@ impl Lobby {
     /// Switch to the lobby saved at `path` (or a fresh one), for the project that was just opened.
     /// Unsaved edits are written first; the error says why they could not be kept.
     pub fn load_for(&mut self, path: Option<PathBuf>) -> Result<(), String> {
-        let result = self.finish();
+        // Unsaved edits that cannot be written must not be replaced: the switch is refused.
+        self.finish()?;
         let config = path.as_deref().and_then(load_config);
         *self = Self {
             config: config.unwrap_or_default(),
             path,
             ..Self::default()
         };
-        result
+        Ok(())
     }
 
     /// Save pending edits now (leaving the project or quitting).
@@ -343,6 +347,8 @@ impl Lobby {
     pub fn show(&mut self, ui: &mut Ui, context: &Context) -> Option<Action> {
         let before = serde_json::to_string(&self.config).unwrap_or_default();
         let mut action = None;
+        let focus_recovery = context.room_unavailable && !self.recovery_warning_shown;
+        self.recovery_warning_shown = context.room_unavailable;
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs(1));
 
@@ -375,10 +381,11 @@ impl Lobby {
                                 .inner_margin(Margin::symmetric(12, 10))
                                 .show(ui, |ui| {
                                     ui.label("Room unavailable: saved room files could not be read. They were left unchanged.");
-                                    if ui
-                                        .add(egui::Button::new("Open Room details"))
-                                        .clicked()
-                                    {
+                                    let details = ui.add(egui::Button::new("Open Room details"));
+                                    if focus_recovery {
+                                        details.request_focus();
+                                    }
+                                    if details.clicked() {
                                         action = Some(Action::EnterRoom);
                                     }
                                 });
@@ -570,7 +577,10 @@ impl Lobby {
                     },
                 );
                 ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                    if square_button(ui, "···").clicked() {
+                    if square_button(ui, "···")
+                        .on_hover_text("Open Lobby settings")
+                        .clicked()
+                    {
                         self.tab = Tab::Settings;
                     }
                     if accent_button(ui, "Enter Room", Some("arrow-right")).clicked() {
@@ -804,43 +814,28 @@ impl Lobby {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             for ((tab, label), tab_width) in TABS.into_iter().zip(sizes) {
-                let galley = ui.painter().layout_no_wrap(
-                    label.to_string(),
-                    FontId::proportional(15.0),
-                    if self.tab == tab {
+                let selected = self.tab == tab;
+                let response = ui.add_sized(
+                    vec2(tab_width, 37.0),
+                    egui::Button::new(RichText::new(label).size(15.0).color(if selected {
                         theme::text()
                     } else {
                         theme::text_dim()
-                    },
+                    }))
+                    .fill(if selected {
+                        theme::tab_active()
+                    } else {
+                        card_fill()
+                    })
+                    .stroke(Stroke::NONE),
                 );
-                let (rect, response) =
-                    ui.allocate_exact_size(vec2(tab_width, 37.0), Sense::click());
+                let rect = response.rect;
                 if self.tab == tab {
-                    ui.painter().rect_filled(
-                        rect,
-                        egui::CornerRadius {
-                            nw: 5,
-                            ne: 5,
-                            sw: 0,
-                            se: 0,
-                        },
-                        theme::tab_active(),
-                    );
                     ui.painter().line_segment(
                         [rect.left_bottom(), rect.right_bottom()],
                         Stroke::new(2.0, theme::accent()),
                     );
-                } else if response.hovered() {
-                    ui.painter().rect_filled(rect, 6.0, card_fill());
                 }
-                ui.painter().galley(
-                    egui::pos2(
-                        rect.center().x - galley.size().x / 2.0,
-                        rect.center().y - galley.size().y / 2.0,
-                    ),
-                    galley,
-                    theme::text(),
-                );
                 if response.clicked() {
                     self.tab = tab;
                 }
@@ -1095,7 +1090,11 @@ impl Lobby {
                                         self.config.goals.iter_mut().enumerate()
                                     {
                                         ui.horizontal(|ui| {
-                                            check_box(ui, done, "");
+                                            ui.checkbox(done, "").accessible_name(format!(
+                                                "Complete checklist item {}: {}",
+                                                index + 1,
+                                                text
+                                            ));
                                             let response = ui.add(
                                                 egui::TextEdit::singleline(text)
                                                     .frame(egui::Frame::NONE)
@@ -1525,12 +1524,11 @@ impl Lobby {
                     } else {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let url = self.config.repo_url.clone();
-                            let full = if url.starts_with("http") {
-                                url.clone()
-                            } else {
-                                format!("https://{url}")
-                            };
-                            if icon_button(ui, "external-link", "Open in browser").clicked() {
+                            // Only http(s) addresses ever reach the browser.
+                            let target = crate::preview::web_url(&url);
+                            let clicked =
+                                icon_button(ui, "external-link", "Open in browser").clicked();
+                            if clicked && let Some(full) = target {
                                 ui.ctx().open_url(egui::OpenUrl::new_tab(full));
                             }
                             if ui
@@ -1578,7 +1576,7 @@ impl Lobby {
                                 for (name, on) in
                                     PERMISSIONS.iter().zip(self.config.permissions.iter_mut())
                                 {
-                                    check_box(ui, on, name);
+                                    ui.checkbox(on, *name);
                                 }
                             });
                         });
@@ -1614,7 +1612,7 @@ impl Lobby {
                 let beside = ui.available_width() >= 440.0;
                 let mut sharing = |ui: &mut Ui| {
                     for (name, on) in SHARING.iter().zip(self.config.sharing.iter_mut()) {
-                        check_box(ui, on, name);
+                        ui.checkbox(on, *name);
                     }
                 };
                 let heading = |ui: &mut Ui| {
@@ -1861,57 +1859,14 @@ fn chip_icon(ui: &mut Ui, icon: &str, text: &str, color: Color32, strong: bool) 
     );
 }
 
-/// A checkbox with an accent-filled box, readable on dark cards in both states.
-fn check_box(ui: &mut Ui, value: &mut bool, label: &str) -> egui::Response {
-    let galley =
-        ui.painter()
-            .layout_no_wrap(label.to_string(), FontId::proportional(14.0), theme::text());
-    let gap = if label.is_empty() { 0.0 } else { 8.0 };
-    let (rect, mut response) =
-        ui.allocate_exact_size(vec2(17.0 + gap + galley.size().x, 21.0), Sense::click());
-    if response.clicked() {
-        *value = !*value;
-        response.mark_changed();
-    }
-    let boxed = Rect::from_min_size(
-        egui::pos2(rect.left(), rect.center().y - 8.5),
-        vec2(17.0, 17.0),
-    );
-    let painter = ui.painter();
-    if *value {
-        painter.rect_filled(boxed, 4.0, theme::accent());
-        icons::draw(painter, "check", boxed.center(), 14.0, Color32::BLACK);
-    } else {
-        painter.rect_stroke(
-            boxed,
-            4.0,
-            Stroke::new(
-                1.5,
-                if response.hovered() {
-                    theme::text()
-                } else {
-                    theme::text_dim()
-                },
-            ),
-            egui::StrokeKind::Inside,
-        );
-    }
-    if !label.is_empty() {
-        painter.galley(
-            egui::pos2(boxed.right() + gap, rect.center().y - galley.size().y / 2.0),
-            galley,
-            theme::text(),
-        );
-    }
-    response
-}
-
 fn icon_button(ui: &mut Ui, icon: &str, hint: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+    let response = ui
+        .add_sized(vec2(24.0, 24.0), egui::Button::new("").frame(false))
+        .accessible_name(hint);
     icons::draw(
         ui.painter(),
         icon,
-        rect.center(),
+        response.rect.center(),
         18.0,
         if response.hovered() {
             theme::text()
@@ -1947,31 +1902,18 @@ fn button_frame(
     );
     let extra = if icon.is_some() { style.pad + 2.0 } else { 0.0 };
     let width = (galley.size().x + style.pad + extra).max(style.min_width);
-    let (rect, response) = ui.allocate_exact_size(vec2(width, style.height), Sense::click());
-    let fill = if response.hovered() {
-        theme::mix(style.fill, Color32::WHITE, 0.08)
-    } else {
-        style.fill
-    };
-    ui.painter().rect_filled(rect, style.radius, fill);
-    ui.painter().rect_stroke(
-        rect,
-        style.radius,
-        Stroke::new(1.0, style.stroke),
-        egui::StrokeKind::Inside,
-    );
-    let content = galley.size().x + extra;
-    let text_x = rect.center().x - content / 2.0;
-    ui.painter().galley(
-        egui::pos2(text_x, rect.center().y - galley.size().y / 2.0),
-        galley.clone(),
-        style.text,
+    let response = ui.add_sized(
+        vec2(width, style.height),
+        egui::Button::new(RichText::new(label).size(style.size).color(style.text))
+            .fill(style.fill)
+            .stroke(Stroke::new(1.0, style.stroke))
+            .corner_radius(style.radius),
     );
     if let Some(icon) = icon {
         icons::draw(
             ui.painter(),
             icon,
-            egui::pos2(text_x + galley.size().x + 17.0, rect.center().y),
+            egui::pos2(response.rect.right() - 16.0, response.rect.center().y),
             18.0,
             style.text,
         );
@@ -2274,6 +2216,24 @@ mod tests {
         let _ = reopened.load_for(Some(path.clone()));
         assert_eq!(reopened.config.goal, "important");
         let _ = std::fs::remove_dir_all(blocker);
+    }
+
+    #[test]
+    fn switching_projects_is_refused_while_edits_cannot_be_saved() {
+        let blocker = temp_path("blocker-switch");
+        std::fs::write(&blocker, "not a directory").unwrap();
+        let mut lobby = Lobby::default();
+        let _ = lobby.load_for(Some(blocker.join("lobby.json")));
+        lobby.config.goal = "ONLY UNSAVED COPY".into();
+        lobby.dirty = true;
+
+        assert!(lobby.load_for(None).is_err());
+        assert_eq!(
+            lobby.config.goal, "ONLY UNSAVED COPY",
+            "the edits must survive"
+        );
+        assert!(lobby.dirty);
+        let _ = std::fs::remove_file(blocker);
     }
 
     #[test]

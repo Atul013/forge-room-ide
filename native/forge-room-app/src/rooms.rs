@@ -78,7 +78,12 @@ pub struct RoomView {
     people_open: bool,
     tasks_open: bool,
     activity_open: bool,
+    show_more_activity: bool,
+    activity_query: String,
     expanded: Option<String>,
+    task_query: String,
+    task_status_filter: Option<TaskStatus>,
+    focus_new_task: bool,
     checked: HashSet<(String, String)>,
     new_task: NewTask,
     new_person: NewPerson,
@@ -100,7 +105,12 @@ impl Default for RoomView {
             people_open: true,
             tasks_open: true,
             activity_open: true,
+            show_more_activity: false,
+            activity_query: String::new(),
             expanded: None,
+            task_query: String::new(),
+            task_status_filter: None,
+            focus_new_task: false,
             checked: HashSet::new(),
             new_task: NewTask::default(),
             new_person: NewPerson::default(),
@@ -588,6 +598,7 @@ impl RoomView {
         let (_, add) = section(ui, "TASKS", &mut self.tasks_open, state.tasks.len(), true);
         if add {
             self.new_task.open = !self.new_task.open;
+            self.focus_new_task = self.new_task.open;
             if self.new_task.owner.is_empty() {
                 self.new_task.owner = self.acting_as.clone();
             }
@@ -598,6 +609,50 @@ impl RoomView {
         if self.new_task.open {
             self.new_task_form(ui, state, intents);
         }
+        if !state.tasks.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.task_query)
+                        .hint_text("Filter tasks by title or owner")
+                        .desired_width((ui.available_width() - 14.0).max(140.0)),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                egui::ComboBox::from_id_salt("task-status-filter")
+                    .selected_text(match self.task_status_filter {
+                        None => "All statuses",
+                        Some(TaskStatus::Open) => "Open",
+                        Some(TaskStatus::InProgress) => "In progress",
+                        Some(TaskStatus::Done) => "Done",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.task_status_filter, None, "All statuses");
+                        ui.selectable_value(
+                            &mut self.task_status_filter,
+                            Some(TaskStatus::Open),
+                            "Open",
+                        );
+                        ui.selectable_value(
+                            &mut self.task_status_filter,
+                            Some(TaskStatus::InProgress),
+                            "In progress",
+                        );
+                        ui.selectable_value(
+                            &mut self.task_status_filter,
+                            Some(TaskStatus::Done),
+                            "Done",
+                        );
+                    });
+                if (!self.task_query.is_empty() || self.task_status_filter.is_some())
+                    && ui.button("Clear filters").clicked()
+                {
+                    self.task_query.clear();
+                    self.task_status_filter = None;
+                }
+            });
+        }
         if state.tasks.is_empty() && !self.new_task.open {
             empty_state(
                 ui,
@@ -605,6 +660,7 @@ impl RoomView {
                 "Add the first task with the + button. Give it an owner and what counts as done.",
             );
         }
+        let mut visible = 0;
         for (status, label) in [
             (TaskStatus::InProgress, "In progress"),
             (TaskStatus::Open, "Open"),
@@ -613,7 +669,13 @@ impl RoomView {
             let group: Vec<&Task> = state
                 .tasks
                 .iter()
-                .filter(|task| task.status == status)
+                .filter(|task| {
+                    task.status == status
+                        && self
+                            .task_status_filter
+                            .is_none_or(|selected| selected == status)
+                        && task_matches_query(&task.title, &task.owner_name, &self.task_query)
+                })
                 .collect();
             if group.is_empty() {
                 continue;
@@ -627,19 +689,27 @@ impl RoomView {
                 );
             });
             for task in group {
+                visible += 1;
                 self.task_card(ui, state, task, intents);
             }
+        }
+        if visible == 0 && !state.tasks.is_empty() {
+            empty_state(ui, "No matching tasks", "Try another title or owner.");
         }
         ui.add_space(8.0);
     }
 
     fn new_task_form(&mut self, ui: &mut egui::Ui, state: &RoomState, intents: &mut Vec<Intent>) {
+        let focus_title = std::mem::take(&mut self.focus_new_task);
         form_frame(ui, |ui| {
-            ui.add(
+            let title = ui.add(
                 egui::TextEdit::singleline(&mut self.new_task.title)
                     .hint_text("What needs doing?")
                     .desired_width(f32::INFINITY),
             );
+            if focus_title {
+                title.request_focus();
+            }
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Owner").color(theme::text_dim()));
                 let mut owner = self.new_task.owner.clone();
@@ -761,11 +831,11 @@ impl RoomView {
                         ui.painter()
                             .circle_filled(dot.center(), 4.0, status_color(task.status));
                         ui.add(
-                            egui::Label::new(
+                            egui::Button::new(
                                 RichText::new(&task.title).strong().color(theme::text()),
                             )
-                            .wrap()
-                            .sense(Sense::click()),
+                            .frame(false)
+                            .wrap(),
                         )
                     })
                     .inner;
@@ -991,6 +1061,7 @@ impl RoomView {
                 );
             });
         }
+        let mut submit_evidence = false;
         ui.horizontal(|ui| {
             let mut kind = self.evidence_kind.clone();
             egui::ComboBox::from_id_salt(("evidence-kind", &task.id))
@@ -1011,17 +1082,22 @@ impl RoomView {
                     .hint_text("What did you verify?")
                     .desired_width(f32::INFINITY),
             );
-            let submit = response.lost_focus()
+            submit_evidence = response.lost_focus()
                 && ui.input(|input| input.key_pressed(egui::Key::Enter))
                 && !self.evidence_text.trim().is_empty();
-            if submit {
-                intents.push(Intent::Evidence {
-                    task: task.id.clone(),
-                    kind: self.evidence_kind.clone(),
-                    text: self.evidence_text.clone(),
-                });
-            }
         });
+        let ready = !self.evidence_text.trim().is_empty();
+        if ui
+            .add_enabled(ready, egui::Button::new("Add evidence"))
+            .clicked()
+            || submit_evidence
+        {
+            intents.push(Intent::Evidence {
+                task: task.id.clone(),
+                kind: self.evidence_kind.clone(),
+                text: self.evidence_text.clone(),
+            });
+        }
     }
 
     fn activity(&mut self, ui: &mut egui::Ui, state: &RoomState) {
@@ -1035,8 +1111,56 @@ impl RoomView {
         if !self.activity_open {
             return;
         }
+        if state.activity.is_empty() {
+            empty_state(ui, "No activity yet", "Room actions will appear here.");
+            return;
+        }
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.activity_query)
+                    .hint_text("Filter activity by person or detail")
+                    .desired_width((ui.available_width() - 14.0).max(140.0)),
+            );
+        });
+        if !self.activity_query.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                if ui.button("Clear filter").clicked() {
+                    self.activity_query.clear();
+                }
+            });
+        }
+        if state.activity.len() > 10 {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                let label = if self.show_more_activity {
+                    "Show recent 10"
+                } else {
+                    "Show up to 50"
+                };
+                if ui.button(label).clicked() {
+                    self.show_more_activity = !self.show_more_activity;
+                }
+            });
+        }
         let now = now_epoch_seconds();
-        for event in state.activity.iter().rev().take(10) {
+        let limit = if self.show_more_activity { 50 } else { 10 };
+        let mut visible = 0;
+        for event in state
+            .activity
+            .iter()
+            .rev()
+            .filter(|event| {
+                activity_matches_query(
+                    &event.detail,
+                    &name_of(state, &event.actor_id),
+                    &self.activity_query,
+                )
+            })
+            .take(limit)
+        {
+            visible += 1;
             ui.horizontal_wrapped(|ui| {
                 ui.add_space(14.0);
                 ui.label(
@@ -1055,6 +1179,9 @@ impl RoomView {
                         .color(theme::mix(theme::bg_sidebar(), theme::text(), 0.4)),
                 );
             });
+        }
+        if visible == 0 {
+            empty_state(ui, "No matching activity", "Try another person or detail.");
         }
     }
 }
@@ -1244,11 +1371,44 @@ pub fn short(text: &str, max: usize) -> String {
     cut
 }
 
+fn task_matches_query(title: &str, owner: &str, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    query.is_empty()
+        || title.to_lowercase().contains(&query)
+        || owner.to_lowercase().contains(&query)
+}
+
+fn activity_matches_query(detail: &str, actor: &str, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    query.is_empty()
+        || detail.to_lowercase().contains(&query)
+        || actor.to_lowercase().contains(&query)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn task_filter_matches_title_or_owner_without_case() {
+        assert!(task_matches_query("Fix parser", "Atul", " PARSER "));
+        assert!(task_matches_query("Fix parser", "Atul", "atul"));
+        assert!(task_matches_query("Fix parser", "Atul", " "));
+        assert!(!task_matches_query("Fix parser", "Atul", "Zayed"));
+    }
+
+    #[test]
+    fn activity_filter_matches_detail_or_actor_without_case() {
+        assert!(activity_matches_query(
+            "Closed task T-1",
+            "Zayed",
+            " CLOSED "
+        ));
+        assert!(activity_matches_query("Closed task T-1", "Zayed", "zayed"));
+        assert!(!activity_matches_query("Closed task T-1", "Zayed", "Atul"));
+    }
 
     #[test]
     fn damaged_room_cannot_be_replaced_by_create_room() {

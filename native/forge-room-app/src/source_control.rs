@@ -397,20 +397,25 @@ fn page_tabs(ui: &mut egui::Ui, state: &mut State, changes: usize, commits: usiz
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(12, 0))
         .show(ui, |ui| {
+            // Equal widths from the parent, fixed once: a button's own text can no longer widen it.
+            let width = ((ui.available_width() - 6.0) / 2.0).floor().max(40.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 for (history, label, count) in
                     [(false, "Changes", changes), (true, "History", commits)]
                 {
                     let active = state.show_history == history;
-                    let text =
-                        RichText::new(format!("{label}  {count}"))
-                            .size(13.0)
-                            .color(if active {
-                                theme::text()
-                            } else {
-                                theme::text_dim()
-                            });
+                    // Narrow sidebars drop the count rather than overflow.
+                    let caption = if width < 110.0 {
+                        label.to_string()
+                    } else {
+                        format!("{label}  {count}")
+                    };
+                    let text = RichText::new(caption).size(13.0).color(if active {
+                        theme::text()
+                    } else {
+                        theme::text_dim()
+                    });
                     let button = egui::Button::new(text)
                         .fill(if active {
                             theme::overlay(18)
@@ -418,8 +423,8 @@ fn page_tabs(ui: &mut egui::Ui, state: &mut State, changes: usize, commits: usiz
                             Color32::TRANSPARENT
                         })
                         .corner_radius(6.0)
-                        .min_size(egui::vec2((ui.available_width() - 6.0) / 2.0, 26.0));
-                    if ui.add(button).clicked() {
+                        .truncate();
+                    if ui.add_sized(egui::vec2(width, 26.0), button).clicked() {
                         state.show_history = history;
                     }
                 }
@@ -830,7 +835,10 @@ fn graph_row(
         painter.rect_filled(rect, 0.0, theme::overlay(8));
     }
     // Many lanes are squeezed together so the commit message keeps room to read.
-    let lane_width = LANE_WIDTH.min(64.0 / graph_width.max(1) as f32).max(4.0);
+    // The graph never takes more than 40% of the row (64 px at most), so the subject keeps
+    // room even at the narrowest sidebar and with dozens of lanes.
+    let budget = (rect.width() * 0.4).min(64.0);
+    let lane_width = LANE_WIDTH.min(budget / graph_width.max(1) as f32);
     let x_of = |lane: usize| rect.left() + 16.0 + lane as f32 * lane_width;
     let (top, middle, bottom) = (rect.top(), rect.center().y, rect.bottom());
     let node = egui::pos2(x_of(row.lane), middle);

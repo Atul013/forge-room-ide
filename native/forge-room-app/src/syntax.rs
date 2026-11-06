@@ -136,7 +136,7 @@ pub fn highlight(text: &str, extension: &str, font_id: &egui::FontId) -> LayoutJ
     // opener or closer inside it is never seen), so such a file is shown as plain text.
     if text.len() > HIGHLIGHT_LIMIT_BYTES
         || text
-            .split('\n')
+            .split_inclusive('\n')
             .any(|line| line.len() > MAX_HIGHLIGHT_LINE_BYTES)
     {
         // Cache nothing for these files: plain text keeps every keystroke bounded by layout alone.
@@ -296,6 +296,24 @@ fn refresh(cache: &mut Cache, text: &str, budget: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_line_limit_counts_the_newline_like_the_parser() {
+        // The parser sees each line with its newline: up to 4,000 bytes stay parsed.
+        for body in [3997, 3998, 3999] {
+            for end in ["\n", "\r\n"] {
+                let first = format!("/*{}{end}", "a".repeat(body));
+                let text = format!("{first}let x = 1;{end}*/{end}");
+                let job = highlight(&text, "rs", &egui::FontId::monospace(14.0));
+                assert_eq!(
+                    job.sections.len() == 1,
+                    first.len() > MAX_HIGHLIGHT_LINE_BYTES,
+                    "first line {} bytes",
+                    first.len()
+                );
+            }
+        }
+    }
 
     #[test]
     fn a_file_with_an_overlong_line_is_plain_so_no_state_is_guessed() {

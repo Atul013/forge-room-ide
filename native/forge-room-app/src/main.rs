@@ -200,6 +200,7 @@ struct ForgeRoomApp {
     show_terminal: bool,
     show_right: bool,
     show_preview: bool,
+    lobby_close_warned: bool,
     preview: preview::Preview,
     ai: ai_panel::State,
     right_tab: RightTab,
@@ -297,6 +298,7 @@ impl ForgeRoomApp {
             show_terminal: true,
             show_right: true,
             show_preview: true,
+            lobby_close_warned: false,
             preview: preview::Preview::default(),
             ai: ai_panel::State::default(),
             right_tab: RightTab::Ai,
@@ -321,6 +323,10 @@ impl ForgeRoomApp {
 
     fn open_path(&mut self, path: PathBuf) {
         if path.is_dir() {
+            if let Err(error) = self.lobby.finish() {
+                self.status = format!("Folder not opened: {error}");
+                return;
+            }
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
             self.refresh_git();
@@ -2824,6 +2830,15 @@ impl eframe::App for ForgeRoomApp {
         {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(Pending::Quit);
+        }
+        // Closing with lobby edits that cannot be saved asks once before losing them.
+        if context.input(|input| input.viewport().close_requested())
+            && !self.lobby_close_warned
+            && let Err(error) = self.lobby.finish()
+        {
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.lobby_close_warned = true;
+            self.status = format!("{error} Close again to quit and lose those edits.");
         }
         if self.pending.is_none() {
             self.handle_shortcuts(ui);
