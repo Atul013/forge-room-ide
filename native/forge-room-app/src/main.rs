@@ -2783,6 +2783,10 @@ impl ForgeRoomApp {
                 self.show_right = true;
                 self.right_tab = RightTab::Room;
             }
+            Some(lobby::Action::OpenActivity) => {
+                self.show_lobby = false;
+                self.show_dock(RightTab::Activity);
+            }
             Some(lobby::Action::CreateRoom) => {
                 if !self.room.create_room() {
                     self.show_dock(RightTab::Room);

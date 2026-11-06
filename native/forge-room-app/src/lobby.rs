@@ -142,6 +142,7 @@ const TABS: [(Tab, &str); 7] = [
 /// What the lobby asks the app to do.
 pub enum Action {
     EnterRoom,
+    OpenActivity,
     CreateRoom,
     AddMember,
     AddAgent,
@@ -352,7 +353,9 @@ impl Lobby {
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs(1));
 
-        self.pulse(ui, context);
+        if self.pulse(ui, context) {
+            action = Some(Action::OpenActivity);
+        }
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -407,8 +410,9 @@ impl Lobby {
 
     // ---- Room Pulse ---------------------------------------------------------------------
 
-    fn pulse(&mut self, ui: &mut Ui, context: &Context) {
+    fn pulse(&mut self, ui: &mut Ui, context: &Context) -> bool {
         let items = self.setup_items(context);
+        let mut open_activity = false;
         egui::Frame::new()
             .outer_margin(Margin::symmetric(5, 4))
             .stroke(Stroke::new(1.0, theme::border()))
@@ -417,40 +421,52 @@ impl Lobby {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.set_min_height(28.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_centered(|ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                     icons::draw(ui.painter(), "pulse", rect.center(), 18.0, theme::accent());
-                    ui.label(RichText::new("Room Pulse").strong().color(theme::text()));
-                    ui.add_space(8.0);
+                    ui.label(RichText::new("Room Pulse").strong().color(theme::text()))
+                        .on_hover_text("Recent activity saved in this local Room");
+
                     if let Some(state) = context.state {
-                        let clock = now();
                         if state.activity.is_empty() {
                             ui.label(RichText::new("No activity yet").color(theme::text_dim()));
-                        }
-                        // An overflowing row would also widen everything laid out below it, so only
-                        // as many recent events as fit (about 230 px each) are shown.
-                        let slots = ((ui.available_width() - 430.0) / 230.0).floor().max(0.0);
-                        let shown = (slots as usize).min(4);
-                        for event in state.activity.iter().rev().take(shown) {
-                            let actor = state
-                                .participants
-                                .iter()
-                                .find(|person| person.id == event.actor_id)
-                                .map(|person| person.name.as_str())
-                                .unwrap_or("Someone");
-                            let (rect, _) = ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
-                            ui.painter().circle_filled(
-                                rect.center(),
-                                3.5,
-                                Color32::from_rgb(110, 200, 120),
-                            );
-                            let text = format!(
-                                "{actor}: {}  ·  {}",
-                                crate::rooms::short(&event.detail, 38),
-                                crate::room_state::ago(clock, event.recorded_at_epoch_seconds)
-                            );
-                            ui.label(RichText::new(text).color(theme::text_dim()).size(13.0));
-                            ui.add_space(6.0);
+                        } else {
+                            let reserved = if items.is_empty() { 0.0 } else { 170.0 };
+                            let slots = ((ui.available_width() - reserved - 20.0) / 230.0)
+                                .floor()
+                                .max(0.0) as usize;
+                            let clock = now();
+                            for event in state.activity.iter().rev().take(slots.min(4)) {
+                                let actor = state
+                                    .participants
+                                    .iter()
+                                    .find(|person| person.id == event.actor_id)
+                                    .map(|person| person.name.as_str())
+                                    .unwrap_or("Someone");
+                                ui.separator();
+                                let text = format!(
+                                    "{}: {}\n{}",
+                                    crate::rooms::short(actor, 12),
+                                    crate::rooms::short(&event.detail, 22),
+                                    crate::room_state::ago(clock, event.recorded_at_epoch_seconds)
+                                );
+                                if ui
+                                    .add_sized(
+                                        [216.0, 28.0],
+                                        egui::Button::new(
+                                            RichText::new(text).size(12.0).color(theme::text_dim()),
+                                        )
+                                        .frame(false),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{actor}: {}\nOpen local activity",
+                                        event.detail
+                                    ))
+                                    .clicked()
+                                {
+                                    open_activity = true;
+                                }
+                            }
                         }
                     } else if context.room_unavailable {
                         ui.label(
@@ -459,99 +475,35 @@ impl Lobby {
                         );
                     } else {
                         ui.label(
-                            RichText::new("No room yet. Create one to see live activity here.")
+                            RichText::new("No room yet. Create one to see activity here.")
                                 .color(theme::text_dim()),
                         );
                     }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if !items.is_empty() {
+
+                    if !items.is_empty() {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let label = format!(
-                                "{} Setup Item{}",
+                                "Review {} setup item{}",
                                 items.len(),
                                 if items.len() == 1 { "" } else { "s" }
                             );
-                            let amber = Color32::from_rgb(226, 160, 60);
-                            let galley = ui.painter().layout_no_wrap(
-                                label,
-                                FontId::proportional(14.0),
-                                theme::text(),
-                            );
-                            let review = ui.painter().layout_no_wrap(
-                                "Review".into(),
-                                FontId::proportional(14.0),
-                                theme::text(),
-                            );
-                            let width = 14.0
-                                + 20.0
-                                + 8.0
-                                + galley.size().x
-                                + 14.0
-                                + review.size().x
-                                + 22.0
-                                + 6.0;
-                            let (rect, _) =
-                                ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
-                            let painter = ui.painter();
-                            painter.rect_filled(
-                                rect,
-                                8.0,
-                                Color32::from_rgba_unmultiplied(226, 160, 60, 30),
-                            );
-                            painter.rect_stroke(
-                                rect,
-                                8.0,
-                                Stroke::new(
-                                    1.0,
-                                    Color32::from_rgba_unmultiplied(226, 160, 60, 140),
-                                ),
-                                egui::StrokeKind::Inside,
-                            );
-                            icons::draw(
-                                painter,
-                                "warning",
-                                egui::pos2(rect.left() + 24.0, rect.center().y),
-                                20.0,
-                                amber,
-                            );
-                            painter.galley(
-                                egui::pos2(
-                                    rect.left() + 42.0,
-                                    rect.center().y - galley.size().y / 2.0,
-                                ),
-                                galley.clone(),
-                                theme::text(),
-                            );
-                            let button = Rect::from_min_max(
-                                egui::pos2(
-                                    rect.left() + 42.0 + galley.size().x + 12.0,
-                                    rect.top() + 4.0,
-                                ),
-                                egui::pos2(rect.right() - 4.0, rect.bottom() - 4.0),
-                            );
-                            let response =
-                                ui.interact(button, ui.scope_id().with("review"), Sense::click());
-                            let painter = ui.painter();
-                            painter.rect_filled(
-                                button,
-                                6.0,
-                                if response.hovered() {
-                                    theme::overlay(40)
-                                } else {
-                                    theme::overlay(22)
-                                },
-                            );
-                            painter.galley(
-                                button.center() - review.size() / 2.0,
-                                review,
-                                theme::text(),
-                            );
-                            if response.clicked() {
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(label).color(Color32::from_rgb(226, 160, 60)),
+                                    )
+                                    .fill(theme::overlay(18))
+                                    .stroke(Stroke::new(1.0, theme::border())),
+                                )
+                                .clicked()
+                            {
                                 self.tab = Tab::Setup;
                             }
-                        }
-                    });
+                        });
+                    }
                 });
             });
+        open_activity
     }
 
     // ---- Header -------------------------------------------------------------------------
