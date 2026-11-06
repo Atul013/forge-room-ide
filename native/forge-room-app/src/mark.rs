@@ -162,8 +162,19 @@ fn pieces() -> &'static Vec<Piece> {
     })
 }
 
+/// The off-white frame of the logo would vanish on a light theme, so there it takes the ink color.
+fn adapt(color: Color32, dark: bool, ink: Color32) -> Color32 {
+    if !dark && color == Color32::from_rgb(0xE8, 0xE6, 0xDD) {
+        ink
+    } else {
+        color
+    }
+}
+
 /// Draws the logo centred on `center`, `size` points tall and wide.
 pub fn draw(painter: &Painter, center: Pos2, size: f32) {
+    let dark = crate::theme::current().palette.dark;
+    let ink = crate::theme::text();
     let scale = size / VIEW;
     let origin = center - eframe::egui::vec2(size, size) / 2.0;
     for piece in pieces() {
@@ -171,7 +182,7 @@ pub fn draw(painter: &Painter, center: Pos2, size: f32) {
         for triangle in &piece.triangles {
             let base = mesh.vertices.len() as u32;
             for p in triangle {
-                mesh.colored_vertex(origin + p.to_vec2() * scale, piece.color);
+                mesh.colored_vertex(origin + p.to_vec2() * scale, adapt(piece.color, dark, ink));
             }
             mesh.add_triangle(base, base + 1, base + 2);
         }
@@ -193,6 +204,16 @@ mod tests {
                 assert!((-1.0..=VIEW + 1.0).contains(&p.x) && (-1.0..=VIEW + 1.0).contains(&p.y));
             }
         }
+    }
+
+    #[test]
+    fn the_light_frame_turns_to_ink_only_on_light_themes() {
+        let frame = Color32::from_rgb(0xE8, 0xE6, 0xDD);
+        let ink = Color32::from_rgb(20, 20, 20);
+        assert_eq!(adapt(frame, true, ink), frame);
+        assert_eq!(adapt(frame, false, ink), ink);
+        let beam = Color32::from_rgb(0xD9, 0x83, 0x7F);
+        assert_eq!(adapt(beam, false, ink), beam);
     }
 
     #[test]

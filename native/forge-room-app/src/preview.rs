@@ -5,11 +5,15 @@
 use crate::theme;
 use eframe::egui::{self, Color32, RichText};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Status {
+    /// A check for the current address is still running.
+    Checking,
+    /// A remote address: never probed from here.
     Unknown,
     Listening,
     Silent,
@@ -18,7 +22,10 @@ enum Status {
 pub struct Preview {
     /// The address being previewed (what is in the address box).
     pub url: String,
-    status: Arc<Mutex<Status>>,
+    /// The result and the address it was measured for, so a late answer is never shown for another.
+    status: Arc<Mutex<(String, Status)>>,
+    /// Bumped for every check; only the newest check may publish its result.
+    generation: Arc<AtomicU64>,
     checked: String,
     last_check: Option<Instant>,
     last_scan: Option<Instant>,
@@ -30,7 +37,8 @@ impl Default for Preview {
     fn default() -> Self {
         Self {
             url: String::new(),
-            status: Arc::new(Mutex::new(Status::Unknown)),
+            status: Arc::new(Mutex::new((String::new(), Status::Unknown))),
+            generation: Arc::new(AtomicU64::new(0)),
             checked: String::new(),
             last_check: None,
             last_scan: None,
@@ -71,17 +79,44 @@ fn host_port(url: &str) -> Option<(String, u16)> {
     if authority.is_empty() || authority.contains('@') {
         return None;
     }
+    if authority.starts_with('[') && !authority.contains(']') {
+        return None;
+    }
+    if let Some(end) = authority.find(']') {
+        // `[::1]` or `[::1]:5173`: the colons inside the brackets are not a port separator.
+        if !authority.starts_with('[') || end < 2 {
+            return None;
+        }
+        let host = &authority[..=end];
+        return match &authority[end + 1..] {
+            "" => Some((host.to_string(), default)),
+            port => Some((host.to_string(), port.strip_prefix(':')?.parse().ok()?)),
+        };
+    }
     match authority.rsplit_once(':') {
         Some((host, port)) if !host.is_empty() && !port.is_empty() => {
             Some((host.to_string(), port.parse().ok()?))
         }
-        _ => Some((authority.to_string(), default)),
+        Some(_) => None,
+        None => Some((authority.to_string(), default)),
     }
 }
 
 /// Only web addresses are ever handed to the browser.
 fn is_web_url(url: &str) -> bool {
     host_port(url.trim()).is_some()
+}
+
+/// The address to open for something a person typed: an `http(s)` URL as it is, or a bare host
+/// with `https://` put in front. Any other explicit scheme is refused.
+pub fn web_url(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.contains("://") {
+        return is_web_url(text).then(|| text.to_string());
+    }
+    let candidate = format!("https://{text}");
+    (!text.is_empty() && !text.contains(char::is_whitespace) && is_web_url(&candidate))
+        .then_some(candidate)
 }
 
 impl Preview {
@@ -115,31 +150,46 @@ impl Preview {
         }
         self.checked = self.url.clone();
         self.last_check = Some(Instant::now());
-        let Some((host, port)) = host_port(self.url.trim()).filter(|(host, _)| is_local(host))
-        else {
+        let url = self.url.trim().to_string();
+        let ticket = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let Some((host, port)) = host_port(&url).filter(|(host, _)| is_local(host)) else {
             // Remote addresses are never probed from here.
-            *self.status.lock().unwrap() = Status::Unknown;
+            *self.status.lock().unwrap() = (url, Status::Unknown);
             return;
         };
         let status = Arc::clone(&self.status);
+        let generation = Arc::clone(&self.generation);
         let context = context.clone();
         std::thread::spawn(move || {
-            let host = if host == "[::1]" { "::1".into() } else { host };
+            // Wildcard and name hosts are reduced to loopback addresses; nothing else is dialled.
+            let host = match host.as_str() {
+                "[::1]" => "::1".to_string(),
+                "0.0.0.0" => "127.0.0.1".to_string(),
+                other => other.to_string(),
+            };
             let reachable = (host.as_str(), port)
                 .to_socket_addrs()
                 .ok()
                 .and_then(|mut addrs| {
                     addrs.find_map(|addr| {
-                        TcpStream::connect_timeout(&addr, Duration::from_millis(600)).ok()
+                        addr.ip().is_loopback().then(|| {
+                            TcpStream::connect_timeout(&addr, Duration::from_millis(600)).ok()
+                        })?
                     })
                 })
                 .is_some();
-            *status.lock().unwrap() = if reachable {
-                Status::Listening
-            } else {
-                Status::Silent
-            };
-            context.request_repaint();
+            // A newer check (another address) owns the display now: drop this answer.
+            if generation.load(Ordering::SeqCst) == ticket {
+                *status.lock().unwrap() = (
+                    url,
+                    if reachable {
+                        Status::Listening
+                    } else {
+                        Status::Silent
+                    },
+                );
+                context.request_repaint();
+            }
         });
     }
 
@@ -183,7 +233,14 @@ impl Preview {
                 }
                 ui.add_space(8.0);
 
-                let status = self.status.lock().unwrap().clone();
+                let status = {
+                    let measured = self.status.lock().unwrap();
+                    if measured.0 == self.url.trim() {
+                        measured.1.clone()
+                    } else {
+                        Status::Checking
+                    }
+                };
                 let (dot, text) = if self.url.trim().is_empty() {
                     (
                         theme::text_dim(),
@@ -205,6 +262,7 @@ impl Preview {
                             Color32::from_rgb(226, 160, 60),
                             "Nothing is listening at this address yet.",
                         ),
+                        Status::Checking => (theme::text_dim(), "Checking this address..."),
                         Status::Unknown => {
                             (theme::text_dim(), "Remote address: not checked from here.")
                         }
@@ -272,6 +330,25 @@ mod tests {
         );
         assert_eq!(find_local_url("see http://example.com:80/ now"), None);
         assert_eq!(find_local_url("nothing here"), None);
+    }
+
+    #[test]
+    fn ipv6_loopback_and_bare_hosts_are_handled() {
+        assert_eq!(host_port("http://[::1]/"), Some(("[::1]".into(), 80)));
+        assert_eq!(host_port("https://[::1]/"), Some(("[::1]".into(), 443)));
+        assert_eq!(
+            host_port("http://[::1]:5173/"),
+            Some(("[::1]".into(), 5173))
+        );
+        assert_eq!(host_port("http://[::1"), None);
+        assert_eq!(
+            web_url("github.com/o/r").as_deref(),
+            Some("https://github.com/o/r")
+        );
+        assert_eq!(web_url("httpx://example.test/payload"), None);
+        assert_eq!(web_url("javascript:alert(1)"), None);
+        assert_eq!(web_url("ftp://example.test"), None);
+        assert_eq!(web_url(""), None);
     }
 
     #[test]
