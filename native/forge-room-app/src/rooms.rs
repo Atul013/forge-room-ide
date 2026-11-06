@@ -1117,6 +1117,9 @@ impl RoomView {
                 );
             });
         }
+        if ui.button("Copy task summary").clicked() {
+            ui.ctx().copy_text(task_summary(state, task));
+        }
         let mut submit_evidence = false;
         ui.horizontal(|ui| {
             let mut kind = self.evidence_kind.clone();
@@ -1463,6 +1466,55 @@ fn unfinished_dependency_ids<'a>(state: &RoomState, task: &'a Task) -> Vec<&'a s
         .collect()
 }
 
+fn task_summary(state: &RoomState, task: &Task) -> String {
+    let status = match task.status {
+        TaskStatus::Open => "Open",
+        TaskStatus::InProgress => "In progress",
+        TaskStatus::Done => "Done",
+    };
+    let mut lines = vec![
+        format!("Task: {} ({})", task.title, task.id),
+        format!("Owner: {}", task.owner_name),
+        format!("Status: {status}"),
+    ];
+    let blockers = unfinished_dependency_ids(state, task);
+    if !blockers.is_empty() {
+        lines.push(format!("Blocked by: {}", blockers.join(", ")));
+    }
+    if !task.acceptance_criteria.is_empty() {
+        lines.push("Done when:".into());
+        for criterion in &task.acceptance_criteria {
+            let mark = if task.completed_criteria.contains(criterion) {
+                "x"
+            } else {
+                " "
+            };
+            lines.push(format!("- [{mark}] {criterion}"));
+        }
+    }
+    let evidence: Vec<_> = state
+        .evidence
+        .iter()
+        .filter(|item| item.task_id == task.id)
+        .collect();
+    if !evidence.is_empty() {
+        lines.push("Evidence:".into());
+        for item in evidence {
+            let kind = match item.kind {
+                EvidenceKind::Check => "check",
+                EvidenceKind::Review => "review",
+                EvidenceKind::Handoff => "handoff",
+            };
+            lines.push(format!(
+                "- {kind}: {} ({})",
+                item.summary,
+                name_of(state, &item.actor_id)
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
 fn task_matches_query(title: &str, owner: &str, query: &str) -> bool {
     let query = query.trim().to_lowercase();
     query.is_empty()
@@ -1525,6 +1577,47 @@ mod tests {
         );
         state.tasks[0].status = TaskStatus::Done;
         assert_eq!(unfinished_dependency_ids(&state, &task), ["missing"]);
+    }
+
+    #[test]
+    fn copied_task_summary_excludes_other_tasks_evidence() {
+        let host = Participant {
+            id: "host".into(),
+            name: "Host".into(),
+            role: Role::Human,
+            owner_id: None,
+        };
+        let mut state = RoomState::new("room", host);
+        let task = Task {
+            id: "one".into(),
+            title: "Finish review".into(),
+            owner_id: "host".into(),
+            owner_name: "Host".into(),
+            status: TaskStatus::InProgress,
+            dependencies: vec!["missing".into()],
+            acceptance_criteria: vec!["Tests pass".into()],
+            completed_criteria: vec!["Tests pass".into()],
+            worktree_branch: None,
+            updated_at_epoch_seconds: 0,
+        };
+        for (id, task_id, summary) in [
+            ("e1", "one", "Reviewed diff"),
+            ("e2", "other", "Private note"),
+        ] {
+            state.evidence.push(forge_room_core::Evidence {
+                id: id.into(),
+                task_id: task_id.into(),
+                actor_id: "host".into(),
+                kind: EvidenceKind::Review,
+                summary: summary.into(),
+                recorded_at_epoch_seconds: 0,
+            });
+        }
+        let copied = task_summary(&state, &task);
+        assert!(copied.contains("Blocked by: missing"));
+        assert!(copied.contains("- [x] Tests pass"));
+        assert!(copied.contains("Reviewed diff (Host)"));
+        assert!(!copied.contains("Private note"));
     }
 
     #[test]
