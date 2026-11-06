@@ -2745,7 +2745,9 @@ impl ForgeRoomApp {
                     .add_sized(
                         [216.0, 28.0],
                         egui::Button::new(
-                            egui::RichText::new(text).size(12.0).color(theme::text_dim()),
+                            egui::RichText::new(text)
+                                .size(12.0)
+                                .color(theme::text_dim()),
                         )
                         .frame(false),
                     )
