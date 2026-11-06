@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-06 Codex: PR #19 and #20 integrated the saved Aether concept's segmented Room Pulse into the coding workspace and Project Lobby, with local event buttons opening Activity. The default right dock is Team; Lobby setup Review is a native button. Windows CI passed. A portable archive hash matched; an isolated app launched, but the minimized window blocked screenshot/keyboard acceptance.
+
 - 2026-11-06 Codex: PR #18 merged Copy task summary into `main`, with a focused test that excludes another task's evidence. Windows core and graphical CI passed; desktop clipboard trial remains open.
 
 - 2026-11-06 Codex: PR #17 merged Copy visible activity into `main`; it respects the local filter and 10/50 display limit. PR #16 merged blocked-task filtering, unfinished-dependency navigation, and missing-dependency labels. Both passed Windows core and graphical CI; desktop checks remain open.
