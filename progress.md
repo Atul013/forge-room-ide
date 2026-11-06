@@ -512,6 +512,8 @@ Seven original concept PNGs from Downloads are preserved in [`docs/design/concep
 
 ### Phase 1 evidence — 2 November 2026
 
+- **6 November task handoff copy:** [PR #18](https://github.com/ZayedBH/forge-room-ide/pull/18) merged into `main` (`b60ecb2`). Expanded local tasks can copy a summary with title, owner, status, unfinished dependencies, acceptance checklist, and evidence belonging to that task. A focused test excludes another task's evidence. [Windows CI run 42210098263](https://github.com/ZayedBH/forge-room-ide/actions/runs/42210098263) passed core and graphical formatting, locked checks, tests, and Clippy. Desktop clipboard interaction remains open.
+
 - **6 November blocker triage:** [PR #16](https://github.com/ZayedBH/forge-room-ide/pull/16) merged into `main` (`6b0c48e`). The local Tasks dock can show blocked tasks only, open unfinished dependencies from a task card, and label a missing dependency. Following a dependency clears task filters so the target is visible. A focused dependency test and the core/graphical Windows checks passed in [run 42208366118](https://github.com/ZayedBH/forge-room-ide/actions/runs/42208366118). Desktop interaction remains open.
 - **6 November activity copy:** [PR #17](https://github.com/ZayedBH/forge-room-ide/pull/17) merged into `main` (`b3f6fd9`). An explicit button copies only the currently visible local activity after the person/detail query and 10/50 limit, including actor, detail, and relative time. Core and graphical Windows checks passed in [run 42209195088](https://github.com/ZayedBH/forge-room-ide/actions/runs/42209195088). Clipboard interaction remains to be checked on the desktop. These changes do not add cross-client history.
 

@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-06 Codex: PR #18 merged Copy task summary into `main`, with a focused test that excludes another task's evidence. Windows core and graphical CI passed; desktop clipboard trial remains open.
+
 - 2026-11-06 Codex: PR #17 merged Copy visible activity into `main`; it respects the local filter and 10/50 display limit. PR #16 merged blocked-task filtering, unfinished-dependency navigation, and missing-dependency labels. Both passed Windows core and graphical CI; desktop checks remain open.
 
 - 2026-11-06 Codex: PR #15 merged a local Room task owner selector into `main`. It combines with text/status filters and includes owners from saved tasks. Windows CI passed core and graphical checks; desktop interaction remains open.
