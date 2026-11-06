@@ -2368,6 +2368,58 @@ impl ForgeRoomApp {
             ],
             egui::Stroke::new(1.0, theme::border()),
         );
+        if self.right_tab != RightTab::Ai {
+            let review = self
+                .git_status
+                .as_ref()
+                .and_then(|result| result.as_ref().ok())
+                .map(|status| {
+                    let conflicts = status
+                        .changes
+                        .iter()
+                        .filter(|change| change.is_conflict())
+                        .count();
+                    (status.changes.len(), conflicts)
+                });
+            if let Some((changes, conflicts)) = review.filter(|(changes, _)| *changes > 0) {
+                egui::Frame::new()
+                    .fill(theme::mix(theme::bg_sidebar(), theme::text(), 0.04))
+                    .inner_margin(egui::Margin::symmetric(14, 7))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal_centered(|ui| {
+                            let label = if conflicts > 0 {
+                                format!(
+                                    "{conflicts} merge conflict{}",
+                                    if conflicts == 1 { "" } else { "s" }
+                                )
+                            } else {
+                                format!(
+                                    "{changes} changed file{}",
+                                    if changes == 1 { "" } else { "s" }
+                                )
+                            };
+                            let color = if conflicts > 0 {
+                                egui::Color32::from_rgb(240, 113, 120)
+                            } else {
+                                theme::text_dim()
+                            };
+                            ui.label(egui::RichText::new(label).color(color));
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Review").clicked() {
+                                        self.view = SidebarView::SourceControl;
+                                        self.show_sidebar = true;
+                                        self.refresh_git();
+                                    }
+                                },
+                            );
+                        });
+                    });
+                ui.separator();
+            }
+        }
         match self.right_tab {
             RightTab::Room | RightTab::Agents | RightTab::Tasks | RightTab::Activity => {
                 let has_workspace = self.workspace.is_some();
