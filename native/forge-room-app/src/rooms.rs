@@ -1501,7 +1501,10 @@ mod tests {
             ..dependency.clone()
         };
         state.tasks.push(dependency);
-        assert_eq!(unfinished_dependency_ids(&state, &task), ["first", "missing"]);
+        assert_eq!(
+            unfinished_dependency_ids(&state, &task),
+            ["first", "missing"]
+        );
         state.tasks[0].status = TaskStatus::Done;
         assert_eq!(unfinished_dependency_ids(&state, &task), ["missing"]);
     }
