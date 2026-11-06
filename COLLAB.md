@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-06 Codex: PR #17 merged Copy visible activity into `main`; it respects the local filter and 10/50 display limit. PR #16 merged blocked-task filtering, unfinished-dependency navigation, and missing-dependency labels. Both passed Windows core and graphical CI; desktop checks remain open.
+
 - 2026-11-06 Codex: PR #15 merged a local Room task owner selector into `main`. It combines with text/status filters and includes owners from saved tasks. Windows CI passed core and graphical checks; desktop interaction remains open.
 
 - 2026-11-03 Codex: started `feat/room-activity-filter` atop PR #12. Activity dock filters local events by actor or detail, with Clear filter and no-match state. Focused match test added; CI and desktop trial pending.
