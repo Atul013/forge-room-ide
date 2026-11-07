@@ -1,54 +1,50 @@
-# Forge Room IDE
+# Forge Room
 
-Forge Room is a Code OSS based developer environment for customizable workspaces and multiplayer project rooms where people and coding agents can coordinate with clear ownership, sharing boundaries, and reviewable work.
+A light, fast, native IDE written in Rust. No Electron, no webview, no bundled Node runtime.
 
-## Start here
+**Status:** early preview (`0.110.0-alpha.2`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [progress.md](progress.md).
 
-- [Project progress and complete ideas ledger](PROJECT_PROGRESS.md)
-- [Product specification](docs/product/PRODUCT_SPEC.md)
-- [Build history and slice evidence](docs/planning/BUILD_STATUS.md)
-- [Current state snapshot](docs/planning/CURRENT_STATE.md)
-- [AI-native expansion gap audit](docs/research/FORGE_AI_NATIVE_MASTER_AUDIT.md)
-- [Room and AI threat model](docs/architecture/THREAT_MODEL.md)
+## What works today
+
+- IDE shell: folder explorer, multi-file tabs, native dialogs, UTF-8 editing and saving, and unsaved-change prompts. A file changed by another program is reloaded when you have no edits, and saving over it asks first.
+- Line numbers, syntax highlighting (incremental, so large files stay responsive), command palette, quick open, find/replace, file search, and an integrated terminal with scrollback, selection and copy.
+- Source Control with staging, commits, branches, synchronization, diffs, history, blame, and merge-conflict resolution (accept current or incoming).
+- Local project rooms with people, agents, tasks, handoffs, evidence, and activity, and a Room Lobby page (Rooms in the left rail) with goal, milestones, setup and an optional countdown. Network collaboration, invites and AI provider execution are not yet implemented in the native app.
+- Six appearance themes and a per-user Windows installer with in-place updates and a themed uninstaller.
+
+Current gaps and the shared work plan are in [progress.md](progress.md).
+
+## Build and run
+
+Requires Rust 1.95 or newer.
+
+```powershell
+cargo run --release --manifest-path native/forge-room-app/Cargo.toml -- path\to\file.txt
+cargo test --manifest-path native/forge-room-app/Cargo.toml
+```
+
+## Build the Windows installer
+
+```powershell
+powershell -File packaging/windows/build-ember.ps1
+```
+
+Needs Inno Setup 6 (`ISCC.exe`). The setup is a WPF host compiled with the .NET Framework compiler that ships with Windows, embedding the Inno engine. Details and verification notes: [docs/design/installer-progress.md](docs/design/installer-progress.md).
 
 ## Repository map
 
 ```text
+native/
+  forge-room-app/   The graphical app (egui/eframe)
+  forge-room-core/  Shared core library and persistence
+packaging/windows/  Installer: WPF setup host, Inno engine script, build scripts
 docs/
-  product/         Product definition and acceptance goals
-  research/        Competitor, AI and repository research
-  architecture/    Threat model and implementation map
-  planning/         Delivery briefs, current state and historical build log
-  source-prompts/   Original product briefs retained as source material
-extensions/
-  team-lobby/       Collaboration, room and AI workflow extension
-  forge-room-studio/ Themes, profiles and appearance tools
-services/
-  room-service/     Self-hosted room control-plane and relay prototype
-releases/           Historical VSIX package artifacts, excluded from Git
-archive/            Excluded legacy Team Lobby source/test snapshot for reference
+  native/           Early preview notes and migration compatibility
+  design/           Approved installer mockups and installer status
+COLLAB.md           Shared hand-off log between coding agents
+progress.md   Status and roadmap
 ```
 
-`PROJECT_PROGRESS.md` is the single overview of product ideas, delivery state, outstanding acceptance, and next work. The source prompts in `docs/source-prompts/` are product requirements; they are not evidence that a requirement is implemented.
+## License
 
-## Current implementation
-
-- Team Lobby extension: `extensions/team-lobby/` (0.108.0)
-- Forge Room Studio extension: `extensions/forge-room-studio/` (0.14.0)
-- Room service prototype: `services/room-service/`
-- Code OSS product checkout used during integration: `C:\Users\Admin\Documents\Codex\2026-10-20\che\code-oss`
-
-The extension packages contain their own build and test scripts. For example:
-
-```powershell
-cd extensions/team-lobby
-npm.cmd run check
-npm.cmd test
-npm.cmd run package
-```
-
-See each extension and service README for its setup. VSIX packages and local Code OSS build output are generated artifacts, not source-controlled files.
-
-## Ideas and requirements
-
-The full feature inventory and phased roadmap are in [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md). Detailed documents are grouped under `docs/`; see the [AI-native research audit](docs/research/FORGE_AI_NATIVE_MASTER_AUDIT.md), [competitor feature research](docs/research/COMPETITOR_FEATURE_RESEARCH.md), and [AI feature research](docs/research/AI_CORE_FEATURE_RESEARCH.md).
+MIT. See [native/LICENSE-MIT](native/LICENSE-MIT).

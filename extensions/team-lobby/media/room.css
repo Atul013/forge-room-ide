@@ -70,6 +70,12 @@ h1 { margin: 5px 0 1px; overflow-wrap: anywhere; font-size: 22px; line-height: 1
 .hackathon-countdown strong { color: var(--ink); font-size: 16px; font-variant-numeric: tabular-nums; line-height: 1.3; }
 .hackathon-countdown small { color: var(--faint); font-size: 10px; }
 .countdown-actions { margin-top: 7px; }
+.milestone-list { display: grid; gap: 6px; margin-top: 9px; }
+.milestone { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; border-left: 2px solid var(--green); padding: 6px 8px; background: var(--surface-raised); }
+.milestone strong { color: var(--ink); font-size: 11px; font-weight: 600; }
+.milestone span { color: var(--muted); font-size: 10px; text-align: right; }
+.milestone[data-state="soon"] { border-left-color: var(--vscode-editorWarning-foreground, #d3a252); }
+.milestone[data-state="passed"] { border-left-color: var(--vscode-errorForeground, #f14c4c); }
 .note-list { display: grid; gap: 7px; margin-top: 9px; }
 .note-card { display: grid; gap: 4px; width: 100%; border: 1px solid var(--line); padding: 9px; color: var(--ink); background: var(--surface-raised); text-align: left; cursor: pointer; }
 .note-card:hover { border-color: var(--vscode-focusBorder, var(--accent)); }
@@ -77,6 +83,9 @@ h1 { margin: 5px 0 1px; overflow-wrap: anywhere; font-size: 22px; line-height: 1
 .note-body { color: var(--muted); font-size: 10px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .note-meta { color: var(--faint); font-size: 10px; }
 .feed { position: relative; display: grid; gap: 0; margin: 5px 0 0 4px; }
+.activity-search-label { display: block; margin: 12px 0 5px; color: var(--muted); font-size: 11px; }
+.activity-search { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--vscode-input-background, var(--surface)); color: var(--vscode-input-foreground, var(--text)); }
+[hidden] { display: none !important; }
 .feed::before { position: absolute; top: 8px; bottom: 10px; left: 4px; width: 1px; background: var(--line); content: ''; }
 .event { position: relative; display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 9px; padding: 8px 0; cursor: pointer; }
 .event:hover .event-detail, .event:focus-visible .event-detail { color: var(--ink); }
@@ -90,6 +99,11 @@ h1 { margin: 5px 0 1px; overflow-wrap: anywhere; font-size: 22px; line-height: 1
 .event[data-kind="conflict"] .event-mark { border-color: var(--vscode-editorWarning-foreground, #d3a252); background: var(--canvas); }
 .event-detail { color: var(--ink); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; transition: color 130ms ease; }
 .event-meta { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.event-task-link { display: block; margin-top: 3px; border: 0; padding: 0; color: var(--accent); background: transparent; cursor: pointer; font: inherit; font-size: 11px; text-align: left; }
+.event-task-link:hover { text-decoration: underline; }
+.message-reactions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.reaction-button { min-width: 34px; border: 1px solid var(--line); border-radius: 10px; padding: 2px 7px; color: var(--muted); background: var(--surface); cursor: pointer; font: inherit; font-size: 11px; }
+.reaction-button:hover, .reaction-button[aria-pressed="true"] { border-color: var(--vscode-focusBorder, var(--accent)); color: var(--ink); background: var(--surface-raised); }
 .diff-open { margin-top: 5px; border: 1px solid var(--line); padding: 5px 7px; color: var(--accent); background: var(--surface); cursor: pointer; font: inherit; font-size: 10px; }
 .diff-open:hover { border-color: var(--vscode-focusBorder, var(--accent)); }
 .empty { margin: 10px 0 0; border-left: 2px solid var(--accent); padding: 12px; color: var(--muted); background: var(--surface-raised); font-size: 11px; }
@@ -116,3 +130,8 @@ h1 { margin: 5px 0 1px; overflow-wrap: anywhere; font-size: 22px; line-height: 1
 @keyframes signal { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; } }
 .task-criterion[data-confirmed="true"] { color: var(--vscode-testing-iconPassed, var(--green)); }
+.task-priority { flex: none; padding: 2px 5px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 9px; line-height: 1.2; text-transform: uppercase; letter-spacing: .05em; }
+.task-priority[data-priority="critical"] { color: var(--vscode-errorForeground, #ff6b6b); border-color: var(--vscode-errorForeground, #ff6b6b); }
+.task-priority[data-priority="high"] { color: var(--vscode-editorWarning-foreground, #d3a252); border-color: var(--vscode-editorWarning-foreground, #d3a252); }
+.thread-open { display: block; margin-top: 5px; border: 0; padding: 2px 0; color: var(--accent); background: transparent; cursor: pointer; font: inherit; font-size: 10px; }
+.thread-open:hover { text-decoration: underline; }

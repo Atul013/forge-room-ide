@@ -1,4 +1,4 @@
-﻿# Forge Room IDE uuild status
+# Forge Room IDE uuild status
 
 ehe Code OSS checkout is at `C:\Users\Admin\Documents\Codex\2026-10-20\che\code-oss`. Its product identity is Forge Room IDE. ehe built-in extensions are Forge Room Studio 0.10.0 and Team Lobby 0.68.0.
 
@@ -486,3 +486,148 @@ Ask, Plan, and Build can request a metadata-only inventory of up to 250 non-sens
 Ask, Plan, and Build now expose editor_open. The tool accepts one safe workspace-relative file and an optional positive one-based line, resolves the target under the selected root, rejects sensitive paths and invalid line positions, and opens/reveals it in the IDE. It always requires its own user confirmation, including when request-wide read-only tools were enabled. The provider receives only a bounded result label and path; no file text is returned by this action.
 
 **Verification:** both mirrors pass TypeScript checks and 179/179 tests. Tests cover capability schema, sensitive/traversal rejection, line validation, mandatory per-call approval, and content-free path evidence. The 17-file VSIX SHA-256 is 6EF2EC09E51E25884577C159AA19382A947C682C6F1487D080C9B6ACF8F0FBFA, synchronized across the three package copies and built-in product manifest. Provider-backed and live IDE interaction remain unverified.
+
+## Team Lobby 0.109.0 - explicit room task context
+
+Ask, Plan, and Build can optionally include a bounded snapshot of active room task metadata with the request. The formatter caps transfer at 50 tasks and 12,000 characters, sanitizes fields, and includes IDs, titles, owners, status, dependencies, due times and acceptance criteria only. Chat, direct messages, project notes, diffs and file contents are excluded. The user previews and confirms the snapshot before it enters the provider request. Declining the optional task list also omits the selected task's descriptive metadata from provider prompt text; internal Build-to-task attribution remains available for task lifecycle behavior.
+
+**Verification:** handoff and Code OSS Team Lobby copies pass `npm.cmd run check` and 181/181 tests, including task metadata exclusions and output bounds. The nine-file VSIX SHA-256 is `185703A4563CA1DE9D0F96E2148D1121DC1BE41DF0FBAEF2ADB321936B636DA6`; both retained release copies and the Code OSS built-in manifest match. Interactive provider/IDE acceptance remains outstanding. An isolated Code OSS launch reached the Welcome workbench and initialized the extension host. A 10-second extension-host startup warning and Windows screenshot-channel timeout blocked visual inspection; interactive feature acceptance remains open.
+
+## Room service TLS relay resilience coverage
+
+Added local TLS integration coverage that rejects malformed guest JSON before room admission, closes an oversized guest frame with WebSocket payload-limit code 1009, and closes connected guests/removes the in-memory room when its host connection is lost. Existing service tests cover trusted-certificate enforcement, invite expiry and revocation, durable metadata restart, account invalidation and key rotation.
+
+**Verification:** handoff and Code OSS room-service copies pass 11/11 tests. These are local integration tests; separate-machine routing, firewall/NAT behavior and real network failure remain unverified.
+
+## Room service relay rate bounds — 25 October 2026
+
+The TLS relay now applies both byte and frame-count limits per connected socket: 4 MiB and 1,000 inbound frames per 10-second window. Participants over the limit are disconnected; an over-limit host closes its active room and guests. Added TLS integration coverage for each path. The room-service suite passes 13/13 tests in both the handoff and Code OSS copies. These local tests do not establish separate-machine or production abuse resistance.
+
+## Room service request and relay limits — 25 October 2026
+
+The TLS relay enforces per-connection 4 MiB and 1,000-frame limits per 10-second window. Participants that exceed a bound are closed; an over-limit host closes its active room and guests. The HTTPS control plane's existing 120-requests-per-minute per-address limit now evicts expired entries when its bounded 4,096-address table is full. Both service mirrors pass 14/14 tests, including the full-table expiry edge. These local tests do not verify router/firewall behavior, trusted-proxy deployment, or distributed abuse controls.
+
+The relay also rate-limits WebSocket upgrade attempts to 120 per remote address per minute, with a bounded address table and stale-entry eviction. The Code OSS isolated launch reached Welcome and initialized the extension host, but interactive feature acceptance remains open because the initial host-startup warning and Windows screenshot capture failure prevented visual inspection.
+
+## Room service connection-abuse bounds — 25 October 2026
+
+WebSocket upgrade attempts now have a per-remote-address limit of 120 per minute, using a capped 4,096-address map with stale-entry eviction. Together with per-connection frame/byte ceilings and the bounded HTTP control-plane limiter, relay setup has local regression coverage for connection floods and the full-table stale-bucket case. Handoff and Code OSS room-service mirrors each pass 15/15 tests. Proxy and separate-machine deployment behavior remain unverified.
+
+## Team Lobby 0.112.0 - local demo-readiness checklist
+
+Added **Team Lobby: Prepare Demo Readiness Checklist**, which saves a local Markdown report from the active room snapshot. It summarizes unfinished tasks, incomplete or unavailable dependencies, overdue deadlines, owner-attested criteria and recent test/build outcomes in room activity. Missing tasks or verification remain unknown; preview, deployment and submission gates are explicitly manual because no external health integrations are configured. The report contains room task titles/owners and verification detail and is written only to a path the user selects; it is not broadcast.
+
+**Verification:** both handoff and Code OSS extension copies pass `npm.cmd run check` and 192/192 tests. Focused tests cover overdue/blocked tasks, latest task-linked verification failures, superseded unlinked failures, absent evidence and unknown external gates. The nine-file VSIX SHA-256 is `2BC9F71F7A50E25EF48980196D73D8134721637B1D38EBD236D6436B52E643B9`, synchronized to retained package copies and both built-in product manifests. Live command activation and save interaction remain unverified.
+
+## Team Lobby 0.113.0 - task priority
+
+Room task creation and owner/host task actions now support low, normal, high and critical priority. The room cards show a priority chip; triage uses priority only after blocker and deadline urgency tie, and marks high/critical recommendations. Priority is included in the separately approved room task metadata snapshot and demo-readiness report. Old task records without the optional field default to Normal.
+
+**Verification:** handoff and Code OSS extension copies pass `npm.cmd run check` and 195/195 tests. `node --check media/room.js` passes in both. Tests cover bounded priority values, legacy default behavior, triage rank and provider-context formatting. The nine-file VSIX SHA-256 is `8CA1DF549B07AB656B68F19762CC16875A15A2175373A3A7034AB34BBBD97899`, synchronized to retained package copies and both built-in product manifests. Live priority selection and room-card display remain unverified.
+
+## Team Lobby 0.114.0 - countdown-aware readiness
+
+The demo-readiness checklist now includes the shared room countdown. An unset countdown is unknown; a paused or expired countdown and an active countdown with one hour or less need attention. Paused status uses the frozen remaining duration.
+
+**Verification:** both extension mirrors pass `npm.cmd run check` and 196/196 tests. Focused tests cover missing, active, near-deadline, paused and expired timer states. The nine-file VSIX SHA-256 is `2CD805CC7FF9BE57E0A0C00772F37421B1621E88A0ACD3A055FC5B3BB101E52E`, synchronized to package copies and product manifests. Live report generation remains unverified.
+
+## Team Lobby 0.110.0 - local room task triage
+
+The Team Lobby: Triage Room Tasks command provides a local, recommendation-only view of open room tasks. It identifies unfinished or unavailable dependencies, ranks unblocked urgent work before blocked work, factors in overdue or approaching deadlines, in-progress status, and active downstream dependents, and opens the existing task actions only after the user selects an item. It does not change task state or start agents automatically.
+
+**Verification:** both handoff and Code OSS copies pass `npm.cmd run check` and 184/184 tests. Tests cover ordering, unique transitive downstream counts, completed descendants, invalid deadlines, and deterministic ties. The nine-file VSIX SHA-256 is `FE927C7CDA57D582374200CBCA8FE32906D8945FF45F2A1095AD6CD56857E2F3`; six retained/release package copies match, both product manifests reference 0.110.0 and this hash, and both built-in extension payloads are synchronized. Live command-palette and QuickPick interaction remains to validate.
+
+
+## Team Lobby 0.111.0 - opt-in local countdown milestone alerts
+
+The `teamLobby.countdownAlerts` setting defaults off. When enabled, each active room participant receives local IDE reminders at the shared host countdown's 60, 30, 10, and 5 minute marks and at expiry. Delivery state is kept locally and bounded to the most recent 32 countdowns. Alerts are not room events and do not send data.
+
+**Verification:** both handoff and Code OSS extension copies pass `npm.cmd run check` and 188/188 tests. Focused tests cover next milestone selection, missed milestone handling, duplicate suppression, expiry, labels, and remaining-time formatting. The nine-file VSIX SHA-256 is `5D42753F3EEA43FDF777C3800FF9774FBFA4E2C7401E782BC0C34CA50DE16A3F` and matches six release/package locations and both built-in product manifests. Live notification timing and preference behavior remain to validate.
+
+
+## Team Lobby 0.115.0 - task estimates and critical path
+
+Added bounded optional effort estimates to task create/update, room cards, readiness output, and the explicitly approved AI task context. Task triage now identifies the longest unfinished dependency chain and only reports a total when active estimates and dependencies are complete. Missing data is called out and leaves the path unknown.
+
+**Verification:** both extension copies pass `npm.cmd run check` and 203/203 tests; room webview syntax checks pass. Nine-file VSIX SHA-256 is `1BDF1ECA2942341EF48DAD5647C6CC6C33455A701EA4FFE03BF7C1CD6E2EE707` and matches synchronized package copies and product manifests. Live IDE interaction remains unverified.
+
+
+## Team Lobby 0.116.0 - critical-path countdown feasibility
+
+The local demo-readiness report compares the estimated unfinished critical path with the active shared countdown. It reports attention when the estimate exceeds remaining time, ready when the estimate fits, and unknown when any unfinished estimate or dependency is missing. Paused and unset countdowns remain unknown because this check cannot establish deadline feasibility.
+
+**Verification:** both extension copies pass `npm.cmd run check` and 205/205 tests; room webview syntax checks pass. Nine-file VSIX SHA-256 is `2EF5B3F97CCD4905C9CB141BBCD72FE60995E4A11972602155D170442A1C7E68` and matches retained packages and product manifests. Interactive readiness generation remains unverified.
+
+
+## Team Lobby 0.117.0 - shared room milestones
+
+The host can manage up to 20 uniquely named milestones using future timezone-aware timestamps. Milestones persist in room history, sync with countdown state and render for all participants. The readiness report flags passed or within-hour milestones; no milestones remain unknown.
+
+**Verification:** both extension copies pass `npm.cmd run check` and 211/211 tests; room webview syntax checks pass.
+
+
+## Team Lobby 0.118.0 - milestone feasibility
+
+The readiness report now compares each upcoming milestone against the estimated unfinished dependency chain. Completed tasks are excluded from this remaining-work estimate, while dependencies that are still unfinished remain part of the chain. A milestone before the estimated work finish needs attention; missing estimates or dependencies leave feasibility unknown. Existing passed/near milestone urgency remains visible.
+
+**Verification:** both extension copies pass `npm.cmd run check` and 213/213 tests; room webview syntax checks pass. Retained nine-file VSIX SHA-256 is `D5AF527F0868B54C01649608CFE8E50B555C43F60F612D50514EB492BC9BB0AD`, rebuilt with this follow-up fix and synchronized to retained packages and product manifests at release; superseded by 0.119.0. Interactive readiness generation remains unverified.
+
+
+## Team Lobby 0.119.0 - manually reported verification evidence
+
+Added **Team Lobby: Share Verification Result**. A participant can choose an open task or an unlinked check, select tests/build/lint/type-check or enter a bounded custom label, and record passed/failed/stopped. The room event requires explicit confirmation and is labelled manually reported. It sends only the task link, check name and outcome; it runs no command and shares no command text or output.
+
+**Verification:** both extension copies pass `npm.cmd run check` and 216/216 tests. The VSIX packages the contributed command, UI flow, and bounded/credential-screened manual event formatter. Manual IDE entry and multi-client receipt remain unverified.
+
+## Team Lobby 0.120.0 - evidence-bounded demo readiness
+
+Participant-reported results from Team Lobby 0.119.0 remain visible in readiness explanations but are excluded from IDE-recorded verification status. A manually reported pass alone leaves that gate unknown. A newer manual outcome also makes the gate unknown after an earlier IDE result until a newer IDE task result is recorded.
+
+**Verification:** both extension copies pass `npm.cmd run check` and 217/217 tests, including manual-only and mixed actual/manual evidence cases. Nine-file VSIX SHA-256: `BF0CE30844D9182B8DBE858782B6D44549268D935E1FB554C67423E358539E9D`, synchronized to retained packages, built-in payload and product manifests.
+
+## Team Lobby 0.121.0 - metadata-only room activity summary
+
+Added **Team Lobby: Export Room Activity Summary**, available from the Team Lobby view and Command Palette. It saves a local Markdown snapshot containing counts and up to 50 task title/owner/status/priority rows, plus up to 30 recent event timestamps, participant names, and whitelisted event categories. It does not include event detail, messages, direct messages, notes, file paths, source, patches or invite data. The save flow explains the scope and asks for confirmation; nothing is sent to room members.
+
+**Verification:** both extension copies pass `npm.cmd run check` and 220/220 tests. Focused coverage verifies privacy exclusions, event/task caps, safe ordering, and metadata escaping. Nine-file VSIX SHA-256 is `7152AB92FC51AD5CA661D4A52EF15BAAEFA8DBAF62CCF63864BB8EEE5443F8FC`, synchronized to retained package copies, built-in payload and product manifests. VSIX installation succeeds in a temporary VS Code profile; IDE save/cancel behavior remains unverified.
+## Team Lobby 0.122.0 - local room activity search
+
+Room pulse searches up to 500 retained events by participant, category, update text, task text, or shared path. Search runs locally after viewer-specific direct-message filtering. Empty search keeps the eight latest events visible. Query state survives incoming room snapshots.
+
+Both extension copies pass `npm.cmd run build`. The nine-file VSIX SHA-256 is `54CA266F36314F0196DE0A5D824A22077C4F29E6B494597C9D62D8673E38D22E`; retained packages, built-in payload and product manifests are synchronized. Automated tests were not run for this release. Live IDE search behavior remains unverified.
+
+## Team Lobby 0.123.0 - task-linked room messages
+
+Room messages can optionally reference an existing task. The activity card shows the task title and opens task actions. Room authority validates that linked task still exists. Direct-message events keep existing sender/recipient delivery filtering; shared task metadata does not make message text public.
+
+**Verification:** handoff and Code OSS copies pass TypeScript builds and 220/220 tests; `node --check media/room.js` passes. Nine-file VSIX SHA-256: `8740110A26CE04413BA6642803D448F0854607A448C0F4CA2D02807F771072EB`, synchronized to retained packages, manifests and built-in payload; CLI installation into a temporary VS Code profile succeeds. Live display and multi-client acceptance remain open.
+
+## Team Lobby 0.129.0 - local task deadline reminders
+
+Task owners can enable local reminders for their unfinished room tasks at 15 minutes, 5 minutes, and expiry. The setting defaults off. Reminders are deduplicated per task and deadline, recover missed marks without replaying old reminders, and never create room events or send data.
+
+**Verification:** Both Team Lobby copies pass TypeScript builds and 233/233 tests; webview syntax check passes. Nine-file VSIX SHA-256 `55D685464D3EB5DFE22C1E92CFB28B0A0DA61C94CA9A05462164F3154D71C10F` matches six retained packages; three product manifests reference this version and hash. Disposable-profile VS Code installation succeeds. Live reminder timing and preference interaction remain unverified.
+
+## Team Lobby 0.128.0 - explicit searchable room decisions
+
+Participants can record a room decision with a title and rationale. The extension asks for confirmation before broadcasting it; the actor and timestamp are retained in room history. The host validates the bounded title/rationale format; valid decisions are included in searchable local history. Protocol 20 prevents older clients from silently accepting a new event type.
+
+**Verification:** Both extension copies build and pass 230/230 tests; webview syntax check passes. Nine-file VSIX SHA-256 `35B9F5CCD85F2DCE0A41A741C0F19839295776B59869D4EF841592B24612AC22` matches five retained packages. Installation into a disposable VS Code profile succeeds. Interactive cross-client decision display and search remain unverified.
+
+## Team Lobby 0.127.0 - participant-local message search
+
+Every connected participant can search up to 5,000 messages retained on their device, 25 newest matches per page. Search stays local and uses the same direct-message visibility filter as delivery. A new guest starts with recent room history and adds messages while connected. Protocol remains 19.
+
+**Verification:** Both extension copies build and pass 228/228 tests; webview syntax check passes. Nine-file VSIX SHA-256 `2636CFEDDDBAC212F1A7596969A92108544766014FDF5CCE8A66FB1313497B95` matches five retained packages. Installation into a disposable VS Code profile succeeds. Interactive multi-client privacy remains unverified.
+
+## Team Lobby 0.126.0 - host-local searchable message history
+
+Hosts can search up to 5,000 locally retained messages, 25 newest matches per page. Search text stays local, direct-message matches are limited to eligible participants, and guests can search the recent room pulse only. Room protocol remains 19.
+
+**Verification:** Both extension copies build and pass 227/227 tests. Webview syntax check passes. Nine-file VSIX SHA-256 `2157DB344199D0EB952E208030ED9C15261D4F3C5AED34A29CA2A31F9D915C11` matches five retained packages. Installation into a disposable VS Code profile succeeds. Interactive search remains unverified.
+
+## Team Lobby 0.125.0 - threaded room messages
+
+Messages support parent-linked replies. The host validates parent existence, keeps room replies public, and limits direct-message replies to original participants. Room protocol is 19.
+
+**Verification:** Both extension copies build and pass 225/225 tests. Webview syntax check passes. Nine-file VSIX SHA-256 `5F8734852BB7A625960F87E07B72AA4CEBD5729202BC753F1C77BF0D91652547` matches five retained packages. Installation into a disposable VS Code profile succeeds. Interactive thread privacy remains unverified.

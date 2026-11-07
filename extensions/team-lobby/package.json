@@ -3,7 +3,7 @@
   "publisher": "forge-room",
   "displayName": "Team Lobby IDE",
   "description": "A shared room and live activity feed for human and agent teammates.",
-  "version": "0.108.0",
+  "version": "0.129.0",
   "private": true,
   "license": "MIT",
   "files": [
@@ -17,7 +17,11 @@
   },
   "main": "./dist/bundle/extension.js",
   "activationEvents": [
-    "onView:teamLobby.home"
+    "onView:teamLobby.home",
+    "onCommand:teamLobby.triageTasks",
+    "onCommand:teamLobby.prepareDemoReadiness",
+    "onCommand:teamLobby.exportActivitySummary",
+    "onCommand:teamLobby.recordDecision"
   ],
   "contributes": {
     "viewsContainers": {
@@ -60,8 +64,24 @@
         "title": "Team Lobby: Send Message"
       },
       {
+        "command": "teamLobby.recordDecision",
+        "title": "Team Lobby: Record Decision"
+      },
+      {
         "command": "teamLobby.createTask",
         "title": "Team Lobby: Create Task"
+      },
+      {
+        "command": "teamLobby.triageTasks",
+        "title": "Team Lobby: Triage Room Tasks"
+      },
+      {
+        "command": "teamLobby.prepareDemoReadiness",
+        "title": "Team Lobby: Prepare Demo Readiness Checklist"
+      },
+      {
+        "command": "teamLobby.shareVerificationResult",
+        "title": "Team Lobby: Share Verification Result"
       },
       {
         "command": "teamLobby.handoffTask",
@@ -226,6 +246,10 @@
       {
         "command": "teamLobby.stopSharedDocument",
         "title": "Team Lobby: Stop Live Shared Editing"
+      },
+      {
+        "command": "teamLobby.exportActivitySummary",
+        "title": "Team Lobby: Export Room Activity Summary"
       }
     ],
     "menus": {
@@ -256,7 +280,22 @@
           "group": "navigation"
         },
         {
+          "command": "teamLobby.recordDecision",
+          "when": "view == teamLobby.home && teamLobby.connected",
+          "group": "navigation"
+        },
+        {
+          "command": "teamLobby.shareVerificationResult",
+          "when": "view == teamLobby.home && teamLobby.connected",
+          "group": "navigation"
+        },
+        {
           "command": "teamLobby.createTask",
+          "when": "view == teamLobby.home && teamLobby.connected",
+          "group": "navigation"
+        },
+        {
+          "command": "teamLobby.exportActivitySummary",
           "when": "view == teamLobby.home && teamLobby.connected",
           "group": "navigation"
         }
@@ -276,6 +315,18 @@
           "default": false,
           "scope": "window",
           "description": "Allow a separate per-run choice to share a bounded verification command with its linked room task. This setting is off by default."
+        },
+        "teamLobby.countdownAlerts": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Show local reminders at shared hackathon countdown milestones. This is off by default and never creates a room event or sends data."
+        },
+        "teamLobby.taskDeadlineAlerts": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Show local reminders for your unfinished room tasks at 15 minutes, 5 minutes, and the deadline. This is off by default and never creates a room event or sends data."
         },
         "teamLobby.server.certificatePath": {
           "type": "string",
@@ -349,7 +400,7 @@
   "scripts": {
     "build": "tsc -p . && esbuild dist/extension.js --bundle --platform=node --target=node20 --external:vscode --external:bufferutil --external:utf-8-validate --outfile=dist/bundle/extension.js",
     "check": "tsc -p . --noEmit",
-    "test": "npm run build && node --test test/rollbackGuard.test.js test/reviewDiff.test.js test/reviewBundle.test.js test/conflictPaths.test.js test/gitEvents.test.js test/gitStatus.test.js test/gitDiff.test.js test/workspaceDiagnostics.test.js test/workspaceSymbols.test.js test/workspaceTasks.test.js test/acpClient.test.js test/acpSessionState.test.js test/mcpClient.test.js test/taskWorktreeIdentity.test.js test/taskWorktreeManagement.test.js test/sharedDocument.test.js test/inviteIdentity.test.js test/taskCriteria.test.js test/planHandoff.test.js test/planArtifact.test.js test/commentAnchor.test.js test/inviteRevocation.test.js test/directMessages.test.js test/agentSkills.test.js test/agentProfiles.test.js test/projectGuidance.test.js test/taskAuthorization.test.js test/roomMembers.test.js test/agentActivity.test.js test/agentCapabilities.test.js test/agentSessionIdentity.test.js test/verificationActivity.test.js test/toolEvidence.test.js test/taskDeadline.test.js test/tokenBudget.test.js test/contextFiles.test.js test/agentControl.test.js test/taskDependencyPolicy.test.js test/taskCompletionPolicy.test.js test/roomIdentity.test.js test/taskHandoffPolicy.test.js test/workspacePaths.test.js test/workspaceEdit.test.js test/terminalContext.test.js test/roomArtifacts.test.js test/roomTransport.integration.test.js test/roomHostingPolicy.test.js test/roomHistoryExport.test.js test/sharedLocation.test.js test/roomServiceClient.test.js test/workspaceInventory.test.js"
+    "test": "npm run build && node --test test/countdownAlerts.test.js test/roomMilestones.test.js test/roomTaskContext.test.js test/taskTriage.test.js test/taskCriticalPath.test.js test/taskEstimate.test.js test/taskPriority.test.js test/demoReadiness.test.js test/manualVerification.test.js test/roomActivitySummary.test.js test/rollbackGuard.test.js test/reviewDiff.test.js test/reviewBundle.test.js test/conflictPaths.test.js test/gitEvents.test.js test/gitStatus.test.js test/gitDiff.test.js test/workspaceDiagnostics.test.js test/workspaceSymbols.test.js test/workspaceTasks.test.js test/acpClient.test.js test/acpSessionState.test.js test/mcpClient.test.js test/taskWorktreeIdentity.test.js test/taskWorktreeManagement.test.js test/sharedDocument.test.js test/inviteIdentity.test.js test/taskCriteria.test.js test/planHandoff.test.js test/planArtifact.test.js test/commentAnchor.test.js test/inviteRevocation.test.js test/directMessages.test.js test/agentSkills.test.js test/agentProfiles.test.js test/projectGuidance.test.js test/taskAuthorization.test.js test/roomMembers.test.js test/agentActivity.test.js test/agentCapabilities.test.js test/agentSessionIdentity.test.js test/verificationActivity.test.js test/toolEvidence.test.js test/taskDeadline.test.js test/tokenBudget.test.js test/contextFiles.test.js test/agentControl.test.js test/taskDependencyPolicy.test.js test/taskCompletionPolicy.test.js test/roomIdentity.test.js test/taskHandoffPolicy.test.js test/workspacePaths.test.js test/workspaceEdit.test.js test/terminalContext.test.js test/roomArtifacts.test.js test/roomTransport.integration.test.js test/roomHostingPolicy.test.js test/roomHistoryExport.test.js test/sharedLocation.test.js test/roomServiceClient.test.js test/workspaceInventory.test.js test/roomReactions.test.js test/roomThreads.test.js test/roomMessageSearch.test.js test/roomDecision.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "^2.3.1",

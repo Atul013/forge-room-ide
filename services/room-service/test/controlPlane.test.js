@@ -176,3 +176,21 @@ test('HTTPS requires a trusted certificate and unauthenticated API access is den
 	assert.equal((await request(f.base, f.cert, '/v1/rooms')).status, 401);
 	assert.throws(() => createRoomControlPlane({ store: f.store, adminKey: 'short' }), /32-character/);
 });
+
+test('request rate limiter evicts expired client buckets at capacity', async t => {
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-room-rate-limit-'));
+	t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+	const store = new JsonRoomStore(path.join(directory, 'state.json'));
+	let now = 1_000;
+	const handle = createRoomControlPlane({ store, adminKey: 'a'.repeat(48), clock: () => now, maxRequestsPerMinute: 1 });
+	const health = async remoteAddress => {
+		const response = { writeHead(status) { this.status = status; }, end(body) { this.body = body; } };
+		await handle({ socket: { remoteAddress }, method: 'GET', url: '/health', headers: {} }, response);
+		return response;
+	};
+	for (let index = 0; index < 4096; index++) {
+		assert.equal((await health(`test-client-${index}`)).status, 200);
+	}
+	now += 60_000;
+	assert.equal((await health('new-client-after-expiry')).status, 200);
+});

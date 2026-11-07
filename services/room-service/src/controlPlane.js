@@ -100,11 +100,14 @@ function createRoomControlPlane({ store, adminKey, clock = () => Date.now(), id 
 	return async function handle(request, response) {
 		const now = clock();
 		const address = request.socket.remoteAddress || 'unknown';
-		const bucket = requests.get(address) || { start: now, count: 0 };
+		let bucket = requests.get(address);
+		if (!bucket && requests.size >= 4096) {
+			for (const [key, value] of requests) { if (now - value.start >= 60_000) { requests.delete(key); } }
+			if (requests.size >= 4096) { return reply(response, 429, { error: 'rate_limited' }); }
+		}
+		bucket ||= { start: now, count: 0 };
 		if (now - bucket.start >= 60_000) { bucket.start = now; bucket.count = 0; }
 		bucket.count++;
-		if (requests.size > 4096) { for (const [key, value] of requests) { if (now - value.start >= 60_000) { requests.delete(key); } } }
-		if (!requests.has(address) && requests.size >= 4096) { return reply(response, 429, { error: 'rate_limited' }); }
 		requests.set(address, bucket);
 		if (bucket.count > maxRequestsPerMinute) { return reply(response, 429, { error: 'rate_limited' }); }
 		if (request.method === 'GET' && request.url === '/health') { return reply(response, 200, { service: 'forge-room-room-service', status: 'ok' }); }

@@ -1,0 +1,318 @@
+//! The Search sidebar (find in files). The search runs on a background thread and a newer
+//! query cancels an older one, so typing never blocks the window.
+
+use crate::{explorer, find, search, theme};
+use eframe::egui::{self, Align2, Color32, FontId, Rect, RichText, Sense};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
+
+pub struct SearchView {
+    pub query: String,
+    pub case_sensitive: bool,
+    results: Option<search::Results>,
+    searched_query: String,
+    running: bool,
+    cancel: Arc<AtomicBool>,
+    receiver: Option<mpsc::Receiver<search::Results>>,
+    dirty_since: Option<Instant>,
+    focus: bool,
+}
+
+impl Default for SearchView {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            case_sensitive: false,
+            results: None,
+            searched_query: String::new(),
+            running: false,
+            cancel: Arc::new(AtomicBool::new(false)),
+            receiver: None,
+            dirty_since: None,
+            focus: false,
+        }
+    }
+}
+
+pub enum Action {
+    None,
+    Open {
+        path: PathBuf,
+        line: usize,
+        column: usize,
+        length: usize,
+    },
+}
+
+const ROW_HEIGHT: f32 = 24.0;
+const DEBOUNCE: Duration = Duration::from_millis(350);
+
+impl SearchView {
+    pub fn focus_input(&mut self) {
+        self.focus = true;
+    }
+
+    pub fn reset(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.results = None;
+        self.running = false;
+        self.receiver = None;
+    }
+
+    fn start(&mut self, root: &Path) {
+        self.cancel.store(true, Ordering::Relaxed);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.cancel = cancel.clone();
+        self.searched_query = self.query.clone();
+        if self.query.is_empty() {
+            self.results = None;
+            self.running = false;
+            self.receiver = None;
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        let (root, query, case) = (root.to_path_buf(), self.query.clone(), self.case_sensitive);
+        std::thread::spawn(move || {
+            let _ = sender.send(search::search(&root, &query, case, &cancel));
+        });
+        self.receiver = Some(receiver);
+        self.running = true;
+    }
+
+    /// Pick up a finished search. True while work is still pending (caller should repaint soon).
+    pub fn poll(&mut self) -> bool {
+        if let Some(receiver) = &self.receiver
+            && let Ok(results) = receiver.try_recv()
+        {
+            if !results.cancelled {
+                self.results = Some(results);
+            }
+            self.running = false;
+            self.receiver = None;
+        }
+        self.running || self.dirty_since.is_some()
+    }
+
+    pub fn show(&mut self, ui: &mut egui::Ui, root: Option<&Path>) -> Action {
+        let mut action = Action::None;
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.label(
+                RichText::new("SEARCH")
+                    .size(11.0)
+                    .strong()
+                    .color(theme::text_dim()),
+            );
+        });
+        ui.add_space(8.0);
+        let Some(root) = root else {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new("Open a folder to search its files.").color(theme::text_dim()),
+                );
+            });
+            return action;
+        };
+
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(12, 0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let input = ui.add(
+                        egui::TextEdit::singleline(&mut self.query)
+                            .hint_text("Search")
+                            .desired_width(ui.available_width() - 40.0)
+                            .margin(egui::Margin::symmetric(10, 7)),
+                    );
+                    if self.focus {
+                        input.request_focus();
+                        self.focus = false;
+                    }
+                    if input.changed() {
+                        self.dirty_since = Some(Instant::now());
+                    }
+                    if input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.dirty_since = None;
+                        self.start(root);
+                    }
+                    if ui
+                        .toggle_value(&mut self.case_sensitive, "Aa")
+                        .on_hover_text("Match case")
+                        .changed()
+                    {
+                        self.dirty_since = Some(Instant::now());
+                    }
+                });
+            });
+        if let Some(since) = self.dirty_since
+            && since.elapsed() >= DEBOUNCE
+        {
+            self.dirty_since = None;
+            self.start(root);
+        }
+        ui.add_space(8.0);
+
+        if self.running {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.spinner();
+                ui.label(RichText::new("Searching…").color(theme::text_dim()));
+            });
+            return action;
+        }
+        let Some(results) = &self.results else {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new("Type to search every text file in this folder.")
+                        .color(theme::text_dim()),
+                );
+            });
+            return action;
+        };
+
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            let files = {
+                let mut seen: Vec<&PathBuf> = results.hits.iter().map(|hit| &hit.path).collect();
+                seen.dedup();
+                seen.len()
+            };
+            let text = if results.hits.is_empty() {
+                format!("No results in {} files", results.files_scanned)
+            } else if results.truncated {
+                format!(
+                    "{}+ results in {} files (showing the first {})",
+                    results.hits.len(),
+                    files,
+                    search::MAX_HITS
+                )
+            } else {
+                format!("{} results in {} files", results.hits.len(), files)
+            };
+            ui.label(RichText::new(text).size(12.0).color(theme::text_dim()));
+        });
+        ui.add_space(4.0);
+
+        let query = self.searched_query.clone();
+        let case = self.case_sensitive;
+        egui::ScrollArea::vertical()
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                let mut last: Option<&PathBuf> = None;
+                for hit in &results.hits {
+                    if last != Some(&hit.path) {
+                        last = Some(&hit.path);
+                        file_header(ui, root, &hit.path);
+                    }
+                    if hit_row(ui, hit, &query, case) {
+                        action = Action::Open {
+                            path: hit.path.clone(),
+                            line: hit.line,
+                            column: hit.column,
+                            length: query.chars().count(),
+                        };
+                    }
+                }
+            });
+        action
+    }
+}
+
+fn file_header(ui: &mut egui::Ui, root: &Path, path: &Path) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), ROW_HEIGHT + 2.0),
+        Sense::hover(),
+    );
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let (directory, name) = match relative.rsplit_once('/') {
+        Some((directory, name)) => (directory.to_string(), name.to_string()),
+        None => (String::new(), relative.clone()),
+    };
+    let y = rect.center().y;
+    let painter = ui.painter();
+    crate::icons::file(
+        painter,
+        Rect::from_center_size(egui::pos2(rect.left() + 22.0, y), egui::vec2(10.0, 13.0)),
+        explorer::file_color(&name),
+    );
+    let galley = painter.layout_no_wrap(name, FontId::proportional(13.0), theme::text());
+    let width = galley.size().x;
+    painter.galley(
+        egui::pos2(rect.left() + 38.0, y - galley.size().y / 2.0),
+        galley,
+        theme::text(),
+    );
+    painter.text(
+        egui::pos2(rect.left() + 46.0 + width, y),
+        Align2::LEFT_CENTER,
+        directory,
+        FontId::proportional(11.5),
+        theme::text_dim(),
+    );
+}
+
+/// One result line with the matched text highlighted. True when clicked.
+fn hit_row(ui: &mut egui::Ui, hit: &search::Hit, query: &str, case: bool) -> bool {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 0.0, theme::overlay(10));
+    }
+    let font = FontId::monospace(12.5);
+    let mut job = egui::text::LayoutJob::default();
+    let normal = egui::TextFormat::simple(font.clone(), theme::text_dim());
+    let mut marked = egui::TextFormat::simple(font, theme::text());
+    marked.background = Color32::from_rgba_unmultiplied(
+        theme::accent().r(),
+        theme::accent().g(),
+        theme::accent().b(),
+        90,
+    );
+    let chars: Vec<char> = hit.preview.chars().collect();
+    let mut cursor = 0;
+    for range in find::find_all(&hit.preview, query, case) {
+        job.append(
+            &chars[cursor..range.start].iter().collect::<String>(),
+            0.0,
+            normal.clone(),
+        );
+        job.append(
+            &chars[range.start..range.end].iter().collect::<String>(),
+            0.0,
+            marked.clone(),
+        );
+        cursor = range.end;
+    }
+    job.append(&chars[cursor..].iter().collect::<String>(), 0.0, normal);
+    let galley = ui.painter().layout_job(job);
+    let painter = ui.painter().with_clip_rect(Rect::from_min_max(
+        egui::pos2(rect.left() + 38.0, rect.top()),
+        rect.right_bottom(),
+    ));
+    painter.galley(
+        egui::pos2(rect.left() + 38.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        theme::text(),
+    );
+    painter_text_dim(ui, rect, hit.line);
+    response.clicked()
+}
+
+fn painter_text_dim(ui: &egui::Ui, rect: Rect, line: usize) {
+    ui.painter().text(
+        egui::pos2(rect.left() + 34.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        line,
+        FontId::proportional(11.0),
+        theme::mix(theme::bg_sidebar(), theme::text(), 0.4),
+    );
+}

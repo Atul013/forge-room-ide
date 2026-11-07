@@ -6,6 +6,7 @@ const { authenticateAccountKey, authenticateRoomInvite } = require('./controlPla
 
 const relayProtocolVersion = 1;
 const maxWindowBytes = 4 * 1024 * 1024;
+const maxWindowMessages = 1000;
 const windowMs = 10_000;
 const participantIdPattern = /^[0-9a-f-]{36}$/i;
 
@@ -14,10 +15,18 @@ function parseRoomMessage(raw) {
 	catch { return undefined; }
 }
 
-function createRoomRelay({ httpsServer, store, now = () => Date.now(), id = randomUUID, maxRooms = 1000, maxParticipantsPerRoom = 32, maxConcurrentSockets = 10_000 }) {
+function consumeRate(bucket, raw, time) {
+	if (time - bucket.startedAt >= windowMs) { bucket.startedAt = time; bucket.bytes = 0; bucket.messages = 0; }
+	bucket.bytes += raw.length;
+	bucket.messages++;
+	return bucket.bytes <= maxWindowBytes && bucket.messages <= maxWindowMessages;
+}
+
+function createRoomRelay({ httpsServer, store, now = () => Date.now(), id = randomUUID, maxRooms = 1000, maxParticipantsPerRoom = 32, maxConcurrentSockets = 10_000, maxConnectionAttemptsPerMinute = 120 }) {
 	if (!httpsServer || !store) { throw new Error('An HTTPS server and durable room store are required.'); }
 	const rooms = new Map();
 	const sockets = new Set();
+	const connectionAttempts = new Map();
 	const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024, perMessageDeflate: false });
 	function closeSocket(socket, code, reason) { try { if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) { socket.close(code, reason); } } catch { socket.terminate(); } }
 	function sendHost(room, value) { if (room.host.readyState === WebSocket.OPEN) { room.host.send(JSON.stringify({ relayVersion: relayProtocolVersion, ...value })); } }
@@ -34,6 +43,18 @@ function createRoomRelay({ httpsServer, store, now = () => Date.now(), id = rand
 		try { socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`); } finally { socket.destroy(); }
 	}
 	httpsServer.on('upgrade', (request, socket, head) => {
+		const time = now();
+		const address = request.socket.remoteAddress || 'unknown';
+		let bucket = connectionAttempts.get(address);
+		if (!bucket && connectionAttempts.size >= 4096) {
+			for (const [key, value] of connectionAttempts) { if (time - value.startedAt >= 60_000) { connectionAttempts.delete(key); } }
+			if (connectionAttempts.size >= 4096) { failUpgrade(socket, '429 Too Many Requests'); return; }
+		}
+		bucket ||= { startedAt: time, count: 0 };
+		if (time - bucket.startedAt >= 60_000) { bucket.startedAt = time; bucket.count = 0; }
+		bucket.count++;
+		connectionAttempts.set(address, bucket);
+		if (bucket.count > maxConnectionAttemptsPerMinute) { failUpgrade(socket, '429 Too Many Requests'); return; }
 		let url;
 		try { url = new URL(request.url, 'https://forge-room.invalid'); } catch { failUpgrade(socket, '400 Bad Request'); return; }
 		const match = /^\/v1\/relay\/([0-9a-f-]{36})$/i.exec(url.pathname);
@@ -46,7 +67,7 @@ function createRoomRelay({ httpsServer, store, now = () => Date.now(), id = rand
 			if (!account || !persistentRoom || persistentRoom.status !== 'active' || persistentRoom.ownerAccountId !== account.id) { failUpgrade(socket, '401 Unauthorized'); return; }
 			if (rooms.has(roomId) || rooms.size >= maxRooms || sockets.size >= maxConcurrentSockets) { failUpgrade(socket, rooms.has(roomId) ? '409 Conflict' : '503 Service Unavailable'); return; }
 			wss.handleUpgrade(request, socket, head, host => {
-				const room = { id: roomId, ownerAccountId: account.id, host, clients: new Map() };
+				const room = { id: roomId, ownerAccountId: account.id, host, clients: new Map(), hostRate: { startedAt: now(), bytes: 0, messages: 0 } };
 				rooms.set(roomId, room); sockets.add(host);
 				host.on('message', raw => handleHostMessage(room, raw));
 				host.on('close', () => closeRoom(roomId, 1012, 'Room host disconnected'));
@@ -63,14 +84,11 @@ function createRoomRelay({ httpsServer, store, now = () => Date.now(), id = rand
 		const clientId = id();
 		let auth;
 		let closed = false;
-		let bucket = { startedAt: now(), bytes: 0 };
+		const bucket = { startedAt: now(), bytes: 0, messages: 0 };
 		const timeout = setTimeout(() => closeSocket(socket, 1008, 'Room authentication timeout'), 5000);
 		socket.on('message', raw => {
 			if (closed) { return; }
-			const time = now();
-			if (time - bucket.startedAt >= windowMs) { bucket = { startedAt: time, bytes: 0 }; }
-			bucket.bytes += raw.length;
-			if (bucket.bytes > maxWindowBytes) { closeSocket(socket, 1008, 'Room relay rate limit exceeded'); return; }
+			if (!consumeRate(bucket, raw, now())) { closeSocket(socket, 1008, 'Room relay rate limit exceeded'); return; }
 			const room = rooms.get(roomId);
 			if (!room || room.host.readyState !== WebSocket.OPEN) { closeSocket(socket, 1013, 'Room host is unavailable'); return; }
 			if (!auth) {
@@ -96,6 +114,7 @@ function createRoomRelay({ httpsServer, store, now = () => Date.now(), id = rand
 	}
 
 	function handleHostMessage(room, raw) {
+		if (!consumeRate(room.hostRate, raw, now())) { closeRoom(room.id, 1013, 'Room relay capacity exceeded'); return; }
 		const message = parseRoomMessage(raw);
 		if (!message || message.relayVersion !== relayProtocolVersion || typeof message.clientId !== 'string') { closeSocket(room.host, 1003, 'Invalid relay message'); return; }
 		const guest = room.clients.get(message.clientId);

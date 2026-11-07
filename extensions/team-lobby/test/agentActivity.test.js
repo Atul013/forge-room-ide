@@ -25,10 +25,11 @@ test('Build activity never includes model prompts, context, or response argument
 	assert.match(agentActivityDetail('started', 'Room sync'), /Prompt and selected context remain private/);
 });
 
-test('task references are bounded and allowed on agent, verification, and review events', () => {
+test('task references are bounded and allowed on agent, verification, review, and message events', () => {
 	assert.equal(validTaskLink('agent', 'task-123'), true);
 	assert.equal(validTaskLink('test', 'task-123'), true);
 	assert.equal(validTaskLink('review', 'task-123'), true);
+	assert.equal(validTaskLink('message', 'task-123'), true);
 	assert.equal(validTaskLink('post', 'task-123'), false);
 	assert.equal(validTaskLink('agent', 'x'.repeat(101)), false);
 	assert.equal(validTaskLink('agent', 'task\nother'), false);

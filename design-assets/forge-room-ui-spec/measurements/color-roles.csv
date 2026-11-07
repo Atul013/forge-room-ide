@@ -1,0 +1,87 @@
+role,observed_hex,sample_x,sample_y,raster_alpha,source_layer_alpha,where
+desktop.warm,#756563,10,10,1,unrecoverable,Top-left exterior
+desktop.dark,#0A0B0C,1000,925,1,unrecoverable,Bottom exterior
+frame.border,#292A2C,800,22,1,unrecoverable,Top frame ridge
+divider.sidebar,#292B2C,386,200,1,unrecoverable,Explorer/editor divider
+divider.dock,#242527,1216,200,1,unrecoverable,Editor/right-dock divider
+divider.panel,#25282A,700,625,1,unrecoverable,Editor/bottom-panel divider
+surface.explorer,#0C0D0E,270,320,1,unrecoverable,Tree background
+surface.editor,#0D0F10,1180,250,1,unrecoverable,Empty editor region
+surface.dock,#0D0E0F,1230,600,1,unrecoverable,Dock gutter background
+room.active.border,#942223,40,460,1,unrecoverable,Left red border of active Room tile
+window.sample,#0E0E10,800,800,1,unrecoverable,window
+title-band.sample,#0D0F10,1050,50,1,unrecoverable,title-band
+rail-band.sample,#0B0D0E,40,300,1,unrecoverable,rail-band
+command-palette.sample,#181A1B,750,40,1,unrecoverable,command-palette
+room-pill.sample,#19191A,1200,35,1,unrecoverable,room-pill
+room-active-tile.sample,#281717,86,465,1,unrecoverable,room-active-tile
+selected-tree-row.sample,#212324,350,264,1,unrecoverable,selected-tree-row
+scm-panel.sample,#0D0D0E,120,710,1,unrecoverable,scm-panel
+badge-room.sample,#15181C,132,621,1,unrecoverable,badge-room
+badge-agents.sample,#261515,132,683,1,unrecoverable,badge-agents
+commit-button.sample,#E23635,180,731,1,unrecoverable,commit-button
+sync-button.sample,#1A1A1C,140,780,1,unrecoverable,sync-button
+open-pr-button.sample,#191A1C,145,809,1,unrecoverable,open-pr-button
+room-tab.sample,#17181A,470,86,1,unrecoverable,room-tab
+room-tab-underline.sample,#F94944,470,123,1,unrecoverable,room-tab-underline
+active-line.sample,#20171A,470,438,1,unrecoverable,active-line
+caret.sample,#433E33,1041,438,1,unrecoverable,caret
+floating-toolbar.sample,#1F2022,1176,369,1,unrecoverable,floating-toolbar
+agent-dropdown.sample,#141516,1189,586,1,unrecoverable,agent-dropdown
+agent-selected-row.sample,#602728,1100,459,1,unrecoverable,agent-selected-row
+terminal-tab.sample,#1B1B1C,446,638,1,unrecoverable,terminal-tab
+terminal-tab-underline.sample,#F94241,450,667,1,unrecoverable,terminal-tab-underline
+problem-count-pill.sample,#323337,670,648,1,unrecoverable,problem-count-pill
+terminal-run-button.sample,#1A1B1D,1084,639,1,unrecoverable,terminal-run-button
+current-branch-card.sample,#0E0F10,990,688,1,unrecoverable,current-branch-card
+create-pr-button.sample,#1A1B1D,1190,799,1,unrecoverable,create-pr-button
+ai-tab.sample,#18191A,1300,86,1,unrecoverable,ai-tab
+ai-tab-underline.sample,#F74646,1320,123,1,unrecoverable,ai-tab-underline
+quick-actions-card.sample,#191B1D,1590,222,1,unrecoverable,quick-actions-card
+quick-action-implement.sample,#1B1C1D,1422,268,1,unrecoverable,quick-action-implement
+user-message-bubble.sample,#1F2022,1600,410,1,unrecoverable,user-message-bubble
+edited-summary.sample,#171719,1624,519,1,unrecoverable,edited-summary
+filename-chip-room.sample,#212223,1457,522,1,unrecoverable,filename-chip-room
+composer.sample,#1A1B1C,1244,679,1,unrecoverable,composer
+send-button.sample,#DD3E3B,1592,702,1,unrecoverable,send-button
+status-band.sample,#0D0F10,1100,892,1,unrecoverable,status-band
+review-needed-pill.sample,#381717,573,881,1,unrecoverable,review-needed-pill
+text.brand,#FFFFFF,154,54,1,unrecoverable,brand-label; other instances can vary
+text.panel-heading,#FFFFFF,157,102,1,unrecoverable,explorer-heading; other instances can vary
+text.section-heading,#FFFFFF,217,556,1,unrecoverable,scm-heading; other instances can vary
+text.tab,#F7F8F8,160,592,1,unrecoverable,changes-count; other instances can vary
+text.ui,#E2E1E3,584,49,1,unrecoverable,palette-label; other instances can vary
+text.tree,#FEFEFF,246,144,1,unrecoverable,tree-forge-room-app; other instances can vary
+text.small-ui,#D0D4D5,195,625,1,unrecoverable,change-path-room; other instances can vary
+text.small-helper,#E7CCC9,1146,471,1,unrecoverable,agent-role-builder; other instances can vary
+text.card-heading,#FFFFFF,1353,239,1,unrecoverable,quick-actions-heading; other instances can vary
+text.chat-body,#F5F4F5,1545,398,1,unrecoverable,user-message-line-1; other instances can vary
+text.placeholder,#B8BCC0,1290,638,1,unrecoverable,composer-placeholder-1; other instances can vary
+text.breadcrumb,#CCCBCA,410,145,1,unrecoverable,breadcrumb-apps; other instances can vary
+text.code,#EECAEF,497,176,1,unrecoverable,code-line-01; other instances can vary
+text.line-number,#8C8D8F,435,179,1,unrecoverable,line-number-01; other instances can vary
+text.line-number-active,#EF6051,436,433,1,unrecoverable,line-number-14; other instances can vary
+text.terminal,#FAFAF9,425,726,1,unrecoverable,terminal-package; other instances can vary
+text.terminal-link,#88CDF3,632,803,1,unrecoverable,terminal-local-url; other instances can vary
+text.terminal-prompt,#E6E5E6,877,695,1,unrecoverable,terminal-prompt; other instances can vary
+text.status,#F6F6F6,139,880,1,unrecoverable,status-branch; other instances can vary
+text.badge-blue,#97D1F1,139,623,1,unrecoverable,badge-letter-room; other instances can vary
+text.badge-red,#F95946,146,690,1,unrecoverable,badge-letter-agents; other instances can vary
+text.diff-green,#5ECD76,1583,533,1,unrecoverable,edited-plus-room; other instances can vary
+text.diff-red,#E54330,1614,533,1,unrecoverable,edited-minus-room; other instances can vary
+icon.notification-dot.0,#F24A3F,1466,39,1,unrecoverable,notification-dot; representative mask foreground
+icon.title-room-people.0,#E9EAEB,1110,51,1,unrecoverable,title-room-people; representative mask foreground
+icon.title-room-people.1,#B9EEB9,1116,54,1,unrecoverable,title-room-people; representative mask foreground
+icon.terminal-prompt-dot.0,#58F183,424,692,1,unrecoverable,terminal-prompt-dot; representative mask foreground
+icon.status-icon-members.0,#5EF27D,858,880,1,unrecoverable,status-icon-members; representative mask foreground
+icon.ai-tab-sparkle.0,#FF4538,1243,102,1,unrecoverable,ai-tab-sparkle; representative mask foreground
+icon.edited-check-room.0,#59E679,1304,533,1,unrecoverable,edited-check-room; representative mask foreground
+syntax.keyword-purple,#A57BA4,475,256,1,unrecoverable,Editor source glyphs; sampled color cluster
+syntax.identifier-cyan,#85C5D4,642,281,1,unrecoverable,Editor source glyphs; sampled color cluster
+syntax.string-orange,#A56D4C,854,176,1,unrecoverable,Editor source glyphs; sampled color cluster
+syntax.function-yellow,#E3E4B4,620,256,1,unrecoverable,Editor source glyphs; sampled color cluster
+syntax.tag-red,#A43433,930,481,1,unrecoverable,Editor source glyphs; sampled color cluster
+syntax.blue,#7DBDDB,898,437,1,unrecoverable,Editor source glyphs; sampled color cluster
+syntax.punctuation,#E0E1E0,559,498,1,unrecoverable,Low-chroma editor source glyphs
+terminal.ready-green,#727C65,444,773,1,unrecoverable,Terminal ready line
+terminal.ready-text,#C0BEC0,675,774,1,unrecoverable,Terminal ready line

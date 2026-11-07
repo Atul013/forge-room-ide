@@ -76,6 +76,18 @@ test('paused hackathon countdown displays frozen time and host-only resume contr
 	assert.doesNotMatch(participant, /data-action="toggleCountdown"/);
 });
 
+test('shared milestone cards show urgency while only host can manage milestones', () => {
+	const soon = new Date(Date.now() + 30 * 60_000).toISOString();
+	const host = renderRoom({ members: [], events: [], notes: [], tasks: [], hosting: true, sessionMilestones: [{ id: 'm1', label: 'Code freeze', dueAt: soon }] });
+	assert.match(host, /aria-label="Room milestones"/);
+	assert.match(host, /Code freeze/);
+	assert.match(host, /data-state="soon"/);
+	assert.match(host, /data-action="setCountdown">Manage milestones/);
+	const guest = renderRoom({ members: [], events: [], notes: [], tasks: [], connected: true, sessionMilestones: [{ id: 'm1', label: 'Code freeze', dueAt: soon }] });
+	assert.match(guest, /Code freeze/);
+	assert.doesNotMatch(guest, /data-action="setCountdown">Manage milestones/);
+});
+
 test('live Git diff sharing shows a stop control and explains snapshot retention', () => {
 	const html = renderRoom({ members: [], events: [], notes: [], tasks: [], hosting: true, liveDiffSharing: true, liveDiffFile: 'src/example.ts' });
 	assert.match(html, /Live Git diff sharing/);

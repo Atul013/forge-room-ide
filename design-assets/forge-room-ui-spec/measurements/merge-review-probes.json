@@ -1,0 +1,107 @@
+{
+  "noCommitsCreated": true,
+  "scenarios": [
+    {
+      "case": "spaces",
+      "path": "a file.txt",
+      "side": "incoming",
+      "exitCode": 0,
+      "stdout": "resolved",
+      "stderr": "",
+      "indexEntries": [
+        "100644 d162cbeb40288b81c7a1750e27db094a6f766604 0\ta file.txt"
+      ],
+      "worktreeHex": {
+        "a file.txt": "737461676520330d0a"
+      }
+    },
+    {
+      "case": "leading-dash",
+      "path": "-notes.txt",
+      "side": "incoming",
+      "exitCode": 0,
+      "stdout": "resolved",
+      "stderr": "",
+      "indexEntries": [
+        "100644 d162cbeb40288b81c7a1750e27db094a6f766604 0\t-notes.txt"
+      ],
+      "worktreeHex": {
+        "-notes.txt": "737461676520330d0a"
+      }
+    },
+    {
+      "case": "binary",
+      "path": "blob.bin",
+      "side": "incoming",
+      "exitCode": 0,
+      "stdout": "resolved",
+      "stderr": "",
+      "indexEntries": [
+        "100644 d86c9630f49a0eaf87b7654476b5742084e8323f 0\tblob.bin"
+      ],
+      "worktreeHex": {
+        "blob.bin": "00737461676520330a"
+      }
+    },
+    {
+      "case": "incoming-deleted",
+      "path": "deleted.txt",
+      "side": "incoming",
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "error: path 'deleted.txt' does not have their version",
+      "indexEntries": [
+        "100644 8c51e914b22b43d0ffa9adefe698159dff3bf84a 1\tdeleted.txt",
+        "100644 91cbaba3a5b1b2396da44b01c75af61cf7a38934 2\tdeleted.txt"
+      ],
+      "worktreeHex": {
+        "deleted.txt": "776f726b696e6720636f70790a"
+      }
+    },
+    {
+      "case": "current-deleted",
+      "path": "deleted.txt",
+      "side": "current",
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "error: path 'deleted.txt' does not have our version",
+      "indexEntries": [
+        "100644 8c51e914b22b43d0ffa9adefe698159dff3bf84a 1\tdeleted.txt",
+        "100644 d162cbeb40288b81c7a1750e27db094a6f766604 3\tdeleted.txt"
+      ],
+      "worktreeHex": {
+        "deleted.txt": "776f726b696e6720636f70790a"
+      }
+    },
+    {
+      "case": "pathspec-brackets",
+      "path": "a[1].txt",
+      "side": "incoming",
+      "exitCode": 0,
+      "stdout": "resolved",
+      "stderr": "",
+      "indexEntries": [
+        "100644 d162cbeb40288b81c7a1750e27db094a6f766604 0\ta1.txt",
+        "100644 d162cbeb40288b81c7a1750e27db094a6f766604 0\ta[1].txt"
+      ],
+      "worktreeHex": {
+        "a[1].txt": "737461676520330d0a",
+        "a1.txt": "737461676520330d0a"
+      }
+    },
+    {
+      "case": "dirty-buffer",
+      "path": "open.txt",
+      "side": "incoming",
+      "exitCode": 0,
+      "stdout": "resolved\ndirty buffer retained; normal save refuses to erase chosen side",
+      "stderr": "",
+      "indexEntries": [
+        "100644 d162cbeb40288b81c7a1750e27db094a6f766604 0\topen.txt"
+      ],
+      "worktreeHex": {
+        "open.txt": "737461676520330d0a"
+      }
+    }
+  ]
+}

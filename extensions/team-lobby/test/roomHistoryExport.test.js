@@ -6,9 +6,10 @@ test('room history export excludes direct messages by default and preserves room
 	const events = [
 		{ id: 'public', kind: 'message', detail: 'room update' },
 		{ id: 'private', kind: 'message', recipientId: 'peer-b', senderId: 'peer-a', detail: 'private update' },
+		{ id: 'private-reaction', kind: 'reaction', recipientId: 'peer-b', senderId: 'peer-a', detail: '??' },
 		{ id: 'other', kind: 'task', detail: 'task changed' }
 	];
 	assert.deepEqual(roomHistoryForExport(events, false).map(event => event.id), ['public', 'other']);
-	assert.deepEqual(roomHistoryForExport(events, true).map(event => event.id), ['public', 'private', 'other']);
-	assert.deepEqual(events.map(event => event.id), ['public', 'private', 'other']);
+	assert.deepEqual(roomHistoryForExport(events, true).map(event => event.id), ['public', 'private', 'private-reaction', 'other']);
+	assert.deepEqual(events.map(event => event.id), ['public', 'private', 'private-reaction', 'other']);
 });

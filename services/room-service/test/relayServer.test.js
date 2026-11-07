@@ -12,7 +12,7 @@ const { WebSocket } = require('ws');
 const { JsonRoomStore, tokenHash } = require('../src/controlPlane');
 const { createRoomRelay } = require('../src/relayServer');
 
-async function fixture(t) {
+async function fixture(t, options = {}) {
 	const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-room-relay-'));
 	const store = new JsonRoomStore(path.join(directory, 'state.json'));
 	const accountId = randomUUID();
@@ -29,7 +29,7 @@ async function fixture(t) {
 	const pfx = fs.readFileSync(path.join(__dirname, 'fixtures', 'server.pfx'));
 	const cert = fs.readFileSync(path.join(__dirname, 'fixtures', 'server-cert.pem'));
 	const server = https.createServer({ pfx, passphrase: 'test-only-not-for-deployment', minVersion: 'TLSv1.2' }, (_request, response) => { response.writeHead(404); response.end(); });
-	const relay = createRoomRelay({ httpsServer: server, store });
+	const relay = createRoomRelay({ httpsServer: server, store, ...(options.relay || {}) });
 	await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
 	t.after(async () => { relay.close(); await new Promise(resolve => server.close(resolve)); fs.rmSync(directory, { recursive: true, force: true }); });
 	return { store, relay, accountId, roomId, inviteId, accountKey, inviteToken, url: `wss://localhost:${server.address().port}/v1/relay/${roomId}`, cert };
@@ -107,6 +107,92 @@ test('rotating an account key disconnects its hosted rooms and guests', async t 
 	const guestClosed = once(guest, 'close');
 	f.relay.invalidateAccountSessions(f.accountId);
 	assert.equal((await hostClosed)[0], 1012);
+	assert.equal((await guestClosed)[0], 1012);
+	assert.equal(f.relay.rooms.has(f.roomId), false);
+});
+
+test('malformed and oversized guest frames are rejected before room messages are relayed', async t => {
+	const f = await fixture(t);
+	const host = connect(f.url, f.cert, 'host', f.accountKey);
+	await once(host, 'open');
+	const malformed = connect(f.url, f.cert, 'participant');
+	await once(malformed, 'open');
+	const malformedClosed = once(malformed, 'close');
+	malformed.send('{');
+	assert.equal((await malformedClosed)[0], 1008);
+	assert.equal(f.relay.rooms.get(f.roomId).clients.size, 0);
+
+	const oversized = connect(f.url, f.cert, 'participant');
+	await once(oversized, 'open');
+	const oversizedClosed = once(oversized, 'close');
+	oversized.send(Buffer.alloc(2 * 1024 * 1024 + 1));
+	assert.equal((await oversizedClosed)[0], 1009);
+	assert.equal(f.relay.rooms.get(f.roomId).clients.size, 0);
+	host.terminate();
+});
+
+test('guest message floods are closed while the room remains available', async t => {
+	const f = await fixture(t);
+	const host = connect(f.url, f.cert, 'host', f.accountKey);
+	await once(host, 'open');
+	const guest = connect(f.url, f.cert, 'participant');
+	await once(guest, 'open');
+	const joinedAtHost = nextJson(host, item => item.type === 'clientConnect');
+	guest.send(JSON.stringify({ version: 16, type: 'hello', secret: f.inviteToken, participantId: randomUUID(), name: 'Guest', role: 'human' }));
+	await joinedAtHost;
+	const guestClosed = once(guest, 'close');
+	const post = JSON.stringify({ version: 16, type: 'post', text: 'x' });
+	for (let index = 0; index < 1000; index++) { guest.send(post); }
+	const [code] = await guestClosed;
+	assert.equal(code, 1008);
+	assert.equal(f.relay.rooms.get(f.roomId).clients.size, 0);
+	assert.ok(f.relay.rooms.has(f.roomId));
+	assert.equal(host.readyState, WebSocket.OPEN);
+	host.terminate();
+});
+
+test('host message floods close the room and its guests', async t => {
+	const f = await fixture(t);
+	const host = connect(f.url, f.cert, 'host', f.accountKey);
+	await once(host, 'open');
+	const guest = connect(f.url, f.cert, 'participant');
+	await once(guest, 'open');
+	const joinedAtHost = nextJson(host, item => item.type === 'clientConnect');
+	guest.send(JSON.stringify({ version: 16, type: 'hello', secret: f.inviteToken, participantId: randomUUID(), name: 'Guest', role: 'human' }));
+	const { clientId } = await joinedAtHost;
+	const hostClosed = once(host, 'close');
+	const guestClosed = once(guest, 'close');
+	const frame = JSON.stringify({ relayVersion: 1, type: 'clientMessage', clientId, data: JSON.stringify({ version: 16, type: 'heartbeat' }) });
+	for (let index = 0; index < 1001; index++) { host.send(frame); }
+	assert.equal((await hostClosed)[0], 1013);
+	assert.equal((await guestClosed)[0], 1013);
+	assert.equal(f.relay.rooms.has(f.roomId), false);
+});
+
+test('relay upgrades are rate limited per remote address', async t => {
+	const f = await fixture(t, { relay: { maxConnectionAttemptsPerMinute: 2 } });
+	const host = connect(f.url, f.cert, 'host', f.accountKey);
+	await once(host, 'open');
+	const guest = connect(f.url, f.cert, 'participant');
+	await once(guest, 'open');
+	const flood = connect(f.url, f.cert, 'participant');
+	await assert.rejects(once(flood, 'open'), /Unexpected server response: 429/);
+	host.terminate();
+	guest.terminate();
+});
+
+test('host network loss closes its guests and removes the in-memory relay room', async t => {
+	const f = await fixture(t);
+	const host = connect(f.url, f.cert, 'host', f.accountKey);
+	await once(host, 'open');
+	const guest = connect(f.url, f.cert, 'participant');
+	await once(guest, 'open');
+	const joinedAtHost = nextJson(host, item => item.type === 'clientConnect');
+	guest.send(JSON.stringify({ version: 16, type: 'hello', secret: f.inviteToken, participantId: randomUUID(), name: 'Guest', role: 'human' }));
+	const { clientId } = await joinedAtHost;
+	assert.ok(f.relay.rooms.get(f.roomId).clients.has(clientId));
+	const guestClosed = once(guest, 'close');
+	host.terminate();
 	assert.equal((await guestClosed)[0], 1012);
 	assert.equal(f.relay.rooms.has(f.roomId), false);
 });

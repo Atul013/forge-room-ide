@@ -1,7 +1,9 @@
 export type DirectMessageEvent = { kind: string; recipient?: string; recipientId?: string; senderId?: string };
 
 export function canDeliverMessageEvent(event: DirectMessageEvent, participantId: string) {
-	if (event.kind !== 'message' || !event.recipient) { return true; }
+	if (!['message', 'reaction'].includes(event.kind)) { return true; }
+	const direct = event.kind === 'message' ? !!event.recipient || !!event.recipientId || !!event.senderId : !!event.recipientId || !!event.senderId;
+	if (!direct) { return true; }
 	if (!event.recipientId || !event.senderId) { return false; }
 	return event.recipientId === participantId || event.senderId === participantId;
 }

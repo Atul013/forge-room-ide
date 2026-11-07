@@ -1,4 +1,4 @@
-﻿# Forge Room service control plane
+# Forge Room service control plane
 
 A self-hostable service-side slice for PRODUCT_SPEC.md Phase 6. It provides TLS-only account provisioning, account key rotation, owned room metadata, expiring/revocable bearer invites, scoped audit views, single-process durable control state, and a WSS relay. Team Lobby connects using an HTTPS origin and an account key stored in VS Code SecretStorage. The service relays live protocol-16 traffic but does not persist room messages, tasks, notes, or shared documents.
 
@@ -39,3 +39,9 @@ Run `npm.cmd test`. Tests use the test-only certificate in `test/fixtures/server
 ## Current limits
 
 Account owners can rotate a known key, and the local service operator can recover a lost key. Admin recovery reactivates a disabled account only while replacing its key, and revokes its outstanding invites so disabled access is not silently restored. There is no self-signup, user-driven recovery, MFA, organization hierarchy, database encryption at rest, multi-node deployment, admin web console, or operational monitoring. Separate IDE and separate-machine acceptance remain open. These are required before calling this a managed production service. See [THREAT_MODEL.md](../../docs/architecture/THREAT_MODEL.md).
+
+## Relay resource bounds
+
+Each connected host and participant is limited to 4 MiB and 1,000 inbound WebSocket frames per 10-second window. A participant that exceeds either bound is disconnected with a policy close; a host that exceeds either bound closes its active room and connected guests so the relay does not continue an overloaded or partial session. The existing 2 MiB maximum individual frame size remains in force. These bounds limit per-connection relay work; they are not a substitute for deployment-level traffic monitoring, network controls, or a distributed abuse-management system.
+
+The HTTPS control plane also limits each remote address to 120 requests per minute and caps its in-memory address table at 4,096 entries. Expired entries are evicted when a new address arrives at capacity. Relay WebSocket upgrades have a separate limit of 120 attempts per remote address per minute and a 4,096-address table. Behind a reverse proxy, these checks see the proxy address; configure ingress limits and do not assume forwarded client-address headers are trusted.

@@ -1,7 +1,7 @@
 export type AgentActivityStage = 'started' | 'proposal' | 'applied' | 'paused' | 'canceled' | 'noProposal' | 'incomplete' | 'failed';
 
 export function validTaskLink(kind: string, taskId: unknown): boolean {
-	return taskId === undefined || (['agent', 'test', 'review'].includes(kind) && typeof taskId === 'string' && taskId.trim().length > 0 && taskId.length <= 100 && !/[\r\n\0]/.test(taskId));
+	return taskId === undefined || (['agent', 'test', 'review', 'message'].includes(kind) && typeof taskId === 'string' && taskId.trim().length > 0 && taskId.length <= 100 && !/[\r\n\0]/.test(taskId));
 }
 
 /** Build room-safe summaries. This deliberately accepts no prompt or context data. */

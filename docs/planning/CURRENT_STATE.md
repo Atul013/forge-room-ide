@@ -1,10 +1,11 @@
 # Forge Room current state
 
-Snapshot: 21 October 2026. Forge Room Studio 0.14.0 and Team Lobby 0.108.0 are current. Team Lobby uses room protocol 17. Its AI workflow scopes context and tools to the selected project root, including bounded file inventory, direct editor navigation, diagnostics, terminal output, worktree validation, ACP session continuation, Plan-to-Build handoff, debugger stack inspection, and checkpoint-backed exact-match edits.
+Snapshot: 25 October 2026. Forge Room Studio 0.14.0 and Team Lobby 0.129.0 are current. Team Lobby uses room protocol 20. Participants can add attributed room decisions with a title and rationale; decisions join local searchable history. Tasks support priority and bounded optional effort estimates; triage identifies estimated critical paths. Hosts can define up to 20 future room milestones, shared with participants and persisted with room state. Readiness compares estimated remaining work with active countdown and future milestones, excluding completed tasks from milestone estimates; manually reported results do not count as IDE-recorded verification and a newer manual outcome makes an older IDE result unknown; incomplete estimates/dependencies and paused/unset countdown feasibility remain unknown. Preview, deployment and submission integrations remain unknown/manual. Task owners can opt into local reminders at 15 minutes, 5 minutes, and task deadline; the setting defaults off and reminders never leave the device.
 
 ## Verification
 
-Team Lobby 0.108.0 passes TypeScript checks and 179/179 automated tests in both the handoff and Code OSS extension copies. The 17-file VSIX SHA-256 is `6EF2EC09E51E25884577C159AA19382A947C682C6F1487D080C9B6ACF8F0FBFA` and matches both handoff package copies, the Code OSS extension package, and the built-in product manifest. Forge Room Studio passes 16/16 tests and the room service passes 9/9 tests. The Code OSS corepack yarn compile passed before the 0.104 and 0.105 extension updates; this slice does not change workbench source. Live provider-backed edits, the rendered diff/Undo/checkpoint rollback flow, two-IDE and two-machine behavior remain unverified.
+Team Lobby 0.129.0 passes TypeScript builds and 233/233 automated tests in both handoff and Code OSS copies. The webview syntax check passes. Task owners can opt into 15-minute, 5-minute, and deadline reminders; default is off. The nine-file VSIX SHA-256 is `55D685464D3EB5DFE22C1E92CFB28B0A0DA61C94CA9A05462164F3154D71C10F` and matches six retained package copies and three product manifests. Disposable-profile VS Code installation succeeds; live reminder behavior remains unverified. Interactive cross-client decision search, provider and multi-machine acceptance remain open.
+
 ## Team Lobby 0.99.0 multi-root AI request scoping
 
 AI Ask/Plan/Build now prompts for a project root in multi-root workspaces. Context files, editor selection, diagnostics, Build worktree checks, worktree creation, and Build resume validation stay scoped to that root. Single-root workspaces continue without an extra prompt. Automated path coverage rejects files outside the chosen root.
@@ -58,3 +59,41 @@ Ask, Plan, and Build can request a bounded list of non-sensitive file paths in t
 ## Team Lobby 0.108.0 - editor navigation capability
 
 Ask, Plan, and Build can request opening one non-sensitive file in the selected project and optionally reveal a one-based line. The IDE checks file containment and existence; invalid lines are rejected. A separate confirmation is required for every navigation call, even under a request-wide read-only grant. The model receives only the open result, not file contents. Both extension copies pass TypeScript checks and 179/179 tests. The 17-file VSIX SHA-256 is 6EF2EC09E51E25884577C159AA19382A947C682C6F1487D080C9B6ACF8F0FBFA and matches the built-in manifest and package copies. Live provider behavior remains unverified.
+
+## Team Lobby 0.109.0 - explicit room task context
+
+Ask, Plan, and Build can optionally include an explicitly approved snapshot of room task metadata. It is capped at 50 tasks and 12,000 characters and includes task IDs, titles, owners, status, dependencies, due times, and acceptance criteria. It excludes room chat, direct messages, project notes, diffs, and file contents. Opting out leaves task descriptions out of provider prompt text while retaining internal Build task linkage. Both copies pass TypeScript checks and 181/181 tests. The nine-file VSIX SHA-256 is `185703A4563CA1DE9D0F96E2148D1121DC1BE41DF0FBAEF2ADB321936B636DA6` and matches the product manifest and retained package copies. Live provider behavior remains unverified.
+
+Team Lobby 0.110.0 adds a local task triage command that ranks open room tasks using blockers, deadlines, in-progress status, and active downstream dependents. It opens existing task actions only after user selection. Live command/QuickPick interaction remains unverified.
+
+## Team Lobby 0.110.0 - local room task triage
+
+The Team Lobby: Triage Room Tasks command provides a local, recommendation-only view of open room tasks. It ranks work by dependency blockers, deadlines, in-progress state, and active downstream dependents, then opens the existing task actions after the user selects an item. It does not alter tasks or start agents automatically. Both extension copies pass TypeScript checking and 184/184 tests. The nine-file VSIX SHA-256 is FE927C7CDA57D582374200CBCA8FE32906D8945FF45F2A1095AD6CD56857E2F3, synchronized across six package locations and both product manifests. Live command/QuickPick behavior remains unverified.
+
+## Team Lobby 0.111.0 - opt-in local countdown milestone alerts
+
+The `teamLobby.countdownAlerts` setting defaults off and shows local reminders for the shared countdown at 60, 30, 10, and 5 minutes and at expiry. Delivery state is bounded and persisted locally. Both extension copies pass TypeScript checking and 188/188 tests. VSIX SHA-256: `5D42753F3EEA43FDF777C3800FF9774FBFA4E2C7401E782BC0C34CA50DE16A3F`. Live timing and settings interaction remain to validate.
+
+## Team Lobby 0.112.0 - local demo-readiness checklist
+
+`Team Lobby: Prepare Demo Readiness Checklist` saves a user-selected Markdown report using the current local room snapshot. It lists unfinished tasks, incomplete or unavailable dependencies, overdue deadlines, owner-attested task criteria, and recent test/build outcomes recorded in room activity. Empty task sets and absent verification are unknown. Preview health, deployment health, and submission materials are always labeled unknown/manual until real integrations exist. Both extension copies pass TypeScript checks and 192/192 tests. VSIX SHA-256: `2BC9F71F7A50E25EF48980196D73D8134721637B1D38EBD236D6436B52E643B9`. Live IDE command/save behavior remains open.
+
+## Team Lobby 0.113.0 - task priority
+
+Room tasks now accept low, normal, high or critical priority at creation and through owner/host task actions. Room cards display a priority chip; local triage uses priority as a tie-breaker after blocker/deadline urgency, and high/critical recommendations are labeled. The separately approved room task snapshot and demo-readiness report include priority. Missing priority on legacy task records means Normal. Both extension mirrors pass TypeScript checks and 195/195 tests; the webview passes `node --check`. VSIX SHA-256: `8CA1DF549B07AB656B68F19762CC16875A15A2175373A3A7034AB34BBBD97899`. Live selection and rendering remain to validate.
+
+## Team Lobby 0.114.0 - countdown-aware readiness
+
+The demo-readiness report now shows the shared room countdown. An unset countdown remains unknown; paused and expired timers need attention, as does an active timer with one hour or less. A paused timer uses its frozen remaining duration. Both extension mirrors pass TypeScript checks and 196/196 tests. VSIX SHA-256: `2CD805CC7FF9BE57E0A0C00772F37421B1621E88A0ACD3A055FC5B3BB101E52E`. Live report generation and countdown state display remain unverified.
+
+
+## Team Lobby 0.115.0 - task estimates and critical path
+
+Tasks can carry an optional whole-minute effort estimate from 1 to 10,080 minutes. Local triage marks the deterministic longest unfinished dependency chain and shows its total only when all unfinished tasks have valid estimates and dependencies. Missing estimates and unavailable dependencies are reported as unknown. Estimates appear in task cards, readiness summaries, and the explicitly approved room task snapshot. Both mirrors pass TypeScript checks and 203/203 tests; media/room.js passes the room webview syntax check.
+
+
+## Team Lobby 0.116.0 - critical-path countdown feasibility
+
+The local demo-readiness report compares the estimated unfinished critical path with the active shared countdown. It reports attention when the estimate exceeds remaining time, ready when the estimate fits, and unknown when any unfinished estimate or dependency is missing. Paused and unset countdowns remain unknown because this check cannot establish deadline feasibility.
+
+**Verification:** both extension copies pass `npm.cmd run check` and 205/205 tests; room webview syntax checks pass. Nine-file VSIX SHA-256 is `2EF5B3F97CCD4905C9CB141BBCD72FE60995E4A11972602155D170442A1C7E68` and matches retained packages and product manifests. Interactive readiness generation remains unverified.

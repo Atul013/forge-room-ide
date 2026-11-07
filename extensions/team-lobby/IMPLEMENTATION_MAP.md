@@ -8,9 +8,16 @@
 
 ## Main components
 
-### Team Lobby 0.108.0
+### Team Lobby 0.128.0
+
+- `src/roomMessageSearch.ts`: bounded local message matching and newest-first pagination; participant visibility filtering occurs before query matching.
+- `src/roomDecision.ts`: validates and formats bounded decision titles and rationales before explicit room confirmation.
+- `src/roomThreads.ts`: parent-linked message grouping and host validation for public/DM reply audience. Webview thread controls open messages and submit replies.
+
+- `src/roomThreads.ts`: parent-linked message grouping and host validation for public/DM reply audience. Webview thread controls open messages and submit replies.
 
 - `extensions/team-lobby/src/extension.ts`: room lifecycle, tasks, collaboration, Ask/Plan/Build, Git review, commands, evidence, and IDE API integration.
+- `src/manualVerification.ts`: validates and formats participant-reported room verification outcomes, clearly labelled as manual.
 - `src/agentCapabilities.ts`: typed workspace capabilities, scope validation, approval summaries, and request-grant separation.
 - `src/workspaceInventory.ts`: bounded paths-only inventory formatting with sensitive-path and traversal rejection.
 - `src/workspaceTasks.ts`: bounded registered-test task listing and exact name/provider matching.
@@ -21,6 +28,19 @@
 - A confirmed 24-hour hackathon preset and host-only countdown pause/resume; frozen time persists, synchronizes on reconnect and records attributed activity.
 - Explicit per-file live Git diff snapshots refresh after saves, at most once every five seconds, with a visible stop control and retained history.
 - AI Ask/Plan/Build scopes context files, editor selection, diagnostics, captured terminal output, task worktree validation, saved-session continuation, Plan-to-Build handoff, and plan export to the exact chosen root in multi-root workspaces.
+- 0.109.0: Ask/Plan/Build can include an explicitly previewed and approved room task metadata snapshot, bounded to 50 tasks and 12,000 characters; no chat, notes, diffs, or file contents are included.
+- 0.110.0: the local task triage command ranks runnable tasks using blockers, deadlines, in-progress state, and active downstream dependents. It opens existing task actions only after selection and makes no automatic task or agent changes.
+- 0.111.0: optional, default-off countdown alerts show local reminders at 60, 30, 10, and 5 minutes and at expiry. Per-deadline reminder state is bounded and persisted locally; no room event or transfer is created.
+- 0.112.0: the local demo-readiness command saves a Markdown snapshot of room task/dependency/deadline and recent verification evidence. Preview, deployment, and submission gates remain explicitly unknown/manual.
+- 0.113.0: tasks support low/normal/high/critical priority in create/update, cards, recommendation ranking, readiness output and the explicitly approved AI task snapshot. Older tasks default to Normal.
+- 0.114.0: demo-readiness output includes the room countdown; unset is unknown, paused/expired/within one hour needs attention.
+- 0.115.0: bounded optional task estimates appear in cards/readiness/approved AI context; local triage marks and sorts the longest estimated unfinished dependency path, remaining unknown when active estimates or dependencies are incomplete.
+- 0.116.0: local demo-readiness report compares estimated critical-path duration to active shared countdown; overrun needs attention, incomplete estimates or dependencies and paused/unset countdown remain unknown.
+- 0.117.0: host manages up to 20 named future room milestones; milestones persist, sync with countdown state, display to all participants and flag passed/within-hour items in readiness.
+- 0.118.0: readiness compares each future milestone with the estimated unfinished dependency chain, excluding completed tasks; overruns need attention, incomplete estimates/dependencies stay unknown.
+- 0.119.0: participants can explicitly share manually reported test/build/lint/type-check outcomes, optionally linked to a room task; the feature runs nothing and sends no command or output.
+- 0.120.0: demo readiness excludes participant-reported results from IDE-recorded verification and never treats them as verified passes.
+- 0.121.0: locally export metadata-only room activity and task summaries; private messages, event details, file paths, code and patches are omitted.
 - `services/room-service/`: optional self-hosted HTTPS/WSS control plane and relay; active room content is not persisted by the service.
 - `test/`: policy and integration tests. Run `npm.cmd run check` and `npm.cmd test` in the extension directory.
 

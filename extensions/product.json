@@ -1,4 +1,4 @@
-﻿{
+{
     "nameShort":  "Code - OSS",
     "nameLong":  "Code - OSS",
     "applicationName":  "code-oss",
@@ -60,9 +60,9 @@
                               },
                               {
                                   "name":  "forge-room.team-lobby-ide",
-                                  "version":  "0.96.0",
-                                  "sha256":  "0AD506D6E434196421292C293525E5EF7A9B238ADA5C36937F7B303EE5F11C0C",
-                                  "vsix":  "extensions/team-lobby/team-lobby-ide-0.96.0.vsix",
+                                  "version":  "0.129.0",
+                                  "sha256":  "55D685464D3EB5DFE22C1E92CFB28B0A0DA61C94CA9A05462164F3154D71C10F",
+                                  "vsix":  "extensions/team-lobby/team-lobby-ide-0.129.0.vsix",
                                   "metadata":  {
                                                    "id":  "a63d0c7e-23d2-4797-92e2-5ab1a7d230d9",
                                                    "publisherId":  {
@@ -73,7 +73,7 @@
                                                                    },
                                                    "publisherDisplayName":  "Forge Room"
                                                },
-                                  "path":  "extensions/team-lobby/team-lobby-ide-0.96.0.vsix"
+                                  "path":  "extensions/team-lobby/team-lobby-ide-0.114.0.vsix"
                               },
                               {
                                   "name":  "ms-vscode.js-debug-companion",
