@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+from lobby import ICONS as LOBBY_ICONS
 
 ROOT = Path(__file__).resolve().parents[1]
 ICONS = {
@@ -83,6 +84,7 @@ ICONS = {
     ],
 }
 ICONS["room-active"] = ICONS["room"].copy()
+ICONS.update(LOBBY_ICONS)
 
 STYLE = 'fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"'
 

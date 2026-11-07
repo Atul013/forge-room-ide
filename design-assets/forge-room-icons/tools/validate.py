@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+import hashlib
 import re
 import xml.etree.ElementTree as ET
 from PIL import Image, ImageChops
@@ -10,10 +11,15 @@ ROOT = Path(__file__).resolve().parents[1]
 RENDERS = ROOT.parents[1] / "artifacts/build-tools/icon-renderer/renders"
 NS = "{http://www.w3.org/2000/svg}"
 EXPECTED = "explorer search source-control run-debug extensions ai terminal room new-file refresh more close plus chevron-right chevron-down check arrow-up arrow-down folder-open file file-json file-ts commit-dropdown room-active".split()
+EXPECTED += "code studio workflows models tests cloud settings accessibility-off pulse users user-plus user lock clock calendar eye bot target flag layers external-link github shield send warning bell rocket hourglass upload-box share panel-left panel-bottom panel-right window-maximize window-minimize circle-check circle-dot circle tag arrow-right".split()
+EXPECTED += ["forge-mark"]
 STYLE = {"fill": "none", "stroke": "currentColor", "stroke-width": "1.75", "stroke-linecap": "round", "stroke-linejoin": "round", "viewBox": "0 0 24 24"}
 
 
 def validate():
+    original = json.loads((ROOT / "tools/original-icon-hashes.json").read_text(encoding="utf-8"))
+    assert len(original) == 24
+    assert all(hashlib.sha256((ROOT / "svg" / name).read_bytes()).hexdigest() == digest for name, digest in original.items()), "original icons changed"
     files = sorted((ROOT / "svg").glob("*.svg"))
     assert {p.stem for p in files} == set(EXPECTED)
     manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
@@ -50,7 +56,7 @@ def validate():
     assert (ROOT / "svg/room.svg").read_bytes() == (ROOT / "svg/room-active.svg").read_bytes()
     assert (ROOT / "svg/chevron-down.svg").read_bytes() == (ROOT / "svg/commit-dropdown.svg").read_bytes()
     with Image.open(ROOT / "preview.png") as preview:
-        assert preview.size == (1376, 1296)
+        assert preview.size == (1376, 680 + ((len(EXPECTED) - 8 + 3) // 4) * 154)
         assert preview.getpixel((0, 0)) == (18, 19, 20)
     with Image.open(ROOT / "preview.png") as preview:
         preview.verify()
@@ -60,14 +66,15 @@ def validate():
         "spriteSymbols": len(sprite),
         "exactSpriteRasterComparisons": len(EXPECTED) * 2,
         "geometryAliasesMatch": True,
+        "originalIconsByteIdentical": len(original),
         "allStrokesCurrentColor": True,
         "strokeWidth": 1.75,
         "svgElements": ["svg", "symbol", "path"],
-        "previewSize": [1376, 1296],
+        "previewSize": [1376, 680 + ((len(EXPECTED) - 8 + 3) // 4) * 154],
         "paintedBoundsAt16x": bounds,
     }
     (ROOT / "validation.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")
-    print("PASS: 24 path-only SVGs; 24 symbols; 48 pixel-identical sprite comparisons; currentColor, 1.75 px strokes, rounded caps/joins, padding, aliases, and PNG integrity.")
+    print(f"PASS: {len(EXPECTED)} path-only SVGs; {len(sprite)} symbols; {len(EXPECTED) * 2} pixel-identical sprite comparisons; currentColor, 1.75 px strokes, rounded caps/joins, padding, aliases, and PNG integrity.")
 
 
 if __name__ == "__main__":
