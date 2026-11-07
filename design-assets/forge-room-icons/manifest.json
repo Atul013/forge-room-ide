@@ -136,6 +136,211 @@
       "name": "room-active",
       "file": "svg/room-active.svg",
       "symbol": "forge-room-active"
+    },
+    {
+      "name": "code",
+      "file": "svg/code.svg",
+      "symbol": "forge-code"
+    },
+    {
+      "name": "studio",
+      "file": "svg/studio.svg",
+      "symbol": "forge-studio"
+    },
+    {
+      "name": "workflows",
+      "file": "svg/workflows.svg",
+      "symbol": "forge-workflows"
+    },
+    {
+      "name": "models",
+      "file": "svg/models.svg",
+      "symbol": "forge-models"
+    },
+    {
+      "name": "tests",
+      "file": "svg/tests.svg",
+      "symbol": "forge-tests"
+    },
+    {
+      "name": "cloud",
+      "file": "svg/cloud.svg",
+      "symbol": "forge-cloud"
+    },
+    {
+      "name": "settings",
+      "file": "svg/settings.svg",
+      "symbol": "forge-settings"
+    },
+    {
+      "name": "accessibility-off",
+      "file": "svg/accessibility-off.svg",
+      "symbol": "forge-accessibility-off"
+    },
+    {
+      "name": "pulse",
+      "file": "svg/pulse.svg",
+      "symbol": "forge-pulse"
+    },
+    {
+      "name": "users",
+      "file": "svg/users.svg",
+      "symbol": "forge-users"
+    },
+    {
+      "name": "user-plus",
+      "file": "svg/user-plus.svg",
+      "symbol": "forge-user-plus"
+    },
+    {
+      "name": "user",
+      "file": "svg/user.svg",
+      "symbol": "forge-user"
+    },
+    {
+      "name": "lock",
+      "file": "svg/lock.svg",
+      "symbol": "forge-lock"
+    },
+    {
+      "name": "clock",
+      "file": "svg/clock.svg",
+      "symbol": "forge-clock"
+    },
+    {
+      "name": "calendar",
+      "file": "svg/calendar.svg",
+      "symbol": "forge-calendar"
+    },
+    {
+      "name": "eye",
+      "file": "svg/eye.svg",
+      "symbol": "forge-eye"
+    },
+    {
+      "name": "bot",
+      "file": "svg/bot.svg",
+      "symbol": "forge-bot"
+    },
+    {
+      "name": "target",
+      "file": "svg/target.svg",
+      "symbol": "forge-target"
+    },
+    {
+      "name": "flag",
+      "file": "svg/flag.svg",
+      "symbol": "forge-flag"
+    },
+    {
+      "name": "layers",
+      "file": "svg/layers.svg",
+      "symbol": "forge-layers"
+    },
+    {
+      "name": "external-link",
+      "file": "svg/external-link.svg",
+      "symbol": "forge-external-link"
+    },
+    {
+      "name": "github",
+      "file": "svg/github.svg",
+      "symbol": "forge-github"
+    },
+    {
+      "name": "shield",
+      "file": "svg/shield.svg",
+      "symbol": "forge-shield"
+    },
+    {
+      "name": "send",
+      "file": "svg/send.svg",
+      "symbol": "forge-send"
+    },
+    {
+      "name": "warning",
+      "file": "svg/warning.svg",
+      "symbol": "forge-warning"
+    },
+    {
+      "name": "bell",
+      "file": "svg/bell.svg",
+      "symbol": "forge-bell"
+    },
+    {
+      "name": "rocket",
+      "file": "svg/rocket.svg",
+      "symbol": "forge-rocket"
+    },
+    {
+      "name": "hourglass",
+      "file": "svg/hourglass.svg",
+      "symbol": "forge-hourglass"
+    },
+    {
+      "name": "upload-box",
+      "file": "svg/upload-box.svg",
+      "symbol": "forge-upload-box"
+    },
+    {
+      "name": "share",
+      "file": "svg/share.svg",
+      "symbol": "forge-share"
+    },
+    {
+      "name": "panel-left",
+      "file": "svg/panel-left.svg",
+      "symbol": "forge-panel-left"
+    },
+    {
+      "name": "panel-bottom",
+      "file": "svg/panel-bottom.svg",
+      "symbol": "forge-panel-bottom"
+    },
+    {
+      "name": "panel-right",
+      "file": "svg/panel-right.svg",
+      "symbol": "forge-panel-right"
+    },
+    {
+      "name": "window-maximize",
+      "file": "svg/window-maximize.svg",
+      "symbol": "forge-window-maximize"
+    },
+    {
+      "name": "window-minimize",
+      "file": "svg/window-minimize.svg",
+      "symbol": "forge-window-minimize"
+    },
+    {
+      "name": "circle-check",
+      "file": "svg/circle-check.svg",
+      "symbol": "forge-circle-check"
+    },
+    {
+      "name": "circle-dot",
+      "file": "svg/circle-dot.svg",
+      "symbol": "forge-circle-dot"
+    },
+    {
+      "name": "circle",
+      "file": "svg/circle.svg",
+      "symbol": "forge-circle"
+    },
+    {
+      "name": "tag",
+      "file": "svg/tag.svg",
+      "symbol": "forge-tag"
+    },
+    {
+      "name": "arrow-right",
+      "file": "svg/arrow-right.svg",
+      "symbol": "forge-arrow-right"
+    },
+    {
+      "name": "forge-mark",
+      "file": "svg/forge-mark.svg",
+      "symbol": "forge-forge-mark"
     }
   ],
   "aliases": {
