@@ -8,6 +8,7 @@ pub enum Action {
     OpenFolder,
     Refresh,
     NewFile,
+    NewFolder(PathBuf),
 }
 
 #[derive(Clone, Copy)]
@@ -38,6 +39,9 @@ pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option
             if icons::icon_button(ui, "New file (Ctrl+N)", icons::new_file).clicked() {
                 action = Action::NewFile;
             }
+            if workspace.is_some() && ui.small_button("+ Folder").clicked() {
+                action = Action::NewFolder(workspace.as_ref().unwrap().root.clone());
+            }
         });
     });
     ui.add_space(6.0);
@@ -66,7 +70,18 @@ pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option
             let root = workspace.root.clone();
             let open = workspace.is_expanded(&root);
             let title = workspace.name();
-            if row(ui, 0, &title, Kind::Dir { open }, false, true).clicked() {
+            let response = row(ui, 0, &title, Kind::Dir { open }, false, true);
+            response.context_menu(|ui| {
+                if ui.button("New folder here").clicked() {
+                    action = Action::NewFolder(root.clone());
+                    ui.close();
+                }
+                if ui.button("Copy path").clicked() {
+                    ui.ctx().copy_text(root.display().to_string());
+                    ui.close();
+                }
+            });
+            if response.clicked() {
                 workspace.toggle(&root);
             }
             if open {
@@ -87,7 +102,18 @@ fn tree(
     for entry in workspace.entries(dir) {
         if entry.is_dir {
             let open = workspace.is_expanded(&entry.path);
-            if row(ui, depth, &entry.name, Kind::Dir { open }, false, false).clicked() {
+            let response = row(ui, depth, &entry.name, Kind::Dir { open }, false, false);
+            response.context_menu(|ui| {
+                if ui.button("New folder here").clicked() {
+                    *action = Action::NewFolder(entry.path.clone());
+                    ui.close();
+                }
+                if ui.button("Copy path").clicked() {
+                    ui.ctx().copy_text(entry.path.display().to_string());
+                    ui.close();
+                }
+            });
+            if response.clicked() {
                 workspace.toggle(&entry.path);
             }
             if open {
@@ -95,7 +121,14 @@ fn tree(
             }
         } else {
             let selected = active == Some(entry.path.as_path());
-            if row(ui, depth, &entry.name, Kind::File, selected, false).clicked() {
+            let response = row(ui, depth, &entry.name, Kind::File, selected, false);
+            response.context_menu(|ui| {
+                if ui.button("Copy path").clicked() {
+                    ui.ctx().copy_text(entry.path.display().to_string());
+                    ui.close();
+                }
+            });
+            if response.clicked() {
                 *action = Action::OpenFile(entry.path.clone());
             }
         }

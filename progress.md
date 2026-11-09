@@ -2,6 +2,10 @@
 
 **Updated:** 6 November 2026. **Active product:** native Rust IDE, Developer Preview `0.110.0-alpha.2`, Windows 11 x64. **Current phase:** Phase 1, visible Windows baseline. **Owners:** @ZayedBH and @Atul013.
 
+**9 November local feature slice:** The native left rail now opens Workflows, Models, Run & Debug, Tests, Extensions, Settings, and Accessibility panels. Rust, Node, and Python marker files expose a small set of explicit project commands; pressing a command sends it to the integrated terminal. Debugger adapters, AI model providers, and extension execution remain unavailable and are labelled as such. Source inspection complete; this shell has no `cargo` command, so Rust compilation and desktop acceptance are pending.
+
+**9 November follow-on slice:** Workflows, Tests, and Run now discover safe-name npm scripts from `package.json` and fixed Go/Maven commands in addition to Rust/Python commands. The explorer has a New Folder action and Copy Path context actions for files and folders. These are source changes awaiting compilation and desktop acceptance.
+
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
 ### Navigate this document

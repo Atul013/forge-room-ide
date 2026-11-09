@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-09 Codex: expanded project command discovery to package scripts, Go, and Maven; added Explorer New Folder and Copy Path actions. The source diff is ready for compilation; no local Cargo toolchain is available in this shell.
+
+- 2026-11-09 Codex: added native project rail panels for Workflows, Models, Run & Debug, Tests, Extensions, Settings, and Accessibility. Fixed marker-based commands can be launched explicitly in the integrated terminal. Rust toolchain is absent from this shell; compilation and desktop interaction remain unverified.
+
 - 2026-11-06 Codex: PR #21 merged real Git changes/conflict review status into the Room dock. PR #22 merged native dock/terminal tab buttons and a horizontally scrollable Room tab row for narrow widths. Both passed Windows CI; desktop layout and keyboard interaction are still open.
 
 - 2026-11-06 Codex: PR #19 and #20 integrated the saved Aether concept's segmented Room Pulse into the coding workspace and Project Lobby, with local event buttons opening Activity. The default right dock is Team; Lobby setup Review is a native button. Windows CI passed. A portable archive hash matched; an isolated app launched, but the minimized window blocked screenshot/keyboard acceptance.

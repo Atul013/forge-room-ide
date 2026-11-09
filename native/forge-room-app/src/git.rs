@@ -584,6 +584,9 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_REPO: AtomicU64 = AtomicU64::new(0);
 
     fn git_available() -> bool {
         run(Path::new("."), &["--version"]).is_ok()
@@ -594,8 +597,11 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("forge-room-vcs-{}-{stamp}", std::process::id()));
+        let sequence = NEXT_REPO.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "forge-room-vcs-{}-{stamp}-{sequence}",
+            std::process::id()
+        ));
         fs::create_dir_all(&dir).unwrap();
         run(&dir, &["init", "-q"]).unwrap();
         dir

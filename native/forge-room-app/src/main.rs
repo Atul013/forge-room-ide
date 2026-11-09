@@ -18,6 +18,7 @@ mod mark;
 mod palette;
 mod position;
 mod preview;
+mod project_tools;
 mod room_state;
 mod rooms;
 mod search;
@@ -50,8 +51,7 @@ enum Rail {
     Room,
     Ai,
     Studio,
-    /// Shown in the design but not built yet: drawn dim and inert.
-    Soon,
+    Project(project_tools::Page),
 }
 
 /// Tabs of the dock on the right.
@@ -147,6 +147,7 @@ enum SidebarView {
     Search,
     SourceControl,
     Room,
+    Project(project_tools::Page),
 }
 
 /// A Git operation running on a background thread (network calls can take seconds).
@@ -215,6 +216,8 @@ struct ForgeRoomApp {
     pending_select: Option<(usize, usize)>,
     last_find_query: String,
     reselect_find: bool,
+    new_folder_parent: Option<PathBuf>,
+    new_folder_name: String,
 }
 
 /// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
@@ -308,6 +311,8 @@ impl ForgeRoomApp {
             egui_ctx: creation_context.egui_ctx.clone(),
             palette: palette::Palette::default(),
             search: search_view::SearchView::default(),
+            new_folder_parent: None,
+            new_folder_name: String::new(),
             find: find_bar::FindState::default(),
             pending_select: None,
             last_find_query: String::new(),
@@ -1189,12 +1194,17 @@ impl ForgeRoomApp {
             Some((Rail::Room, "room", "Rooms", "Room Lobby")),
             Some((Rail::Studio, "studio", "Studio", "Studio: themes")),
             Some((
-                Rail::Soon,
+                Rail::Project(project_tools::Page::Workflows),
                 "workflows",
                 "Workflows",
-                "Workflows: coming soon",
+                "Local project workflows",
             )),
-            Some((Rail::Soon, "models", "Models", "Models: coming soon")),
+            Some((
+                Rail::Project(project_tools::Page::Models),
+                "models",
+                "Models",
+                "Project runtimes and provider status",
+            )),
             None,
             Some((
                 Rail::View(SidebarView::SourceControl),
@@ -1203,17 +1213,22 @@ impl ForgeRoomApp {
                 "Source Control (Ctrl+Shift+G)",
             )),
             Some((
-                Rail::Soon,
+                Rail::Project(project_tools::Page::RunDebug),
                 "run-debug",
                 "Run & Debug",
-                "Run & Debug: coming soon",
+                "Run project; debugger availability",
             )),
-            Some((Rail::Soon, "tests", "Tests", "Tests: coming soon")),
             Some((
-                Rail::Soon,
+                Rail::Project(project_tools::Page::Tests),
+                "tests",
+                "Tests",
+                "Run project tests",
+            )),
+            Some((
+                Rail::Project(project_tools::Page::Extensions),
                 "extensions",
                 "Extensions",
-                "Extensions: coming soon",
+                "Extension support status",
             )),
             None,
             Some((Rail::Ai, "ai", "AI Assistant", "AI Assistant")),
@@ -1261,28 +1276,26 @@ impl ForgeRoomApp {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
                 ui.add_space(14.0);
-                for (icon, tip) in [
-                    ("cloud", "Cloud: coming soon"),
-                    ("settings", "Settings: coming soon"),
-                ] {
-                    let (rect, response) =
-                        ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                    icons::draw(
-                        ui.painter(),
-                        icon,
-                        rect.center(),
-                        20.0,
-                        theme::mix(theme::bg_activity(), theme::text_dim(), 0.6),
-                    );
-                    response.on_hover_text(tip);
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
+                icons::draw(
+                    ui.painter(),
+                    "cloud",
+                    rect.center(),
+                    20.0,
+                    theme::mix(theme::bg_activity(), theme::text_dim(), 0.6),
+                );
+                response.on_hover_text("Cloud: coming soon");
+                if ui.button("Settings").clicked() {
+                    self.switch_view(SidebarView::Project(project_tools::Page::Settings));
                 }
             });
             self.rail_item(
                 ui,
-                Rail::Soon,
+                Rail::Project(project_tools::Page::Accessibility),
                 "accessibility-off",
                 "",
-                "Accessibility: coming soon",
+                "Keyboard and display help",
                 0,
             );
         });
@@ -1297,7 +1310,7 @@ impl ForgeRoomApp {
         tip: &str,
         count: usize,
     ) {
-        let soon = matches!(item, Rail::Soon);
+        let soon = false;
         let height = if label.contains('\n') { 46.0 } else { 35.0 };
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ACTIVITY_WIDTH - 12.0, height),
@@ -1313,7 +1326,10 @@ impl ForgeRoomApp {
             Rail::Terminal => !self.show_lobby && self.show_terminal,
             Rail::Room => self.show_lobby,
             Rail::Ai => !self.show_lobby && self.show_right && self.right_tab == RightTab::Ai,
-            Rail::Studio | Rail::Soon => false,
+            Rail::Project(page) => {
+                !self.show_lobby && self.show_sidebar && self.view == SidebarView::Project(page)
+            }
+            Rail::Studio => false,
         };
         let hovered = response.hovered() && !soon;
         let painter = ui.painter();
@@ -1388,7 +1404,10 @@ impl ForgeRoomApp {
                     self.show_dock(RightTab::Ai);
                 }
                 Rail::Studio => self.gallery.open(),
-                Rail::Soon => {}
+                Rail::Project(page) => {
+                    self.show_lobby = false;
+                    self.switch_view(SidebarView::Project(page));
+                }
             }
         }
     }
@@ -1806,6 +1825,28 @@ impl ForgeRoomApp {
                 self.room.show(ui, has_workspace, rooms::Section::Team);
             }
             SidebarView::SourceControl => self.source_control_view(ui, false),
+            SidebarView::Project(page) => {
+                let root = self.repo_root();
+                match project_tools::show(ui, page, root.as_deref(), &self.runtimes) {
+                    Some(project_tools::Selected::Command(command)) => {
+                        self.show_terminal = true;
+                        self.ensure_terminal();
+                        if let Some(terminal) = &mut self.terminal {
+                            terminal.send(format!("{command}\r").as_bytes());
+                            self.status = format!("Running {command} in terminal");
+                        }
+                    }
+                    Some(project_tools::Selected::Studio) => self.gallery.open(),
+                    Some(project_tools::Selected::ToggleTerminal) => {
+                        self.show_terminal = !self.show_terminal;
+                    }
+                    Some(project_tools::Selected::ToggleDock) => self.show_right = !self.show_right,
+                    Some(project_tools::Selected::TogglePreview) => {
+                        self.show_preview = !self.show_preview;
+                    }
+                    None => {}
+                }
+            }
         }
     }
 
@@ -1840,11 +1881,58 @@ impl ForgeRoomApp {
             explorer::Action::OpenFile(path) => self.open_path(path),
             explorer::Action::OpenFolder => self.open_folder_dialog(),
             explorer::Action::NewFile => self.new_file(),
+            explorer::Action::NewFolder(parent) => {
+                self.new_folder_parent = Some(parent);
+                self.new_folder_name.clear();
+            }
             explorer::Action::Refresh => {
                 if let Some(workspace) = self.workspace.as_mut() {
                     workspace.refresh();
                 }
                 self.refresh_git();
+            }
+        }
+        if let Some(parent) = self.new_folder_parent.clone() {
+            let mut create = false;
+            let mut cancel = false;
+            egui::Window::new("New folder")
+                .collapsible(false)
+                .resizable(false)
+                .show(&self.egui_ctx, |ui| {
+                    ui.label(format!("In {}", parent.display()));
+                    let field = ui.text_edit_singleline(&mut self.new_folder_name);
+                    if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                        create = true;
+                    }
+                    ui.horizontal(|ui| {
+                        create |= ui.button("Create").clicked();
+                        cancel = ui.button("Cancel").clicked();
+                    });
+                });
+            if cancel {
+                self.new_folder_parent = None;
+            }
+            if create {
+                let name = self.new_folder_name.trim();
+                if name.is_empty()
+                    || name == "."
+                    || name == ".."
+                    || name.contains('/')
+                    || name.contains('\\')
+                {
+                    self.status = "Enter one valid folder name".into();
+                } else {
+                    match fs::create_dir(parent.join(name)) {
+                        Ok(()) => {
+                            if let Some(workspace) = &mut self.workspace {
+                                workspace.refresh();
+                            }
+                            self.new_folder_parent = None;
+                            self.status = format!("Created folder {name}");
+                        }
+                        Err(error) => self.status = format!("Cannot create folder: {error}"),
+                    }
+                }
             }
         }
     }
