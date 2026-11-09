@@ -10,6 +10,8 @@
 
 **9 November CI and follow-on:** The final PR #23 Windows verification passed. PR #24 merged local Room snapshot export after Windows verification passed. A further bottom-panel slice connects Output to the current terminal screen and Problems to visible error/warning lines; these are terminal-derived summaries, not language-server diagnostics. Debug Console and Ports remain disabled until adapters exist.
 
+**9 November explorer follow-on:** PR #25 merged the bottom Output/Problems views after Windows verification passed. Explorer folder menus now offer New file here, opening a save dialog in that folder and creating the chosen file only if it does not already exist. Compilation and desktop acceptance for this follow-on are pending.
+
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
 ### Navigate this document

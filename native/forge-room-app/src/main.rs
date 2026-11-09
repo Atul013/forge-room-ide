@@ -384,6 +384,32 @@ impl ForgeRoomApp {
         self.focus_editor = true;
     }
 
+    fn new_file_in(&mut self, directory: &std::path::Path) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_directory(directory)
+            .set_file_name("untitled.txt")
+            .save_file()
+        else {
+            return;
+        };
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => {
+                if let Some(workspace) = &mut self.workspace {
+                    workspace.refresh();
+                }
+                self.open_path(path);
+                self.refresh_git();
+            }
+            Err(error) => {
+                self.status = format!("Cannot create {}: {error}", path.display());
+            }
+        }
+    }
+
     /// Save tab `index`, asking for a path first when it has none. False when cancelled or failed.
     fn save_index(&mut self, index: usize, force_dialog: bool) -> bool {
         let Some(tab) = self.tabs.tabs.get_mut(index) else {
@@ -1958,6 +1984,7 @@ impl ForgeRoomApp {
             explorer::Action::OpenFile(path) => self.open_path(path),
             explorer::Action::OpenFolder => self.open_folder_dialog(),
             explorer::Action::NewFile => self.new_file(),
+            explorer::Action::NewFileIn(directory) => self.new_file_in(&directory),
             explorer::Action::NewFolder(parent) => {
                 self.new_folder_parent = Some(parent);
                 self.new_folder_name.clear();

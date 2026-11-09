@@ -8,6 +8,7 @@ pub enum Action {
     OpenFolder,
     Refresh,
     NewFile,
+    NewFileIn(PathBuf),
     NewFolder(PathBuf),
 }
 
@@ -72,6 +73,10 @@ pub fn show(ui: &mut egui::Ui, workspace: &mut Option<Workspace>, active: Option
             let title = workspace.name();
             let response = row(ui, 0, &title, Kind::Dir { open }, false, true);
             response.context_menu(|ui| {
+                if ui.button("New file here").clicked() {
+                    action = Action::NewFileIn(root.clone());
+                    ui.close();
+                }
                 if ui.button("New folder here").clicked() {
                     action = Action::NewFolder(root.clone());
                     ui.close();
@@ -104,6 +109,10 @@ fn tree(
             let open = workspace.is_expanded(&entry.path);
             let response = row(ui, depth, &entry.name, Kind::Dir { open }, false, false);
             response.context_menu(|ui| {
+                if ui.button("New file here").clicked() {
+                    *action = Action::NewFileIn(entry.path.clone());
+                    ui.close();
+                }
                 if ui.button("New folder here").clicked() {
                     *action = Action::NewFolder(entry.path.clone());
                     ui.close();
