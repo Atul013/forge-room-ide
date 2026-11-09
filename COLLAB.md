@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-09 Codex: PR #29 local Room decisions passed Windows core and graphical CI and merged. PRs #27-#29 now provide local Chat, task links, and decisions; desktop and two-client acceptance remain open. No open PRs remain on the main repository.
+
 - 2026-11-09 Codex: PR #28 task-linked local Chat passed Windows CI and merged. Started local decision markers and a decisions-only Chat filter; compatibility with old messages is checked in core. Network sync and desktop acceptance remain open.
 
 - 2026-11-09 Codex: starting additive local decision markers in shared RoomMessage data and Chat UI. Existing messages default to ordinary messages; decision filtering remains local and does not imply network delivery.

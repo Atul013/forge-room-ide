@@ -18,6 +18,8 @@
 
 **9 November decision follow-on:** PR #28 merged saved-task links after Windows verification passed. The local Chat composer now offers Record as decision, and history can show decisions only. The marker is attributed and persisted, with old messages defaulting to regular messages. This follow-on awaits CI and desktop acceptance; cross-client decision sync remains open.
 
+**9 November communication result:** PR #29 passed Windows core and graphical formatting, checks, tests, and Clippy and merged. PRs #27-#29 are source and CI complete. A visible desktop Chat trial, network transport, DM privacy, reconnect, and two-machine acceptance remain open; R03 is not complete.
+
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
 ### Navigate this document
