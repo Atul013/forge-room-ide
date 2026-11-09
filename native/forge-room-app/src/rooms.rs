@@ -74,6 +74,7 @@ pub struct RoomView {
     workspace_name: String,
     acting_as: String,
     error: Option<String>,
+    notice: Option<String>,
     load_failed: bool,
     people_open: bool,
     tasks_open: bool,
@@ -103,6 +104,7 @@ impl Default for RoomView {
             workspace_name: String::new(),
             acting_as: String::new(),
             error: None,
+            notice: None,
             load_failed: false,
             people_open: true,
             tasks_open: true,
@@ -363,6 +365,12 @@ impl RoomView {
                     ui.label(RichText::new(error).color(RED));
                 });
             ui.add_space(8.0);
+        }
+        if let Some(notice) = &self.notice {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(RichText::new(notice).color(GREEN));
+            });
         }
 
         let Some(state) = self.state.clone() else {
@@ -1160,6 +1168,19 @@ impl RoomView {
     }
 
     fn activity(&mut self, ui: &mut egui::Ui, state: &RoomState) {
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            if ui.button("Export local room snapshot").clicked() {
+                self.export_snapshot(state);
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.small(
+                "Includes people, tasks, evidence, and activity. Choose a private destination.",
+            );
+        });
+        ui.add_space(8.0);
         let (_, _) = section(
             ui,
             "ACTIVITY",
@@ -1259,6 +1280,41 @@ impl RoomView {
         }
         if visible_events.is_empty() {
             empty_state(ui, "No matching activity", "Try another person or detail.");
+        }
+    }
+
+    fn export_snapshot(&mut self, state: &RoomState) {
+        use std::io::Write;
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("JSON", &["json"])
+            .set_file_name("forge-room-snapshot.json")
+            .save_file()
+        else {
+            return;
+        };
+        let result = (|| -> Result<(), String> {
+            let bytes = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .map_err(|error| error.to_string())?;
+            if let Err(error) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
+                drop(file);
+                let _ = std::fs::remove_file(&path);
+                return Err(error.to_string());
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.error = None;
+                self.notice = Some(format!("Room snapshot exported to {}", path.display()));
+            }
+            Err(error) => {
+                self.notice = None;
+                self.error = Some(format!("Could not export room snapshot: {error}"));
+            }
         }
     }
 }

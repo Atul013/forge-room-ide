@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-09 Codex: PR #23 merged native project panels and explorer actions. The final CI run was still active at merge time. A follow-on branch adds explicit local Room snapshot export and awaits CI/desktop acceptance.
+
 - 2026-11-09 Codex: expanded project command discovery to package scripts, Go, and Maven; added Explorer New Folder and Copy Path actions. The source diff is ready for compilation; no local Cargo toolchain is available in this shell.
 
 - 2026-11-09 Codex: added native project rail panels for Workflows, Models, Run & Debug, Tests, Extensions, Settings, and Accessibility. Fixed marker-based commands can be launched explicitly in the integrated terminal. Rust toolchain is absent from this shell; compilation and desktop interaction remain unverified.

@@ -6,6 +6,8 @@
 
 **9 November follow-on slice:** Workflows, Tests, and Run now discover safe-name npm scripts from `package.json` and fixed Go/Maven commands in addition to Rust/Python commands. The explorer has a New Folder action and Copy Path context actions for files and folders. These are source changes awaiting compilation and desktop acceptance.
 
+**9 November integration:** PR #23 merged the project panels and explorer actions. Its last Windows CI run was still running when the merge completed; source checks, formatting, and graphical compilation had passed in the prior run, while a parallel Git test temp-directory collision was fixed in the final commit. Desktop acceptance remains open. A follow-on Room snapshot export slice is under review.
+
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
 ### Navigate this document
