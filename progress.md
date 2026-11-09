@@ -14,6 +14,8 @@
 
 **9 November local communication slice:** A new Chat dock tab stores bounded public messages in the local room state, shows the selected participant as author, supports local search, and labels the absence of network delivery and DMs. Existing room files load with an empty message list. Source and focused core checks are pending CI and desktop acceptance; this does not close R03's two-client privacy gate.
 
+**9 November Chat integration:** PR #27 merged after Windows core and graphical checks, tests, formatting, and Clippy passed. A follow-on slice adds optional saved-task links to local messages, with a task selector and persisted task ID. It remains local; network transport, DMs, and two-client privacy acceptance are still open.
+
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
 ### Navigate this document

@@ -39,7 +39,10 @@ enum Intent {
         text: String,
     },
     ActAs(String),
-    PostMessage(String),
+    PostMessage {
+        text: String,
+        task: Option<String>,
+    },
 }
 
 #[derive(Default)]
@@ -85,6 +88,7 @@ pub struct RoomView {
     activity_query: String,
     chat_query: String,
     chat_draft: String,
+    chat_task: Option<String>,
     expanded: Option<String>,
     task_query: String,
     task_status_filter: Option<TaskStatus>,
@@ -117,6 +121,7 @@ impl Default for RoomView {
             activity_query: String::new(),
             chat_query: String::new(),
             chat_draft: String::new(),
+            chat_task: None,
             expanded: None,
             task_query: String::new(),
             task_owner_filter: None,
@@ -258,8 +263,10 @@ impl RoomView {
                 self.error = None;
             }
             Intent::ActAs(id) => self.acting_as = id,
-            Intent::PostMessage(text) => {
-                if self.mutate(|state, actor| state.post_message(actor, &text)) {
+            Intent::PostMessage { text, task } => {
+                if self
+                    .mutate(|state, actor| state.post_task_message(actor, &text, task.as_deref()))
+                {
                     self.chat_draft.clear();
                 }
             }
@@ -1192,6 +1199,27 @@ impl RoomView {
             ui.add_space(14.0);
             ui.label(format!("As {author}"));
         });
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            egui::ComboBox::from_id_salt("chat-task-link")
+                .selected_text(
+                    self.chat_task
+                        .as_deref()
+                        .and_then(|id| state.tasks.iter().find(|task| task.id == id))
+                        .map(|task| format!("Task: {}", task.title))
+                        .unwrap_or_else(|| "No linked task".into()),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.chat_task, None, "No linked task");
+                    for task in state.tasks.iter().take(100) {
+                        ui.selectable_value(
+                            &mut self.chat_task,
+                            Some(task.id.clone()),
+                            task.title.as_str(),
+                        );
+                    }
+                });
+        });
         let mut send = false;
         ui.horizontal(|ui| {
             ui.add_space(14.0);
@@ -1204,7 +1232,10 @@ impl RoomView {
                 || (input.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
         });
         if send {
-            intents.push(Intent::PostMessage(self.chat_draft.clone()));
+            intents.push(Intent::PostMessage {
+                text: self.chat_draft.clone(),
+                task: self.chat_task.clone(),
+            });
         }
         ui.horizontal(|ui| {
             ui.add_space(14.0);
@@ -1260,6 +1291,15 @@ impl RoomView {
                         ));
                     });
                     ui.label(message.text.as_str());
+                    if let Some(task_id) = &message.task_id {
+                        let title = state
+                            .tasks
+                            .iter()
+                            .find(|task| &task.id == task_id)
+                            .map(|task| task.title.as_str())
+                            .unwrap_or("Task unavailable");
+                        ui.small(format!("Linked task: {title} ({task_id})"));
+                    }
                 });
             ui.separator();
         }

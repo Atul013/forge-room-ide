@@ -142,6 +142,8 @@ pub struct RoomMessage {
     pub id: String,
     pub actor_id: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     pub recorded_at_epoch_seconds: u64,
 }
 
@@ -330,10 +332,24 @@ impl RoomState {
     }
 
     pub fn post_message(&mut self, actor_id: &str, text: &str) -> Result<(), DomainError> {
+        self.post_task_message(actor_id, text, None)
+    }
+
+    pub fn post_task_message(
+        &mut self,
+        actor_id: &str,
+        text: &str,
+        task_id: Option<&str>,
+    ) -> Result<(), DomainError> {
         self.require_connected(actor_id)?;
         let text = text.trim();
         if text.is_empty() || text.chars().count() > 2000 {
             return Err(DomainError::InvalidMessage);
+        }
+        if let Some(task_id) = task_id {
+            if !self.tasks.iter().any(|task| task.id == task_id) {
+                return Err(DomainError::TaskNotFound);
+            }
         }
         let next = self
             .messages
@@ -346,6 +362,7 @@ impl RoomState {
             id: format!("message-{next}"),
             actor_id: actor_id.to_string(),
             text: text.to_string(),
+            task_id: task_id.map(str::to_string),
             recorded_at_epoch_seconds: now_epoch_seconds(),
         });
         if self.messages.len() > 500 {
@@ -825,5 +842,23 @@ mod tests {
         old.as_object_mut().unwrap().remove("messages");
         let loaded: RoomState = serde_json::from_value(old).unwrap();
         assert!(loaded.messages.is_empty());
+    }
+
+    #[test]
+    fn task_linked_messages_validate_saved_task_ids() {
+        let mut room = room();
+        assert_eq!(
+            room.post_task_message("alice", "blocked", Some("missing")),
+            Err(DomainError::TaskNotFound)
+        );
+        room.create_task("host", task("api", "alice", vec![]))
+            .unwrap();
+        room.post_task_message("alice", "API is ready", Some("api"))
+            .unwrap();
+        assert_eq!(room.messages[0].task_id.as_deref(), Some("api"));
+        let mut old = serde_json::to_value(&room).unwrap();
+        old["messages"][0].as_object_mut().unwrap().remove("taskId");
+        let loaded: RoomState = serde_json::from_value(old).unwrap();
+        assert_eq!(loaded.messages[0].task_id, None);
     }
 }
