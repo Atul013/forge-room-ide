@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-09 Codex: starting a shared `native/forge-room-core` additive local public-chat field and participant-checked post operation, with native Chat dock UI. Existing room files should load with an empty message list. This is local-only communication, not network chat or DMs.
+
 - 2026-11-09 Codex: PR #26 New file here passed Windows checks, tests, formatting, and Clippy, then merged cleanly. No open PRs remain in the main repository; desktop interaction remains unverified.
 
 - 2026-11-09 Codex: PR #25 Output and Problems passed Windows CI and merged. Started an Explorer folder-context New file here action with atomic no-overwrite creation; CI and desktop acceptance pending.

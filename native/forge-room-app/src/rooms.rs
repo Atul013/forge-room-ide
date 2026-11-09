@@ -39,6 +39,7 @@ enum Intent {
         text: String,
     },
     ActAs(String),
+    PostMessage(String),
 }
 
 #[derive(Default)]
@@ -62,6 +63,7 @@ struct NewPerson {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Team,
+    Chat,
     Agents,
     Tasks,
     Activity,
@@ -81,6 +83,8 @@ pub struct RoomView {
     activity_open: bool,
     show_more_activity: bool,
     activity_query: String,
+    chat_query: String,
+    chat_draft: String,
     expanded: Option<String>,
     task_query: String,
     task_status_filter: Option<TaskStatus>,
@@ -111,6 +115,8 @@ impl Default for RoomView {
             activity_open: true,
             show_more_activity: false,
             activity_query: String::new(),
+            chat_query: String::new(),
+            chat_draft: String::new(),
             expanded: None,
             task_query: String::new(),
             task_owner_filter: None,
@@ -252,6 +258,11 @@ impl RoomView {
                 self.error = None;
             }
             Intent::ActAs(id) => self.acting_as = id,
+            Intent::PostMessage(text) => {
+                if self.mutate(|state, actor| state.post_message(actor, &text)) {
+                    self.chat_draft.clear();
+                }
+            }
             Intent::AddPerson { name, agent, owner } => {
                 let ok = self.mutate(|state, actor| {
                     let participant = Participant {
@@ -329,6 +340,7 @@ impl RoomView {
             ui.label(
                 RichText::new(match part {
                     Section::Team => "TEAM",
+                    Section::Chat => "CHAT",
                     Section::Agents => "AI AGENTS",
                     Section::Tasks => "TASKS",
                     Section::Activity => "ACTIVITY",
@@ -429,6 +441,7 @@ impl RoomView {
                         self.people(ui, &state, &mut intents);
                     }
                     Section::Tasks => self.tasks(ui, &state, &mut intents),
+                    Section::Chat => self.chat(ui, &state, &mut intents),
                     Section::Activity => self.activity(ui, &state),
                 }
                 ui.add_space(16.0);
@@ -1164,6 +1177,91 @@ impl RoomView {
                 kind: self.evidence_kind.clone(),
                 text: self.evidence_text.clone(),
             });
+        }
+    }
+
+    fn chat(&mut self, ui: &mut egui::Ui, state: &RoomState, intents: &mut Vec<Intent>) {
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(14.0);
+            ui.label("Local room messages");
+            ui.small("Stored on this computer; no network delivery or private messages.");
+        });
+        ui.add_space(8.0);
+        let author = name_of(state, &self.acting_as);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.label(format!("As {author}"));
+        });
+        let mut send = false;
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            let input = ui.add(
+                egui::TextEdit::singleline(&mut self.chat_draft)
+                    .hint_text("Write a room message")
+                    .desired_width((ui.available_width() - 80.0).max(100.0)),
+            );
+            send = ui.button("Send").clicked()
+                || (input.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
+        });
+        if send {
+            intents.push(Intent::PostMessage(self.chat_draft.clone()));
+        }
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.small(format!(
+                "{} / 2000 characters",
+                self.chat_draft.chars().count()
+            ));
+        });
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.chat_query)
+                    .hint_text("Search local messages")
+                    .desired_width((ui.available_width() - 14.0).max(120.0)),
+            );
+        });
+        let query = self.chat_query.trim().to_lowercase();
+        let visible: Vec<_> = state
+            .messages
+            .iter()
+            .rev()
+            .filter(|message| {
+                query.is_empty()
+                    || message.text.to_lowercase().contains(&query)
+                    || name_of(state, &message.actor_id)
+                        .to_lowercase()
+                        .contains(&query)
+            })
+            .take(100)
+            .collect();
+        if visible.is_empty() {
+            empty_state(
+                ui,
+                if state.messages.is_empty() {
+                    "No messages yet"
+                } else {
+                    "No matching messages"
+                },
+                "Messages posted in this local room appear here.",
+            );
+        }
+        for message in visible {
+            egui::Frame::new()
+                .inner_margin(Margin::symmetric(14, 7))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(name_of(state, &message.actor_id)).strong());
+                        ui.small(room_state::ago(
+                            now_epoch_seconds(),
+                            message.recorded_at_epoch_seconds,
+                        ));
+                    });
+                    ui.label(message.text.as_str());
+                });
+            ui.separator();
         }
     }
 

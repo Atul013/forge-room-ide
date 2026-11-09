@@ -12,6 +12,8 @@
 
 **9 November explorer follow-on:** PR #25 merged the bottom Output/Problems views after Windows verification passed. PR #26 merged New file here from Explorer folder menus after Windows verification passed. It opens a save dialog in that folder and creates the chosen file only if it does not already exist. Desktop interaction remains unverified.
 
+**9 November local communication slice:** A new Chat dock tab stores bounded public messages in the local room state, shows the selected participant as author, supports local search, and labels the absence of network delivery and DMs. Existing room files load with an empty message list. Source and focused core checks are pending CI and desktop acceptance; this does not close R03's two-client privacy gate.
+
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
 ### Navigate this document

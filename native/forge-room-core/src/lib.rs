@@ -138,6 +138,15 @@ pub struct ActivityEvent {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RoomMessage {
+    pub id: String,
+    pub actor_id: String,
+    pub text: String,
+    pub recorded_at_epoch_seconds: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RoomState {
     pub schema_version: u32,
     pub room_id: String,
@@ -148,6 +157,8 @@ pub struct RoomState {
     pub pending_handoffs: Vec<HandoffRequest>,
     pub evidence: Vec<Evidence>,
     pub activity: Vec<ActivityEvent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub messages: Vec<RoomMessage>,
     pub sharing: SharingPolicy,
 }
 
@@ -167,6 +178,7 @@ pub enum DomainError {
     InvalidRole,
     InvalidStatus,
     InvalidTitle,
+    InvalidMessage,
     NewTaskMustStartOpen,
     OnlyHostCanAddParticipants,
     OnlyHostCanApproveHandoff,
@@ -221,6 +233,7 @@ impl fmt::Display for DomainError {
             Self::InvalidRole => write!(formatter, "role must be human or agent"),
             Self::InvalidStatus => write!(formatter, "status must be open, in-progress, or done"),
             Self::InvalidTitle => write!(formatter, "task title must contain 1 to 200 characters"),
+            Self::InvalidMessage => write!(formatter, "message must contain 1 to 2000 characters"),
             Self::NewTaskMustStartOpen => write!(
                 formatter,
                 "new tasks must start open without a worktree branch"
@@ -279,6 +292,7 @@ impl RoomState {
             pending_handoffs: Vec::new(),
             evidence: Vec::new(),
             activity: Vec::new(),
+            messages: Vec::new(),
             sharing: SharingPolicy::default(),
         }
     }
@@ -312,6 +326,33 @@ impl RoomState {
         let detail = format!("{} joined as {:?}", participant.name, participant.role);
         self.participants.push(participant);
         self.record_activity(actor_id, detail);
+        Ok(())
+    }
+
+    pub fn post_message(&mut self, actor_id: &str, text: &str) -> Result<(), DomainError> {
+        self.require_connected(actor_id)?;
+        let text = text.trim();
+        if text.is_empty() || text.chars().count() > 2000 {
+            return Err(DomainError::InvalidMessage);
+        }
+        let next = self
+            .messages
+            .last()
+            .and_then(|message| message.id.strip_prefix("message-"))
+            .and_then(|id| id.parse::<u64>().ok())
+            .unwrap_or(0)
+            .saturating_add(1);
+        self.messages.push(RoomMessage {
+            id: format!("message-{next}"),
+            actor_id: actor_id.to_string(),
+            text: text.to_string(),
+            recorded_at_epoch_seconds: now_epoch_seconds(),
+        });
+        if self.messages.len() > 500 {
+            let excess = self.messages.len() - 500;
+            self.messages.drain(0..excess);
+        }
+        self.record_activity(actor_id, "posted a room message".into());
         Ok(())
     }
 
@@ -750,5 +791,39 @@ mod tests {
         assert!(!room.sharing.share_saved_diffs);
         assert!(!room.sharing.share_unsaved_buffers);
         assert!(!room.sharing.share_terminal_output);
+    }
+
+    #[test]
+    fn local_messages_require_a_participant_and_load_from_old_rooms() {
+        let mut room = room();
+        assert_eq!(
+            room.post_message("outsider", "hello"),
+            Err(DomainError::ActorNotConnected)
+        );
+        assert_eq!(
+            room.post_message("alice", "  "),
+            Err(DomainError::InvalidMessage)
+        );
+        assert_eq!(
+            room.post_message("alice", &"x".repeat(2001)),
+            Err(DomainError::InvalidMessage)
+        );
+        room.post_message("alice", "  hello room  ").unwrap();
+        room.post_message("bob", "second").unwrap();
+        assert_eq!(room.messages[0].id, "message-1");
+        assert_eq!(room.messages[0].text, "hello room");
+        assert_eq!(room.messages[1].id, "message-2");
+        assert!(room
+            .activity
+            .iter()
+            .any(|event| event.detail == "posted a room message"));
+        assert!(!room
+            .activity
+            .iter()
+            .any(|event| event.detail.contains("hello room")));
+        let mut old = serde_json::to_value(&room).unwrap();
+        old.as_object_mut().unwrap().remove("messages");
+        let loaded: RoomState = serde_json::from_value(old).unwrap();
+        assert!(loaded.messages.is_empty());
     }
 }

@@ -59,6 +59,7 @@ enum Rail {
 enum RightTab {
     Ai,
     Room,
+    Chat,
     Agents,
     Tasks,
     Activity,
@@ -2548,6 +2549,7 @@ impl ForgeRoomApp {
                                 ui.spacing_mut().item_spacing.x = 0.0;
                                 for (tab, label) in [
                                     (RightTab::Room, "Team"),
+                                    (RightTab::Chat, "Chat"),
                                     (RightTab::Agents, "Agents"),
                                     (RightTab::Tasks, "Tasks"),
                                     (RightTab::Activity, "Activity"),
@@ -2627,10 +2629,15 @@ impl ForgeRoomApp {
             }
         }
         match self.right_tab {
-            RightTab::Room | RightTab::Agents | RightTab::Tasks | RightTab::Activity => {
+            RightTab::Room
+            | RightTab::Chat
+            | RightTab::Agents
+            | RightTab::Tasks
+            | RightTab::Activity => {
                 let has_workspace = self.workspace.is_some();
                 let part = match self.right_tab {
                     RightTab::Agents => rooms::Section::Agents,
+                    RightTab::Chat => rooms::Section::Chat,
                     RightTab::Tasks => rooms::Section::Tasks,
                     RightTab::Activity => rooms::Section::Activity,
                     _ => rooms::Section::Team,
