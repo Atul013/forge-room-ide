@@ -64,6 +64,13 @@ enum RightTab {
     Activity,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BottomTab {
+    Terminal,
+    Output,
+    Problems,
+}
+
 fn main() {
     if let Err(error) = run() {
         let message = format!("{error:#}");
@@ -199,6 +206,7 @@ struct ForgeRoomApp {
     room: rooms::RoomView,
     terminal: Option<terminal::Terminal>,
     show_terminal: bool,
+    bottom_tab: BottomTab,
     show_right: bool,
     show_preview: bool,
     lobby_close_warned: bool,
@@ -299,6 +307,7 @@ impl ForgeRoomApp {
             room: rooms::RoomView::default(),
             terminal: None,
             show_terminal: true,
+            bottom_tab: BottomTab::Terminal,
             show_right: true,
             show_preview: true,
             lobby_close_warned: false,
@@ -545,9 +554,17 @@ impl ForgeRoomApp {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(12.0);
-            underline_tab(ui, "Terminal", true, true);
-            for label in ["Output", "Problems", "Debug Console", "Ports"] {
-                underline_tab(ui, label, false, false).on_hover_text("Coming soon");
+            for (tab, label) in [
+                (BottomTab::Terminal, "Terminal"),
+                (BottomTab::Output, "Output"),
+                (BottomTab::Problems, "Problems"),
+            ] {
+                if underline_tab(ui, label, self.bottom_tab == tab, true).clicked() {
+                    self.bottom_tab = tab;
+                }
+            }
+            for label in ["Debug Console", "Ports"] {
+                underline_tab(ui, label, false, false).on_hover_text("Adapter not connected");
             }
             if ui.available_width() > 760.0
                 && let Some(terminal) = &self.terminal
@@ -643,6 +660,11 @@ impl ForgeRoomApp {
                         });
                 });
         }
+        if self.bottom_tab != BottomTab::Terminal {
+            self.terminal_has_focus = false;
+            self.terminal_output_view(ui);
+            return;
+        }
         let request = std::mem::take(&mut self.terminal_focus_request);
         match self.terminal.as_mut() {
             Some(terminal) => self.terminal_has_focus = terminal.show(ui, request),
@@ -657,6 +679,56 @@ impl ForgeRoomApp {
                     ui.label(egui::RichText::new(message).color(theme::text_dim()));
                 });
             }
+        }
+    }
+
+    fn terminal_output_view(&mut self, ui: &mut egui::Ui) {
+        let Some(terminal) = &self.terminal else {
+            ui.label("Start the terminal to see local output.");
+            return;
+        };
+        let text = terminal.screen_text();
+        match self.bottom_tab {
+            BottomTab::Output => {
+                ui.horizontal(|ui| {
+                    ui.label("Current terminal screen");
+                    if ui.button("Copy output").clicked() {
+                        ui.ctx().copy_text(text.clone());
+                    }
+                });
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.monospace(if text.trim().is_empty() {
+                        "No output yet."
+                    } else {
+                        &text
+                    });
+                });
+            }
+            BottomTab::Problems => {
+                ui.label("Errors and warnings on the current terminal screen");
+                let matches: Vec<_> = text
+                    .lines()
+                    .filter(|line| {
+                        let lower = line.to_ascii_lowercase();
+                        lower.contains("error:")
+                            || lower.contains("error[")
+                            || lower.contains("warning:")
+                    })
+                    .take(50)
+                    .collect();
+                if matches.is_empty() {
+                    ui.label(
+                        "No error or warning lines visible. Language diagnostics are not connected yet.",
+                    );
+                } else {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for line in matches {
+                            ui.monospace(line);
+                        }
+                    });
+                }
+            }
+            BottomTab::Terminal => {}
         }
     }
 
@@ -1276,18 +1348,22 @@ impl ForgeRoomApp {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
                 ui.add_space(14.0);
-                let (rect, response) =
-                    ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
-                icons::draw(
-                    ui.painter(),
-                    "cloud",
-                    rect.center(),
-                    20.0,
-                    theme::mix(theme::bg_activity(), theme::text_dim(), 0.6),
-                );
-                response.on_hover_text("Cloud: coming soon");
-                if ui.button("Settings").clicked() {
-                    self.switch_view(SidebarView::Project(project_tools::Page::Settings));
+                for (icon, tip, enabled) in [
+                    ("cloud", "Cloud: coming soon", false),
+                    ("settings", "Settings", true),
+                ] {
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(30.0, 30.0),
+                        if enabled {
+                            egui::Sense::click()
+                        } else {
+                            egui::Sense::hover()
+                        },
+                    );
+                    icons::draw(ui.painter(), icon, rect.center(), 20.0, theme::text_dim());
+                    if response.on_hover_text(tip).clicked() {
+                        self.switch_view(SidebarView::Project(project_tools::Page::Settings));
+                    }
                 }
             });
             self.rail_item(
@@ -1830,6 +1906,7 @@ impl ForgeRoomApp {
                 match project_tools::show(ui, page, root.as_deref(), &self.runtimes) {
                     Some(project_tools::Selected::Command(command)) => {
                         self.show_terminal = true;
+                        self.bottom_tab = BottomTab::Terminal;
                         self.ensure_terminal();
                         if let Some(terminal) = &mut self.terminal {
                             terminal.send(format!("{command}\r").as_bytes());

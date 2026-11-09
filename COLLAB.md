@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-09 Codex: PR #23 final Windows CI passed after merge. PR #24 Room snapshot export passed Windows CI and merged. Started bottom-panel Output and Problems views from current terminal content; language diagnostics and debug adapters remain separate pending work.
+
 - 2026-11-09 Codex: PR #23 merged native project panels and explorer actions. The final CI run was still active at merge time. A follow-on branch adds explicit local Room snapshot export and awaits CI/desktop acceptance.
 
 - 2026-11-09 Codex: expanded project command discovery to package scripts, Go, and Maven; added Explorer New Folder and Copy Path actions. The source diff is ready for compilation; no local Cargo toolchain is available in this shell.
