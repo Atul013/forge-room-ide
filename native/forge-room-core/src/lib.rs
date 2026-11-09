@@ -144,6 +144,8 @@ pub struct RoomMessage {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    #[serde(default)]
+    pub decision: bool,
     pub recorded_at_epoch_seconds: u64,
 }
 
@@ -341,6 +343,16 @@ impl RoomState {
         text: &str,
         task_id: Option<&str>,
     ) -> Result<(), DomainError> {
+        self.post_record(actor_id, text, task_id, false)
+    }
+
+    pub fn post_record(
+        &mut self,
+        actor_id: &str,
+        text: &str,
+        task_id: Option<&str>,
+        decision: bool,
+    ) -> Result<(), DomainError> {
         self.require_connected(actor_id)?;
         let text = text.trim();
         if text.is_empty() || text.chars().count() > 2000 {
@@ -363,13 +375,19 @@ impl RoomState {
             actor_id: actor_id.to_string(),
             text: text.to_string(),
             task_id: task_id.map(str::to_string),
+            decision,
             recorded_at_epoch_seconds: now_epoch_seconds(),
         });
         if self.messages.len() > 500 {
             let excess = self.messages.len() - 500;
             self.messages.drain(0..excess);
         }
-        self.record_activity(actor_id, "posted a room message".into());
+        let detail = if decision {
+            "recorded a room decision"
+        } else {
+            "posted a room message"
+        };
+        self.record_activity(actor_id, detail.into());
         Ok(())
     }
 
@@ -860,5 +878,25 @@ mod tests {
         old["messages"][0].as_object_mut().unwrap().remove("taskId");
         let loaded: RoomState = serde_json::from_value(old).unwrap();
         assert_eq!(loaded.messages[0].task_id, None);
+    }
+
+    #[test]
+    fn decisions_are_attributed_and_old_messages_remain_regular() {
+        let mut room = room();
+        room.post_record("alice", "Choose SQLite", None, true)
+            .unwrap();
+        assert!(room.messages[0].decision);
+        assert_eq!(room.messages[0].actor_id, "alice");
+        assert!(room
+            .activity
+            .iter()
+            .any(|event| event.detail == "recorded a room decision"));
+        let mut old = serde_json::to_value(&room).unwrap();
+        old["messages"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("decision");
+        let loaded: RoomState = serde_json::from_value(old).unwrap();
+        assert!(!loaded.messages[0].decision);
     }
 }

@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-09 Codex: PR #28 task-linked local Chat passed Windows CI and merged. Started local decision markers and a decisions-only Chat filter; compatibility with old messages is checked in core. Network sync and desktop acceptance remain open.
+
+- 2026-11-09 Codex: starting additive local decision markers in shared RoomMessage data and Chat UI. Existing messages default to ordinary messages; decision filtering remains local and does not imply network delivery.
+
 - 2026-11-09 Codex: PR #27 local public Chat passed Windows CI and merged. Started additive task links in the shared message model and Chat composer, with saved-task validation and legacy-message loading; CI and desktop acceptance pending.
 
 - 2026-11-09 Codex: starting a shared `native/forge-room-core` additive local public-chat field and participant-checked post operation, with native Chat dock UI. Existing room files should load with an empty message list. This is local-only communication, not network chat or DMs.

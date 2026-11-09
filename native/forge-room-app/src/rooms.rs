@@ -42,6 +42,7 @@ enum Intent {
     PostMessage {
         text: String,
         task: Option<String>,
+        decision: bool,
     },
 }
 
@@ -89,6 +90,8 @@ pub struct RoomView {
     chat_query: String,
     chat_draft: String,
     chat_task: Option<String>,
+    chat_decision: bool,
+    decisions_only: bool,
     expanded: Option<String>,
     task_query: String,
     task_status_filter: Option<TaskStatus>,
@@ -122,6 +125,8 @@ impl Default for RoomView {
             chat_query: String::new(),
             chat_draft: String::new(),
             chat_task: None,
+            chat_decision: false,
+            decisions_only: false,
             expanded: None,
             task_query: String::new(),
             task_owner_filter: None,
@@ -263,11 +268,16 @@ impl RoomView {
                 self.error = None;
             }
             Intent::ActAs(id) => self.acting_as = id,
-            Intent::PostMessage { text, task } => {
-                if self
-                    .mutate(|state, actor| state.post_task_message(actor, &text, task.as_deref()))
-                {
+            Intent::PostMessage {
+                text,
+                task,
+                decision,
+            } => {
+                if self.mutate(|state, actor| {
+                    state.post_record(actor, &text, task.as_deref(), decision)
+                }) {
                     self.chat_draft.clear();
+                    self.chat_decision = false;
                 }
             }
             Intent::AddPerson { name, agent, owner } => {
@@ -1220,6 +1230,10 @@ impl RoomView {
                     }
                 });
         });
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.checkbox(&mut self.chat_decision, "Record as decision");
+        });
         let mut send = false;
         ui.horizontal(|ui| {
             ui.add_space(14.0);
@@ -1235,6 +1249,7 @@ impl RoomView {
             intents.push(Intent::PostMessage {
                 text: self.chat_draft.clone(),
                 task: self.chat_task.clone(),
+                decision: self.chat_decision,
             });
         }
         ui.horizontal(|ui| {
@@ -1253,17 +1268,22 @@ impl RoomView {
                     .desired_width((ui.available_width() - 14.0).max(120.0)),
             );
         });
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.checkbox(&mut self.decisions_only, "Decisions only");
+        });
         let query = self.chat_query.trim().to_lowercase();
         let visible: Vec<_> = state
             .messages
             .iter()
             .rev()
             .filter(|message| {
-                query.is_empty()
-                    || message.text.to_lowercase().contains(&query)
-                    || name_of(state, &message.actor_id)
-                        .to_lowercase()
-                        .contains(&query)
+                (!self.decisions_only || message.decision)
+                    && (query.is_empty()
+                        || message.text.to_lowercase().contains(&query)
+                        || name_of(state, &message.actor_id)
+                            .to_lowercase()
+                            .contains(&query))
             })
             .take(100)
             .collect();
@@ -1285,6 +1305,9 @@ impl RoomView {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(name_of(state, &message.actor_id)).strong());
+                        if message.decision {
+                            ui.label(RichText::new("DECISION").strong().color(GREEN));
+                        }
                         ui.small(room_state::ago(
                             now_epoch_seconds(),
                             message.recorded_at_epoch_seconds,
