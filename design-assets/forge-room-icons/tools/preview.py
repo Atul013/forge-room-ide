@@ -26,7 +26,8 @@ def mix(top, bottom, opacity):
 
 
 def preview():
-    sheet = Image.new("RGB", (1376, 1296), BACKGROUND)
+    height = 680 + ((len(ICONS) - 8 + 3) // 4) * 154
+    sheet = Image.new("RGB", (1376, height), BACKGROUND)
     draw = ImageDraw.Draw(sheet)
     draw.text((48, 32), "Forge Room", font=font(36, True), fill=ACTIVE)
     draw.text((48, 83), "Navigation & sidebar icons", font=font(21), fill=INACTIVE)
@@ -59,8 +60,8 @@ def preview():
             draw.text((cx, top + 119), f"{size} px", font=font(13), fill=INACTIVE, anchor="ma")
         draw.line((left + 18, top + 150, left + 302, top + 150), fill=line, width=1)
 
-    draw.text((48, 1230), "24 icons  /  currentColor  /  round caps & joins", font=font(16), fill=INACTIVE)
-    draw.text((48, 1257), "Room active: identical geometry on a red tinted square. Preview colors only.", font=font(14), fill=INACTIVE)
+    draw.text((48, height - 66), f"{len(ICONS)} icons  /  currentColor  /  round caps & joins", font=font(16), fill=INACTIVE)
+    draw.text((48, height - 39), "Room active: identical geometry on a red tinted square. Preview colors only.", font=font(14), fill=INACTIVE)
     sheet.save(ROOT / "preview.png", optimize=True)
     print(f"Saved preview.png: {sheet.width} x {sheet.height}, exact 24 px and 48 px icon rasters.")
 
@@ -93,7 +94,7 @@ h1{font-size:36px;margin:0}header p,figcaption,footer{color:#A0A1A5}h2{font-size
 </style></head><body><header><h1>Forge Room</h1><p>Navigation &amp; sidebar icons. 1.75 px stroke on a 24 &times; 24 viewBox.</p></header>
 '''
     page += "\n".join(sections)
-    page += '<footer>24 icons. Room active uses identical geometry on a red tinted square. All SVG strokes inherit currentColor.</footer></body></html>\n'
+    page += f'<footer>{len(ICONS)} icons. Room active uses identical geometry on a red tinted square. All SVG strokes inherit currentColor.</footer></body></html>\n'
     (ROOT / "preview.html").write_text(page, encoding="utf-8", newline="\n")
 
 

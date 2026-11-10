@@ -1,11 +1,13 @@
 # Forge Room icons
 
-24 standalone SVGs and a reusable symbol sprite, drawn to the supplied **Forge Room IDE: Product Launch Workspace** reference.
+65 standalone SVGs and a reusable symbol sprite: the original 24 **Forge Room IDE: Product Launch Workspace** icons, plus 40 Room Lobby icons from mailbox task T1 and the angular Forge mark from T4. The original 24 SVG files are byte-identical to the earlier delivery.
 
 ## Files
 
+The user's new architectural F/room brand assets are in `brand/`. This filled brand system is separate from the 65 outline UI icons. See `brand/README.md` for the app/installer integration handoff and exact PNG export sizes. The earlier double-chevron `forge-mark` stays in the outline inventory for compatibility; Forge-owned brand surfaces should now use the architectural mark.
+
 - `svg/`: one SVG per icon; kebab-case filenames.
-- `forge-room-sprite.svg`: 24 symbols with `forge-` prefixed IDs.
+- `forge-room-sprite.svg`: 65 symbols with `forge-` prefixed IDs.
 - `preview.png`: labeled, dark-background comparison sheet. Each icon is rendered at exactly 24 px and 48 px.
 - `preview.html`: offline preview at native CSS pixel sizes; no external dependencies.
 - `manifest.json`: file names, symbol IDs, rail order, and geometry aliases.
@@ -21,6 +23,8 @@ All visible SVG geometry consists of paths. There are no raster images, fonts, S
 Rail order: explorer, search, source-control, run-debug, extensions, ai, terminal, room.
 
 Additional icons: new-file, refresh, more, close, plus, chevron-right, chevron-down, check, arrow-up, arrow-down, folder-open, file, file-json, file-ts, commit-dropdown, room-active.
+
+Room Lobby additions: code, studio, workflows, models, tests, cloud, settings, accessibility-off, pulse, users, user-plus, user, lock, clock, calendar, eye, bot, target, flag, layers, external-link, github, shield, send, warning, bell, rocket, hourglass, upload-box, share, panel-left, panel-bottom, panel-right, window-maximize, window-minimize, circle-check, circle-dot, circle, tag, arrow-right. Their editable paths are in `tools/lobby.py`. All additions inherit `currentColor`; ember accents belong to the host UI.
 
 `room-active.svg` is byte-identical to `room.svg`. Apply the active color and tile in the host UI. `commit-dropdown.svg` is byte-identical to `chevron-down.svg`, giving the commit action its own semantic asset without varying the geometry.
 
@@ -79,4 +83,6 @@ python design-assets/forge-room-icons/tools/validate.py
 
 The PNG builder uses Windows Segoe UI for labels only. Label text is rasterized into the PNG and is never included in the icon SVGs. For another operating system, change the preview builder's font directory and font names.
 
-Validation covers the exact requested inventory, XML structure, path-only artwork, currentColor and stroke settings, room/chevron geometry aliases, all 48 standalone-versus-sprite raster comparisons, painted bounds at 16x resolution, and PNG integrity. Review `preview.png` at 100% zoom to judge the requested pixel sizes.
+The T4 `forge-mark.svg` is a double-chevron angular A-like outline for the title bar and project tile. It follows the same path-only/currentColor/1.75 stroke contract and is available as `forge-forge-mark` in the sprite. This is a clean vector interpretation of the requested A-like mark, not a pixel trace of the small asymmetric top-left logo.
+
+Validation covers the exact requested inventory, XML structure, path-only artwork, currentColor and stroke settings, room/chevron geometry aliases, all 130 standalone-versus-sprite raster comparisons, painted bounds at 16x resolution, original-icon SHA-256 hashes, and PNG integrity. Review `preview.png` at 100% zoom to judge the requested pixel sizes. The expanded PNG is 1376 x 2990 pixels.
