@@ -66,6 +66,46 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 - 2026-11-03 Codex: E02 keyboard-access PR #10 passed Windows formatting, locked checks, tests, and clippy for both Rust crates. Lobby recovery focus, native task/Lobby controls, and accessible names are source complete; desktop keyboard acceptance remains open.
 - 2026-11-02 Codex: audited merged Atul PR #4 and Codex PR #5 on `main`; no unmerged entries or branch divergence. PR #6 restored 149 legacy reference files deleted by PR #4, with exact pre-PR Git blob hashes. Current ownership and remaining acceptance are recorded in `progress.md`.
 
+- 2026-11-02 21:48 IST Codex: started user Source Control redesign (T12); only design-assets/forge-room-ui-spec design preview/spec and mailbox. No app edits; current UX issue traced to mixed scroll and fixed row/text budgets.
+
+- 2026-11-02 21:22 IST Codex: user confirmed native Preview + Open in Browser, preserving no-webview architecture. C6 asks Claude to implement the remaining Code pane; no app edits by Codex.
+
+- 2026-11-02 21:12 IST Codex: completed T7 in design-assets/forge-room-ui-spec/CODE_REVIEW_NOTES_2.md plus tools/review_merge_probes.py and measurements/merge-review-probes.json. Six follow-up findings, T6 status table; seven no-commit Git fixture scenarios and eight document tests verified. C5 sent to Claude; no app edits/commits.
+
+- 2026-11-02 21:05 IST Codex: completed T11 / Claude Log request T8 in design-assets/forge-room-brand and artifacts/forge-room-brand.zip. Three path-only SVGs, seven PNG sizes, seven-frame ICO, recolored Code reference, measured spec; 16 ZIP members verified. Claude notified; T7 continues.
+
+- 2026-11-02 21:02 IST Codex: started T11 consolidated brand package for Claude Log task T8, in design-assets/forge-room-brand; shell approval now available and T7 probes resuming. No app edits.
+
+- 02/11/2026, 21:00 IST Codex: completed T8/T9/T10 references and architectural brand delivery; two 1600x900 PNG references, 9 brand files, updated icons README and 86-member ZIP. C3 asks Claude to integrate in app/installer. No owned app files touched; T7 static review continues.
+
+- 2026-11-02 Codex: user changed Forge brand to the supplied architectural F/room mark and Code view to the new screenshot; T8/T9 recolored design references in progress under design-assets/forge-room-ui-spec; C2 asks Claude to implement across app/installer. T7 review continues. Shell probe blocked by approval-review usage limit; no Rust edits or commits.
+
+- 2026-11-02 16:38 IST Codex: started T7 verification of T6 fixes and new Git merge-conflict code; read-only source review, report under owned design-assets.
+
+- 2026-11-02 16:31 IST Codex: completed T6 read-only review in design-assets/forge-room-ui-spec/CODE_REVIEW_NOTES.md: eight findings, original-module/dependency probes confirm overwrite, long-line stall and terminal selection issues; static findings explicitly labeled by evidence. No source edits or commits; monitoring continues.
+
+- 2026-11-02 16:23 IST Codex: started T6 read-only Rust correctness review (syntax, document/save conflicts, terminal, lobby); findings under owned design-assets only.
+
+- 2026-11-02 16:16 IST Codex: completed T5 final v3 review: design-assets/forge-room-ui-spec/LOBBY_DIFF_3.md, measurements/lobby-diff-3.json, tools/measure_lobby_diff.py. Seven remaining visible categories, matched and accepted-state lists; image hashes, color and layout evidence verified. Polling continues.
+
+- 2026-11-02 16:15 IST Codex: started T5 final measured v3 review in design-assets/forge-room-ui-spec; no app edits.
+
+- 2026-11-02 16:10 IST Codex: completed T3 second review in design-assets/forge-room-ui-spec/LOBBY_DIFF_2.md with measurements/lobby-diff-2.json and updated tools/measure_lobby_diff.py. Matched-items table plus ten remaining differences; source hashes verified. T4 integration acknowledged; polling continues.
+
+- 2026-11-02 16:07 IST Codex: completed T4 Forge mark in design-assets/forge-room-icons/svg/forge-mark.svg with rebuilt previews/sprite/manifest/validation and artifacts/forge-room-icons.zip. Prior 64 icons unchanged, 130 raster comparisons and 77 ZIP members verified. T3 continues.
+
+- 2026-11-02 16:07 IST Codex: started mailbox T3/T4: second Lobby visual diff and angular Forge SVG; only owned design-assets and ZIPs.
+
+- 2026-11-02 15:56 IST Codex: completed mailbox T2: design-assets/forge-room-ui-spec/LOBBY_DIFF.md plus measurements/lobby-diff.json and tools/measure_lobby_diff.py. Twelve prioritized differences, normalized sizes and sampled colors; source hashes/dimensions verified, font uncertainty explicit. No app changes.
+
+- 2026-11-02 15:51 IST Codex: started mailbox T2 measured Lobby visual comparison; design-assets/forge-room-ui-spec only, no Rust changes.
+
+- 2026-11-02 15:44 IST Codex: completed mailbox T1 in design-assets/forge-room-icons/ and artifacts/forge-room-icons.zip: 40 new icons, original 24 unchanged, 128 exact sprite comparisons, 76 ZIP members verified. App-assets copy requested from Claude. Monitoring continues.
+
+- 2026-11-02 15:41 IST Codex: claimed mailbox T1, 40 additional lobby icons in design-assets/forge-room-icons and delivery ZIP; Claude asked to copy into owned app assets.
+
+- 2026-11-02 15:39 IST Codex: started two-minute CODEX_BRIDGE.md monitoring; work limited to assigned design assets and delivery ZIPs; no open tasks.
+
 - 2026-11-01 Codex: completed measured Markdown spec, 11 annotated PNGs, layered SVG/redraw, exhaustive 66,627-color palette, and Rust layout constants. Checked 245 source samples and 86 role samples, SVG/PNG integrity, compiled the Rust helper, and verified all 35 ZIP members. Original font/alpha/blur metadata stays explicitly unavailable; redraw is not pixel identical. App source unchanged.
 
 - 2026-11-01 Codex: started the screenshot-measured Rust/egui handoff; source found in Downloads. Claimed `design-assets/forge-room-ui-spec/*` and its ZIP; no app source edits planned.
@@ -83,3 +123,7 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 - 2026-11-01 Claude (Sonnet 5.5): started work; running `rustup update stable` to fix the rustc 1.92 build blocker.
 - 2026-11-01 Claude (Sonnet 5.5): created this file. Found app UI has no panel margins, and the
   path TextEdit (`desired_width(INFINITY)`) pushes Open/Save off-screen.
+
+- 2026-11-03 Codex: started mailbox T13 read-only review at 90727c5 and alpha.2 checksum/icon verification; no Rust/packaging edits or commits.
+
+- 2026-11-03 Codex: completed T13 read-only review in design-assets/forge-room-ui-spec/CODE_REVIEW_NOTES_3.md; six confirmed findings + one plausible race,91 app tests passed/5 ignored,8 probes passed, alpha.2 hashes/icons verified. C7 handed to Claude. Registered Atul-requested recurring two-minute mailbox task; MAILBOX_POLLING.md records setup and stop. No app/packaging source edits or repository commits.
