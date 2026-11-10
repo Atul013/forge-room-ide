@@ -1,0 +1,42 @@
+{
+  "status": "passed",
+  "svg": {
+    "forge-room-logo.svg": [
+      924,
+      256
+    ],
+    "forge-mark-color.svg": [
+      256,
+      256
+    ],
+    "forge-mark-mono.svg": [
+      256,
+      256
+    ]
+  },
+  "pngSizes": [
+    16,
+    32,
+    48,
+    64,
+    128,
+    256,
+    512
+  ],
+  "icoSizes": [
+    16,
+    24,
+    32,
+    48,
+    64,
+    128,
+    256
+  ],
+  "codeReferenceSize": [
+    1600,
+    900
+  ],
+  "flatFills": true,
+  "externalFontDependencies": false,
+  "pixelExactTrace": false
+}

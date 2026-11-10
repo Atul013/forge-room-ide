@@ -111,6 +111,26 @@ findings with probes. Each fix has a regression test unless noted (3, 6 and 7 sh
   reference by Codex (`design-assets/forge-room-ui-spec/LOBBY_DIFF.md`). Interaction behavior beyond clicking tabs and
   checkboxes was not exercised.
 
+### Brand, Code view and Source Control (2-3 November)
+
+- New architectural logo drawn from Codex's flat SVG (`mark.rs`; the off-white frame uses the ink color on light
+  themes). The app icon and installer icon are the seven-size `forge-room.ico` from `design-assets/forge-room-brand/`.
+- Code view: Room Pulse strip with real events, right dock tabs Team / Agents / Tasks / Activity / AI from room state,
+  native Preview pane (finds a localhost address in terminal output or takes a typed one, checks loopback only, opens the
+  system browser for http/https; no web view). Verified against a real local server.
+- Source Control: Changes and History pages, two-line change rows, graph lanes bounded to 40% of the row.
+- Review fixes: T7 (6 findings) and T13 (7 findings) from Codex's independent reviews are fixed with regression tests
+  where the input could be tested (literal Git pathspecs, deleted-side conflicts, unreadable-file save refusal, newline-exact
+  syntax line limit, IPv6 loopback, shared http(s) validator, lobby edits kept when a switch cannot save).
+- Releases: `v0.110.0-alpha.2` published by CI on Atul013 and ZayedBH (unsigned). Codex re-downloaded the assets: checksums
+  match and the embedded icons equal the canonical ICO. This is a file check, not an install trial.
+- Merged `origin/main` at `0aa3000` (Zayed's Room chat, decisions, snapshot export, project panels): `cargo fmt --check`,
+  `clippy -D warnings`, 98 app tests and 10 core tests pass.
+- **Still not done (needs a person at a clean Windows user or VM):** installer install / upgrade / downgrade / uninstall
+  trial, and the interactive editor, Git and terminal pass. Steps are in `docs/native/PHASE1_TRIAL_CHECKLIST.md`.
+  Layout fixes for the narrow Source Control sidebar and the light-theme logo were checked by reading code and unit
+  tests, not on screen.
+
 ## Not started
 
 I02 LSP, I04 debugger, R01/R04 authenticated transport, A01/A04 execution boundaries, L01 release engineering.
