@@ -1,0 +1,297 @@
+{
+  "folder": "C:\\Users\\Icarus\\AppData\\Local\\Temp\\forge-alpha2-t13-60e745bf4e2340a08fdcf1e41c692109",
+  "canonical_frames": [
+    {
+      "size": [
+        16,
+        16
+      ],
+      "sha256": "4bc2fc860261d8df287bebc6caf13483b8f6bd5575d133df4b7dd8e2392608f0"
+    },
+    {
+      "size": [
+        24,
+        24
+      ],
+      "sha256": "9ad8fd2f949789a5a67b50dc53e4d23fd916b23fdf5bf4e48c53aa16157aa8e1"
+    },
+    {
+      "size": [
+        32,
+        32
+      ],
+      "sha256": "16278bbf3c26583680708c7c6e4ed7a5c1bef0cef807fc69dc6fa74010095b8f"
+    },
+    {
+      "size": [
+        48,
+        48
+      ],
+      "sha256": "6299e2792ef60d560a6c7bad64cd7b5451f7369c758122d49311a3fb4f67fb95"
+    },
+    {
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "b32ed7753fbdad78639a9e77cb8471c67bce7e9c0830984e737e06eb54a9a17b"
+    },
+    {
+      "size": [
+        128,
+        128
+      ],
+      "sha256": "294d3a06db74df2a511e3bf5fd4cb9c828b2f735fa21bc473b7a31920842e6cb"
+    },
+    {
+      "size": [
+        256,
+        256
+      ],
+      "sha256": "18115cf219fb87f0dbc7aec4b0170cf069661085caabc48694a40c61d3a58f39"
+    }
+  ],
+  "hashes": [
+    {
+      "file": "Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64.zip",
+      "expected": "aad963a6a951834297ade4e43872b9875d056b779b16a5eeef981534bf7c86cc",
+      "actual": "aad963a6a951834297ade4e43872b9875d056b779b16a5eeef981534bf7c86cc",
+      "matches": true
+    },
+    {
+      "file": "Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64-setup.exe",
+      "expected": "5462b2bc0d018959668e20641e9699846213b5e95f9c6f83f5d78109a4a94712",
+      "actual": "5462b2bc0d018959668e20641e9699846213b5e95f9c6f83f5d78109a4a94712",
+      "matches": true
+    }
+  ],
+  "pe_icons": {
+    "forge-room-early-preview.exe": [
+      {
+        "group": "1",
+        "frames": [
+          {
+            "size": [
+              16,
+              16
+            ],
+            "sha256": "4bc2fc860261d8df287bebc6caf13483b8f6bd5575d133df4b7dd8e2392608f0"
+          },
+          {
+            "size": [
+              24,
+              24
+            ],
+            "sha256": "9ad8fd2f949789a5a67b50dc53e4d23fd916b23fdf5bf4e48c53aa16157aa8e1"
+          },
+          {
+            "size": [
+              32,
+              32
+            ],
+            "sha256": "16278bbf3c26583680708c7c6e4ed7a5c1bef0cef807fc69dc6fa74010095b8f"
+          },
+          {
+            "size": [
+              48,
+              48
+            ],
+            "sha256": "6299e2792ef60d560a6c7bad64cd7b5451f7369c758122d49311a3fb4f67fb95"
+          },
+          {
+            "size": [
+              64,
+              64
+            ],
+            "sha256": "b32ed7753fbdad78639a9e77cb8471c67bce7e9c0830984e737e06eb54a9a17b"
+          },
+          {
+            "size": [
+              128,
+              128
+            ],
+            "sha256": "294d3a06db74df2a511e3bf5fd4cb9c828b2f735fa21bc473b7a31920842e6cb"
+          },
+          {
+            "size": [
+              256,
+              256
+            ],
+            "sha256": "18115cf219fb87f0dbc7aec4b0170cf069661085caabc48694a40c61d3a58f39"
+          }
+        ],
+        "matches_canonical": true
+      }
+    ],
+    "Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64-setup.exe": [
+      {
+        "group": "32512",
+        "frames": [
+          {
+            "size": [
+              16,
+              16
+            ],
+            "sha256": "4bc2fc860261d8df287bebc6caf13483b8f6bd5575d133df4b7dd8e2392608f0"
+          },
+          {
+            "size": [
+              24,
+              24
+            ],
+            "sha256": "9ad8fd2f949789a5a67b50dc53e4d23fd916b23fdf5bf4e48c53aa16157aa8e1"
+          },
+          {
+            "size": [
+              32,
+              32
+            ],
+            "sha256": "16278bbf3c26583680708c7c6e4ed7a5c1bef0cef807fc69dc6fa74010095b8f"
+          },
+          {
+            "size": [
+              48,
+              48
+            ],
+            "sha256": "6299e2792ef60d560a6c7bad64cd7b5451f7369c758122d49311a3fb4f67fb95"
+          },
+          {
+            "size": [
+              64,
+              64
+            ],
+            "sha256": "b32ed7753fbdad78639a9e77cb8471c67bce7e9c0830984e737e06eb54a9a17b"
+          },
+          {
+            "size": [
+              128,
+              128
+            ],
+            "sha256": "294d3a06db74df2a511e3bf5fd4cb9c828b2f735fa21bc473b7a31920842e6cb"
+          },
+          {
+            "size": [
+              256,
+              256
+            ],
+            "sha256": "18115cf219fb87f0dbc7aec4b0170cf069661085caabc48694a40c61d3a58f39"
+          }
+        ],
+        "matches_canonical": true
+      }
+    ]
+  },
+  "zip_integrity_bad_member": null,
+  "zip_members": [
+    "EARLY_PREVIEW_NOTES.md",
+    "forge-room-early-preview.exe",
+    "LICENSE-MIT.txt",
+    "THIRD_PARTY_LICENSES.html",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "release": {
+    "assets": [
+      {
+        "apiUrl": "https://api.github.com/repos/Atul013/forge-room-ide/releases/assets/702398701",
+        "contentType": "application/json",
+        "createdAt": "2026-11-02T16:28:37Z",
+        "digest": "sha256:ea73409d7725697d611a8a0fa27bab853bb1e6becc62d13c96458b6935740184",
+        "downloadCount": 1,
+        "id": "RA_kwDOVYtqmM4p3cDt",
+        "label": "",
+        "name": "BUILD_METRICS.json",
+        "size": 333,
+        "state": "uploaded",
+        "updatedAt": "2026-11-02T16:28:37Z",
+        "url": "https://github.com/Atul013/forge-room-ide/releases/download/v0.110.0-alpha.2/BUILD_METRICS.json"
+      },
+      {
+        "apiUrl": "https://api.github.com/repos/Atul013/forge-room-ide/releases/assets/702398708",
+        "contentType": "application/x-msdownload",
+        "createdAt": "2026-11-02T16:28:37Z",
+        "digest": "sha256:5462b2bc0d018959668e20641e9699846213b5e95f9c6f83f5d78109a4a94712",
+        "downloadCount": 1,
+        "id": "RA_kwDOVYtqmM4p3cD0",
+        "label": "",
+        "name": "Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64-setup.exe",
+        "size": 7448576,
+        "state": "uploaded",
+        "updatedAt": "2026-11-02T16:28:38Z",
+        "url": "https://github.com/Atul013/forge-room-ide/releases/download/v0.110.0-alpha.2/Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64-setup.exe"
+      },
+      {
+        "apiUrl": "https://api.github.com/repos/Atul013/forge-room-ide/releases/assets/702398707",
+        "contentType": "application/zip",
+        "createdAt": "2026-11-02T16:28:37Z",
+        "digest": "sha256:aad963a6a951834297ade4e43872b9875d056b779b16a5eeef981534bf7c86cc",
+        "downloadCount": 1,
+        "id": "RA_kwDOVYtqmM4p3cDz",
+        "label": "",
+        "name": "Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64.zip",
+        "size": 7962507,
+        "state": "uploaded",
+        "updatedAt": "2026-11-02T16:28:38Z",
+        "url": "https://github.com/Atul013/forge-room-ide/releases/download/v0.110.0-alpha.2/Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64.zip"
+      },
+      {
+        "apiUrl": "https://api.github.com/repos/Atul013/forge-room-ide/releases/assets/702398690",
+        "contentType": "application/json",
+        "createdAt": "2026-11-02T16:28:36Z",
+        "digest": "sha256:c99d01664b4e0ce40ba48bf8219b30dd3ab393d1c40e032e31a741239f3f9a17",
+        "downloadCount": 1,
+        "id": "RA_kwDOVYtqmM4p3cDi",
+        "label": "",
+        "name": "INSTALL_VERIFY.json",
+        "size": 551,
+        "state": "uploaded",
+        "updatedAt": "2026-11-02T16:28:37Z",
+        "url": "https://github.com/Atul013/forge-room-ide/releases/download/v0.110.0-alpha.2/INSTALL_VERIFY.json"
+      },
+      {
+        "apiUrl": "https://api.github.com/repos/Atul013/forge-room-ide/releases/assets/702398691",
+        "contentType": "text/plain; charset=utf-8",
+        "createdAt": "2026-11-02T16:28:36Z",
+        "digest": "sha256:2de339e7b6f99bac1b300a8776246f612e0982ab447115e990c88d16f5472dfe",
+        "downloadCount": 1,
+        "id": "RA_kwDOVYtqmM4p3cDj",
+        "label": "",
+        "name": "SHA256SUMS.txt",
+        "size": 254,
+        "state": "uploaded",
+        "updatedAt": "2026-11-02T16:28:37Z",
+        "url": "https://github.com/Atul013/forge-room-ide/releases/download/v0.110.0-alpha.2/SHA256SUMS.txt"
+      }
+    ],
+    "publishedAt": "2026-11-02T16:28:39Z",
+    "tagName": "v0.110.0-alpha.2",
+    "targetCommitish": "main",
+    "url": "https://github.com/Atul013/forge-room-ide/releases/tag/v0.110.0-alpha.2"
+  },
+  "metadata": {
+    "BUILD_METRICS.json": {
+      "version": "0.110.0-alpha.2",
+      "target": "x86_64-pc-windows-msvc",
+      "releaseExecutableBytes": 19525632,
+      "portableArchiveBytes": 7962507,
+      "installerBytes": 7448576,
+      "preparedInstalledFootprintBytes": 19888306.0,
+      "thirdPartyLicenseReportBytes": 335052,
+      "dependencyInventoryEntries": 247,
+      "signed": false
+    },
+    "INSTALL_VERIFY.json": {
+      "baselineVersion": "0.109.0-alpha.0",
+      "upgradedVersion": "0.110.0-alpha.2",
+      "stableAppIdUpgradePassed": true,
+      "applicationDataPreservedAcrossUpgrade": true,
+      "externalProjectPreservedAcrossUpgrade": true,
+      "defaultStartMenuShortcutCreated": true,
+      "desktopShortcutRemainedOptIn": true,
+      "cleanUninstallPassed": true,
+      "applicationDataPreservedAfterUninstall": true,
+      "externalProjectPreservedAfterUninstall": true,
+      "interactiveInstallerUiVerified": false,
+      "environment": "github-hosted-windows-2025-noninteractive"
+    }
+  }
+}
