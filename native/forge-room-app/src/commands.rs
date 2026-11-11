@@ -58,6 +58,7 @@ pub enum Command {
     ToggleTerminal,
     CheckProject,
     TrustFolder,
+    OpenAgent,
     NewTerminal,
     CopyTerminalOutput,
 }
@@ -153,6 +154,11 @@ pub const ALL: &[(Command, &str, &str)] = &[
         "",
     ),
     (Command::TrustFolder, "Folder: Trust This Folder", ""),
+    (
+        Command::OpenAgent,
+        "AI: Open Agent Panel (Claude Code / Codex)",
+        "",
+    ),
     (Command::CopyTerminalOutput, "Terminal: Copy All Output", ""),
     (
         Command::NewTerminal,

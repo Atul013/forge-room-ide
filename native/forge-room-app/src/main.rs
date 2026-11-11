@@ -1099,6 +1099,10 @@ impl ForgeRoomApp {
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
+            Command::OpenAgent => {
+                self.show_right = true;
+                self.right_tab = RightTab::Ai;
+            }
             Command::TrustFolder => {
                 if let Some(root) = self.repo_root() {
                     if self.trusted {
@@ -4095,13 +4099,15 @@ impl ForgeRoomApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
+                                // The AI agent comes first: it is the tab people open most, and the
+                                // last tabs are the ones a narrow dock cuts off.
                                 for (tab, label) in [
+                                    (RightTab::Ai, "AI"),
                                     (RightTab::Room, "Team"),
                                     (RightTab::Chat, "Chat"),
                                     (RightTab::Agents, "Agents"),
                                     (RightTab::Tasks, "Tasks"),
                                     (RightTab::Activity, "Activity"),
-                                    (RightTab::Ai, "AI"),
                                 ] {
                                     if underline_tab_padded(
                                         ui,
