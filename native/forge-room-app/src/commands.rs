@@ -59,6 +59,7 @@ pub enum Command {
     CheckProject,
     TrustFolder,
     OpenAgent,
+    ResetLayout,
     NewTerminal,
     CopyTerminalOutput,
 }
@@ -159,6 +160,7 @@ pub const ALL: &[(Command, &str, &str)] = &[
         "AI: Open Agent Panel (Claude Code / Codex)",
         "Ctrl+Shift+A",
     ),
+    (Command::ResetLayout, "View: Reset Layout", ""),
     (Command::CopyTerminalOutput, "Terminal: Copy All Output", ""),
     (
         Command::NewTerminal,

@@ -303,6 +303,9 @@ pub fn show(
     cwd: Option<&Path>,
     trusted: bool,
 ) {
+    // A label in a horizontal row does not wrap unless told to: a long answer would then widen the
+    // whole dock instead of breaking into lines.
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
     egui::Panel::bottom("ai-composer")
         .resizable(false)
         .frame(egui::Frame::new().inner_margin(egui::Margin::same(12)))
@@ -579,6 +582,18 @@ fn quick_actions(ui: &mut egui::Ui, state: &mut State) {
         });
 }
 
+/// Text that breaks into lines at the width it is given, even inside one long word (a path, a hash):
+/// it never makes the panel around it wider.
+fn wrapped(ui: &mut egui::Ui, text: &str, size: f32, color: Color32) {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_string(),
+        egui::TextFormat::simple(FontId::proportional(size), color),
+    );
+    job.wrap.max_width = ui.available_width();
+    job.wrap.break_anywhere = true;
+    ui.label(job);
+}
+
 fn bubble(ui: &mut egui::Ui, message: &Message) {
     match message.author {
         Author::Tool => {
@@ -600,11 +615,7 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
             ui.horizontal_top(|ui| {
                 ui.add_space(52.0);
                 ui.set_max_width((ui.available_width() - 14.0).max(120.0));
-                ui.label(
-                    RichText::new(&message.text)
-                        .size(13.0)
-                        .color(theme::text_dim()),
-                );
+                wrapped(ui, &message.text, 13.0, theme::text_dim());
             });
             return;
         }
@@ -621,11 +632,7 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
                     .inner_margin(egui::Margin::symmetric(10, 7))
                     .show(ui, |ui| {
                         ui.set_max_width((ui.available_width() - 14.0).max(120.0));
-                        ui.label(
-                            RichText::new(&message.text)
-                                .size(13.0)
-                                .color(Color32::from_rgb(244, 150, 156)),
-                        );
+                        wrapped(ui, &message.text, 13.0, Color32::from_rgb(244, 150, 156));
                     });
             });
             return;
@@ -659,15 +666,19 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
             .inner_margin(egui::Margin::symmetric(12, 8))
             .show(ui, |ui| {
                 ui.set_max_width((ui.available_width() - 14.0).max(120.0));
-                ui.label(RichText::new(&message.text).size(14.0).color(theme::text()));
-                if !user
-                    && ui
-                        .small_button("Copy")
-                        .on_hover_text("Copy this answer")
-                        .clicked()
-                {
-                    ui.ctx().copy_text(message.text.clone());
-                }
+                // Top to bottom: the frame inherits the row's left-to-right layout, which would put
+                // the Copy button beside the text and widen the whole panel.
+                ui.vertical(|ui| {
+                    wrapped(ui, &message.text, 14.0, theme::text());
+                    if !user
+                        && ui
+                            .small_button("Copy")
+                            .on_hover_text("Copy this answer")
+                            .clicked()
+                    {
+                        ui.ctx().copy_text(message.text.clone());
+                    }
+                });
             });
     });
 }
@@ -838,5 +849,86 @@ mod tests {
         };
         state.mention("main.rs");
         assert_eq!(state.input, "fix @main.rs ");
+    }
+
+    /// Frames of the dock (a resizable panel with a size range) showing `messages`: the widths it had.
+    fn dock_widths(messages: Vec<(Author, String)>) -> Vec<f32> {
+        let context = egui::Context::default();
+        let mut state = State::default();
+        for (author, text) in messages {
+            state.messages.push(Message { author, text });
+        }
+        let mut widths = Vec::new();
+        for frame in 0..6 {
+            let mut input = egui::RawInput::default();
+            input.screen_rect = Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1400.0, 900.0),
+            ));
+            input.time = Some(f64::from(frame) * 0.1);
+            let mut output = context.run_ui(input, |ui| {
+                let drawn = egui::Panel::right("test-dock")
+                    .default_size(364.0)
+                    .size_range(280.0..=640.0)
+                    .resizable(true)
+                    .show(ui, |ui| {
+                        show(ui, &mut state, Some("main.rs"), Some(Path::new(".")), true)
+                    });
+                widths.push(drawn.response.rect.width());
+            });
+            output.textures_delta.clear();
+        }
+        widths
+    }
+
+    /// The dock must keep its width whatever the transcript holds: ordinary answers, errors and tool
+    /// lines never widen it (it once changed size after a second message).
+    #[test]
+    fn the_dock_keeps_its_width_with_long_answers_errors_and_tool_lines() {
+        let long = "word ".repeat(400);
+        let widths = dock_widths(vec![
+            (Author::User, "hi".to_string()),
+            (Author::Assistant, "Hello! How can I help?".to_string()),
+            (
+                Author::Tool,
+                "Bash cargo test  ;  cargo clippy  ;  git status".to_string(),
+            ),
+            (Author::User, long.clone()),
+            (
+                Author::Assistant,
+                format!(
+                    "{long}
+
+{long}"
+                ),
+            ),
+            (Author::Error, format!("Claude Code stopped: {long}")),
+            (
+                Author::Note,
+                format!("The agent was not allowed to use: Bash. {long}"),
+            ),
+        ]);
+        eprintln!("ordinary widths {widths:?}");
+        assert!(
+            widths.iter().all(|w| (*w - 364.0).abs() < 2.0),
+            "{widths:?}"
+        );
+    }
+
+    /// A single word with no break (a long path or hash) must not widen the dock either.
+    #[test]
+    fn an_unbroken_word_does_not_widen_the_dock() {
+        let unbroken = "x".repeat(300);
+        let widths = dock_widths(vec![
+            (Author::Assistant, format!("see {unbroken}")),
+            (Author::Tool, format!("Bash {unbroken}")),
+            (Author::Error, unbroken.clone()),
+            (Author::Note, unbroken),
+        ]);
+        eprintln!("unbroken widths {widths:?}");
+        assert!(
+            widths.iter().all(|w| (*w - 364.0).abs() < 2.0),
+            "{widths:?}"
+        );
     }
 }

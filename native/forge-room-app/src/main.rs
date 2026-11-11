@@ -215,6 +215,8 @@ struct ForgeRoomApp {
     ai_was_busy: bool,
     /// Sidebar width, right dock width and terminal height as last drawn, in points.
     panel_sizes: (u16, u16, u16),
+    /// Bumped by View: Reset Layout: the panels get new ids, so they forget their remembered size.
+    layout_generation: u32,
     /// The terminal panel fills most of the window.
     terminal_maximized: bool,
     /// Two terminals shown side by side: their indexes.
@@ -366,6 +368,7 @@ impl ForgeRoomApp {
             recovery_warned: false,
             ai_was_busy: false,
             panel_sizes: (250, 364, 200),
+            layout_generation: 0,
             terminal_maximized: false,
             split_pair: None,
             trusted: true,
@@ -469,11 +472,19 @@ impl ForgeRoomApp {
                 2 => BottomTab::Problems,
                 _ => BottomTab::Terminal,
             };
-            self.panel_sizes = (
-                layout.sidebar_width,
-                layout.right_width,
-                layout.terminal_height,
-            );
+            // A width near the limit is almost always a panel that grew by itself (an old bug),
+            // not a choice: it starts at the default size instead.
+            let right = if layout.right_width > 520 {
+                364
+            } else {
+                layout.right_width
+            };
+            let side = if layout.sidebar_width > 460 {
+                250
+            } else {
+                layout.sidebar_width
+            };
+            self.panel_sizes = (side, right, layout.terminal_height);
         }
         // Fresh shells in place of the ones that were open.
         for _ in 0..session.terminals {
@@ -1105,6 +1116,15 @@ impl ForgeRoomApp {
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
+            Command::ResetLayout => {
+                self.panel_sizes = (250, 364, 200);
+                self.layout_generation += 1;
+                self.show_sidebar = true;
+                self.show_right = true;
+                self.show_terminal = true;
+                self.terminal_maximized = false;
+                self.status = "Layout reset".into();
+            }
             Command::OpenAgent => {
                 self.show_right = true;
                 self.right_tab = RightTab::Ai;
@@ -1817,6 +1837,8 @@ impl ForgeRoomApp {
             // The shell owns plain Ctrl keys (Ctrl+C, Ctrl+W...); only app-level chords work here.
             if shortcut(ui, command_shift, Key::Backtick) {
                 self.run_command(Command::NewTerminal, false);
+            } else if shortcut(ui, command_shift, Key::A) {
+                self.run_command(Command::OpenAgent, false);
             } else if shortcut(ui, command, Key::Backtick) {
                 self.run_command(Command::ToggleTerminal, false);
             } else if shortcut(ui, command_shift, Key::P) {
@@ -4797,7 +4819,7 @@ impl eframe::App for ForgeRoomApp {
         }
 
         if self.show_sidebar && !self.show_lobby {
-            let drawn = egui::Panel::left("sidebar")
+            let drawn = egui::Panel::left(("sidebar", self.layout_generation))
                 .default_size(f32::from(self.panel_sizes.0))
                 .size_range(180.0..=560.0)
                 .resizable(true)
@@ -4807,7 +4829,7 @@ impl eframe::App for ForgeRoomApp {
         }
 
         if self.show_right && !self.show_lobby {
-            let drawn = egui::Panel::right("right-dock")
+            let drawn = egui::Panel::right(("right-dock", self.layout_generation))
                 .default_size(f32::from(self.panel_sizes.1))
                 .size_range(280.0..=640.0)
                 .resizable(true)
@@ -4819,10 +4841,10 @@ impl eframe::App for ForgeRoomApp {
         if self.show_terminal && !self.show_lobby {
             let panel = if self.terminal_maximized {
                 // Most of the window; the editor keeps a strip above it.
-                egui::Panel::bottom("terminal-maximized")
+                egui::Panel::bottom(("terminal-maximized", self.layout_generation))
                     .exact_size((ui.available_height() - 90.0).max(200.0))
             } else {
-                egui::Panel::bottom("terminal")
+                egui::Panel::bottom(("terminal", self.layout_generation))
                     .resizable(true)
                     .default_size(f32::from(self.panel_sizes.2))
                     .size_range(120.0..=720.0)
