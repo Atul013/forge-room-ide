@@ -359,18 +359,40 @@ pub fn is_merging(root: &Path) -> bool {
     run(root, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok()
 }
 
+/// True when tracked files have uncommitted changes. Merging (and aborting a merge) can mix those
+/// changes up with the merge, so a merge is only started from a clean tree.
+fn has_tracked_changes(root: &Path) -> Result<bool, String> {
+    run(root, &["status", "--porcelain", "--untracked-files=no"]).map(|out| !out.trim().is_empty())
+}
+
 /// Merge `branch` into the current branch. Conflicts are an outcome, not an error.
 pub fn merge(root: &Path, branch: &str) -> Result<MergeOutcome, String> {
     check_branch_name(root, branch)?;
     if is_merging(root) {
         return Err("A merge is already in progress. Commit or abort it first".into());
     }
+    if has_tracked_changes(root)? {
+        return Err("Commit or stash your changes before merging".into());
+    }
+    let before = run(root, &["rev-parse", "HEAD"])?;
     match run(root, &["merge", "--no-edit", branch]) {
-        Ok(output) if output.contains("Already up to date") => Ok(MergeOutcome::UpToDate),
-        Ok(output) => Ok(MergeOutcome::Merged(first_line(&output, "Merged"))),
-        Err(_) if is_merging(root) => Ok(MergeOutcome::Conflicts),
+        Ok(output) => {
+            // Compare commits instead of reading Git's (localised) wording.
+            if run(root, &["rev-parse", "HEAD"])? == before {
+                Ok(MergeOutcome::UpToDate)
+            } else {
+                Ok(MergeOutcome::Merged(first_line(&output, "Merged")))
+            }
+        }
+        // MERGE_HEAD alone is not a conflict: a failing hook or signing step also leaves it. Only
+        // unmerged paths are.
+        Err(_) if is_merging(root) && has_unmerged_paths(root) => Ok(MergeOutcome::Conflicts),
         Err(error) => Err(error),
     }
+}
+
+fn has_unmerged_paths(root: &Path) -> bool {
+    run(root, &["ls-files", "-u"]).is_ok_and(|out| !out.trim().is_empty())
 }
 
 /// Give up a merge in progress and restore the state before it started.
@@ -834,6 +856,19 @@ mod tests {
             "mine\n"
         );
         assert!(merge_abort(&dir).is_err(), "nothing left to abort");
+
+        // Uncommitted changes to tracked files: the merge is refused before it starts.
+        fs::write(
+            dir.join("a.txt"),
+            "dirty
+",
+        )
+        .unwrap();
+        assert!(
+            merge(&dir, "feature")
+                .unwrap_err()
+                .contains("Commit or stash")
+        );
         let _ = fs::remove_dir_all(dir);
     }
 

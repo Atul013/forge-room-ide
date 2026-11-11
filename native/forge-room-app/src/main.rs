@@ -1558,6 +1558,7 @@ impl ForgeRoomApp {
         };
         self.is_repo = git::is_repo(&root);
         if !self.is_repo {
+            self.merging = false;
             self.git_status = Some(Err("not a repository".into()));
             self.branch = None;
             self.hunks.clear();
@@ -1784,9 +1785,7 @@ impl ForgeRoomApp {
             }
             Action::Stash => git::stash_push(&root, ""),
             Action::StashPop => git::stash_pop(&root, 0),
-            Action::AbortMerge => {
-                git::merge_abort(&root).map(|()| "Merge aborted; the files are as they were".into())
-            }
+            Action::AbortMerge => git::merge_abort(&root).map(|()| "Merge aborted".into()),
             Action::ShowCommit(hash) => {
                 match git::show(&root, &hash) {
                     Ok(text) => {

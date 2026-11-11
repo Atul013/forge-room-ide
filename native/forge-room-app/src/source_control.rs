@@ -13,6 +13,8 @@ pub struct State {
     pub history_open: bool,
     /// Which page of the sidebar is showing: false = Changes, true = History (graph + file).
     pub show_history: bool,
+    /// The first click on Abort merge only arms it; the second one aborts.
+    pub abort_armed: bool,
 }
 
 impl Default for State {
@@ -25,6 +27,7 @@ impl Default for State {
             graph_open: true,
             history_open: true,
             show_history: false,
+            abort_armed: false,
         }
     }
 }
@@ -241,8 +244,18 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                             .color(theme::text()),
                         );
                         ui.add_space(4.0);
-                        if ui.button("Abort merge").clicked() {
-                            action = Some(Action::AbortMerge);
+                        let label = if state.abort_armed {
+                            "Click again: discard the merge and my resolutions"
+                        } else {
+                            "Abort merge"
+                        };
+                        if ui.button(label).clicked() {
+                            if state.abort_armed {
+                                state.abort_armed = false;
+                                action = Some(Action::AbortMerge);
+                            } else {
+                                state.abort_armed = true;
+                            }
                         }
                     });
             });
