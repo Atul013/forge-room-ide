@@ -265,6 +265,17 @@ impl DocumentSession {
         self.path.as_deref()
     }
 
+    /// Follow a rename: when this document's file is `from` (or inside the folder `from`), it now
+    /// lives under `to`. The text and the unsaved changes are untouched.
+    pub fn moved(&mut self, from: &Path, to: &Path) {
+        let Some(current) = &self.path else { return };
+        if let Ok(rest) = current.strip_prefix(from) {
+            let new = to.join(rest);
+            self.disk_stamp = stamp(&new);
+            self.path = Some(new);
+        }
+    }
+
     pub fn file_name(&self) -> Option<String> {
         self.path
             .as_ref()
@@ -643,6 +654,36 @@ mod tests {
         assert!(leftovers(&path).is_empty());
         drop(_holder);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_renamed_file_keeps_its_buffer_and_saves_to_the_new_path() {
+        let dir = test_path().with_extension("moved");
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        let old = dir.join("sub").join("a.txt");
+        fs::write(&old, "one\n").unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&old).unwrap();
+        document.text_mut().push_str("two\n");
+
+        // Renaming the folder moves the file with it.
+        fs::rename(dir.join("sub"), dir.join("renamed")).unwrap();
+        document.moved(&dir.join("sub"), &dir.join("renamed"));
+        assert_eq!(
+            document.path(),
+            Some(dir.join("renamed").join("a.txt").as_path())
+        );
+        assert!(document.is_dirty(), "unsaved changes survive the rename");
+        document.save().unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("renamed").join("a.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+        // A path elsewhere is not touched.
+        let before = document.path().map(Path::to_path_buf);
+        document.moved(&dir.join("other"), &dir.join("x"));
+        assert_eq!(document.path().map(Path::to_path_buf), before);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

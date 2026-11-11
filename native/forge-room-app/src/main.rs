@@ -6,6 +6,7 @@ mod commands;
 mod document;
 mod editing;
 mod explorer;
+mod file_ops;
 mod find;
 mod find_bar;
 mod fonts;
@@ -230,6 +231,8 @@ struct ForgeRoomApp {
     reselect_find: bool,
     new_folder_parent: Option<PathBuf>,
     new_folder_name: String,
+    /// The file or folder being renamed and the name typed so far.
+    rename: Option<(PathBuf, String)>,
 }
 
 /// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
@@ -327,6 +330,7 @@ impl ForgeRoomApp {
             search: search_view::SearchView::default(),
             new_folder_parent: None,
             new_folder_name: String::new(),
+            rename: None,
             find: find_bar::FindState::default(),
             pending_select: None,
             last_find_query: String::new(),
@@ -2015,11 +2019,63 @@ impl ForgeRoomApp {
                 self.new_folder_parent = Some(parent);
                 self.new_folder_name.clear();
             }
+            explorer::Action::Rename(path) => {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.rename = Some((path, name));
+            }
             explorer::Action::Refresh => {
                 if let Some(workspace) = self.workspace.as_mut() {
                     workspace.refresh();
                 }
                 self.refresh_git();
+            }
+        }
+        if let Some((path, mut name)) = self.rename.take() {
+            let (mut confirm, mut cancel) = (false, false);
+            let error = file_ops::valid_name(&name).err();
+            egui::Window::new("Rename")
+                .collapsible(false)
+                .resizable(false)
+                .show(&self.egui_ctx, |ui| {
+                    ui.label(format!("{}", path.display()));
+                    let field = ui.text_edit_singleline(&mut name);
+                    field.request_focus();
+                    if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                        confirm = true;
+                    }
+                    if let Some(error) = &error {
+                        ui.colored_label(egui::Color32::from_rgb(240, 113, 120), error);
+                    }
+                    ui.horizontal(|ui| {
+                        confirm |= ui
+                            .add_enabled(error.is_none(), egui::Button::new("Rename"))
+                            .clicked();
+                        cancel = ui.button("Cancel").clicked();
+                    });
+                });
+            if ui_escape(&self.egui_ctx) {
+                cancel = true;
+            }
+            if confirm && error.is_none() {
+                match file_ops::rename(&path, &name) {
+                    Ok(new_path) => {
+                        self.tabs.path_moved(&path, &new_path);
+                        if let Some(workspace) = &mut self.workspace {
+                            workspace.refresh();
+                        }
+                        self.refresh_git();
+                        self.status = format!("Renamed to {}", name.trim());
+                    }
+                    Err(message) => {
+                        self.status = message;
+                        self.rename = Some((path, name));
+                    }
+                }
+            } else if !cancel {
+                self.rename = Some((path, name));
             }
         }
         if let Some(parent) = self.new_folder_parent.clone() {
@@ -3454,6 +3510,11 @@ fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
 }
 
 /// Display name of the language for a file name, judged from its extension.
+/// Whether Escape was pressed this frame (and takes it, so nothing else reacts).
+fn ui_escape(context: &egui::Context) -> bool {
+    context.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+}
+
 fn language_name(name: &str) -> Option<&'static str> {
     let extension = name.rsplit_once('.')?.1.to_ascii_lowercase();
     Some(match extension.as_str() {

@@ -60,6 +60,14 @@ impl Tabs {
         self.tabs.get(self.active).and_then(|tab| tab.doc.path())
     }
 
+    /// Point the tabs of a renamed file (or of files inside a renamed folder) at their new place.
+    pub fn path_moved(&mut self, from: &Path, to: &Path) {
+        let (from, to) = (normalize(from), normalize(to));
+        for tab in &mut self.tabs {
+            tab.doc.moved(&from, &to);
+        }
+    }
+
     pub fn any_dirty(&self) -> bool {
         self.tabs.iter().any(|tab| tab.doc.is_dirty())
     }
