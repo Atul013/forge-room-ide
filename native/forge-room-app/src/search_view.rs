@@ -20,6 +20,8 @@ pub struct SearchView {
     focus: bool,
     /// The text that replaces every match (Replace All).
     pub replacement: String,
+    /// The mode the shown results were searched with.
+    searched_mode: find::Mode,
     /// Replace All was clicked and waits for a second click.
     confirming: bool,
     /// Replace was clicked; it starts at the top of the next frame.
@@ -41,6 +43,7 @@ impl Default for SearchView {
             dirty_since: None,
             focus: false,
             replacement: String::new(),
+            searched_mode: find::Mode::default(),
             confirming: false,
             replace_requested: false,
             replacing: None,
@@ -79,6 +82,9 @@ impl SearchView {
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancel = cancel.clone();
         self.searched_query = self.query.clone();
+        self.searched_mode = self.mode;
+        // What a pending confirmation was about is no longer what is shown.
+        self.confirming = false;
         if self.query.is_empty() {
             self.results = None;
             self.running = false;
@@ -100,7 +106,7 @@ impl SearchView {
         let (root, query, mode, replacement) = (
             root.to_path_buf(),
             self.searched_query.clone(),
-            self.mode,
+            self.searched_mode,
             self.replacement.clone(),
         );
         let (sender, receiver) = mpsc::channel();
@@ -121,12 +127,20 @@ impl SearchView {
 
     /// A finished Replace All, once; the results are searched again afterwards.
     pub fn take_replaced(&mut self) -> Option<search::Replaced> {
-        if let Some(receiver) = &self.replacing
-            && let Ok(done) = receiver.try_recv()
-        {
-            self.replacing = None;
-            self.dirty_since = Some(Instant::now() - DEBOUNCE);
-            self.replaced = Some(done);
+        if let Some(receiver) = &self.replacing {
+            let done = match receiver.try_recv() {
+                Ok(done) => Some(done),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some(search::Replaced {
+                    error: Some("the replace stopped unexpectedly".into()),
+                    ..search::Replaced::default()
+                }),
+            };
+            if let Some(done) = done {
+                self.replacing = None;
+                self.dirty_since = Some(Instant::now() - DEBOUNCE);
+                self.replaced = Some(done);
+            }
         }
         self.replaced.take()
     }
@@ -213,12 +227,15 @@ impl SearchView {
                 .inner_margin(egui::Margin::symmetric(12, 0))
                 .show(ui, |ui| {
                     ui.add_space(4.0);
-                    ui.add(
+                    let replacement = ui.add(
                         egui::TextEdit::singleline(&mut self.replacement)
                             .hint_text("Replace with")
                             .desired_width(ui.available_width())
                             .margin(egui::Margin::symmetric(10, 7)),
                     );
+                    if replacement.changed() {
+                        self.confirming = false;
+                    }
                 });
         }
         if let Some(since) = self.dirty_since

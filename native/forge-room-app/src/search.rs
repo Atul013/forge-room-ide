@@ -234,9 +234,20 @@ pub fn replace_in_files(
         {
             continue;
         }
+        // A link is never followed: its target may be outside the folder, or be visited twice.
+        if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+            continue;
+        }
         let mut session = crate::document::DocumentSession::default();
         if session.open(&path).is_err() {
             continue; // binary, not a supported encoding, or unreadable
+        }
+        // Search in Files only reads UTF-8, so a UTF-16 file was never shown as a result.
+        if matches!(
+            session.encoding(),
+            crate::document::Encoding::Utf16Le | crate::document::Encoding::Utf16Be
+        ) {
+            continue;
         }
         let mut count = 0;
         let mut gave_up = false;
@@ -257,7 +268,10 @@ pub fn replace_in_files(
             continue;
         }
         let canonical = crate::tabs::normalize(&path);
-        if protected.iter().any(|p| *p == canonical || *p == path) {
+        if protected
+            .iter()
+            .any(|p| *p == canonical || *p == path || crate::tabs::normalize(p) == canonical)
+        {
             report
                 .skipped
                 .push((path, "it is open with unsaved changes".into()));
@@ -338,7 +352,8 @@ mod tests {
         let never = AtomicBool::new(false);
         let report = replace_in_files(&root, "TODO", exact(), "DONE", &protected, &never);
         assert_eq!(fs::read(&crlf).unwrap(), b"one DONE\r\ntwo\r\n");
-        assert_eq!(fs::read(&utf16).unwrap(), wide_bytes("a DONE b\n"));
+        // UTF-16 files are not searched, so they are not replaced either.
+        assert_eq!(fs::read(&utf16).unwrap(), wide_bytes("a TODO b\n"));
         assert_eq!(fs::read_to_string(&busy).unwrap(), "TODO busy\n");
         let source = fs::read_to_string(root.join("src/a.rs")).unwrap();
         assert_eq!(
@@ -348,7 +363,7 @@ mod tests {
         // Build output is never touched.
         let skipped = fs::read_to_string(root.join("target/skip.rs")).unwrap();
         assert!(skipped.contains("TODO"));
-        assert_eq!((report.files, report.replacements), (3, 3));
+        assert_eq!((report.files, report.replacements), (2, 2));
         assert_eq!(report.skipped.len(), 1);
         let bad = find::Mode {
             regex: true,
