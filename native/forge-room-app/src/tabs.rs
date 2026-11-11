@@ -26,6 +26,17 @@ impl Tab {
     }
 }
 
+/// Where a recovered tab ended up.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Recovered {
+    /// Back in its file, as unsaved text.
+    InFile,
+    /// In an untitled tab: the file is gone or unreadable, or there never was one.
+    Untitled,
+    /// In an untitled tab because the file changed on disk after the text was kept.
+    DiskChanged,
+}
+
 /// Ordered open documents plus the active one.
 #[derive(Default)]
 pub struct Tabs {
@@ -180,18 +191,26 @@ impl Tabs {
     }
 
     /// Bring back a tab from the recovery folder: the file with the recovered text in it (so it
-    /// shows as unsaved and saving goes through the usual outside-change check), or, when the file
-    /// is gone or cannot be read, an untitled tab holding the text.
-    pub fn open_recovered(&mut self, path: Option<&Path>, text: String) {
+    /// shows as unsaved), or an untitled tab holding the text when the file is gone, cannot be
+    /// read, or has been changed by something else since `disk_hash` was taken (putting the text
+    /// into the file's tab would hide that change, and saving would overwrite it).
+    pub fn open_recovered(
+        &mut self,
+        path: Option<&Path>,
+        text: String,
+        disk_hash: Option<u64>,
+    ) -> Recovered {
+        let mut outcome = Recovered::Untitled;
         let opened = path.filter(|path| path.is_file()).and_then(|path| {
-            let path = normalize(path);
             let mut doc = DocumentSession::default();
-            doc.open(&path).ok()?;
+            doc.open(normalize(path)).ok()?;
             Some(doc)
         });
-        match opened {
-            Some(mut doc) => {
-                *doc.text_mut() = text;
+        if let Some(mut doc) = opened {
+            if disk_hash.is_some_and(|hash| crate::recovery::text_hash(doc.text()) != hash) {
+                outcome = Recovered::DiskChanged;
+            } else {
+                *doc.text_mut() = text.clone();
                 let tab = Tab {
                     id: self.take_id(),
                     doc,
@@ -203,14 +222,14 @@ impl Tabs {
                 };
                 self.tabs.push(tab);
                 self.active = self.tabs.len() - 1;
-            }
-            None => {
-                self.new_untitled();
-                if let Some(tab) = self.active_tab() {
-                    *tab.doc.text_mut() = text;
-                }
+                return Recovered::InFile;
             }
         }
+        self.new_untitled();
+        if let Some(tab) = self.active_tab() {
+            *tab.doc.text_mut() = text;
+        }
+        outcome
     }
 
     /// Reopen the most recently closed file that still exists. `Ok(None)` when there is nothing to
@@ -304,7 +323,11 @@ mod tests {
     fn recovered_text_comes_back_unsaved_in_its_file_or_as_an_untitled_tab() {
         let path = temp_file("recovered.txt");
         let mut tabs = Tabs::default();
-        tabs.open_recovered(Some(&path), "typed but never saved".into());
+        let disk = Some(crate::recovery::text_hash("hello"));
+        assert_eq!(
+            tabs.open_recovered(Some(&path), "typed but never saved".into(), disk),
+            Recovered::InFile
+        );
         assert_eq!(tabs.tabs.len(), 1);
         assert_eq!(
             tabs.tabs[0].title(),
@@ -320,13 +343,43 @@ mod tests {
 
         // A file that no longer exists, or no path at all, gives an untitled tab with the text.
         fs::remove_file(&path).unwrap();
-        tabs.open_recovered(Some(&path), "from a deleted file".into());
-        tabs.open_recovered(None, "was untitled".into());
+        assert_eq!(
+            tabs.open_recovered(Some(&path), "from a deleted file".into(), disk),
+            Recovered::Untitled
+        );
+        assert_eq!(
+            tabs.open_recovered(None, "was untitled".into(), None),
+            Recovered::Untitled
+        );
         assert_eq!(tabs.tabs.len(), 3);
         assert!(tabs.tabs[1].title().starts_with("Untitled-"));
         assert_eq!(tabs.tabs[1].doc.text(), "from a deleted file");
         assert_eq!(tabs.tabs[2].doc.text(), "was untitled");
         assert!(tabs.tabs[1].doc.is_dirty() && tabs.tabs[2].doc.is_dirty());
+    }
+
+    #[test]
+    fn a_file_changed_since_the_text_was_kept_is_not_overwritten_by_the_recovery() {
+        let path = temp_file("changed.txt");
+        let kept_for = Some(crate::recovery::text_hash("hello"));
+        // Something else rewrites the file after the crash.
+        fs::write(&path, "someone else's edit").unwrap();
+        let mut tabs = Tabs::default();
+        let outcome = tabs.open_recovered(Some(&path), "my unsaved text".into(), kept_for);
+        assert_eq!(outcome, Recovered::DiskChanged);
+        assert!(
+            tabs.tabs[0].title().starts_with("Untitled-"),
+            "the file is not touched"
+        );
+        assert_eq!(tabs.tabs[0].doc.text(), "my unsaved text");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "someone else's edit");
+        // Without a fingerprint (an older entry) the file's tab is used.
+        let mut tabs = Tabs::default();
+        assert_eq!(
+            tabs.open_recovered(Some(&path), "x".into(), None),
+            Recovered::InFile
+        );
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

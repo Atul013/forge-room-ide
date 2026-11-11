@@ -357,31 +357,45 @@ impl ForgeRoomApp {
         app
     }
 
-    /// Bring back the unsaved tabs a previous run left in the recovery folder (it ended without
-    /// a normal exit). They come back as unsaved tabs; the next autosave rewrites their entries.
+    /// Bring back the unsaved tabs a dead instance left in the recovery folder (it ended without a
+    /// normal exit). They come back as unsaved tabs, and are written under this instance right
+    /// away, so a second crash a moment later loses nothing either.
     fn restore_recovered(&mut self) {
-        let entries = self.recovery.load_all();
+        let entries = self.recovery.take_orphans();
         if entries.is_empty() {
             return;
         }
+        let mut changed = 0;
         for entry in &entries {
-            self.tabs.open_recovered(
+            let outcome = self.tabs.open_recovered(
                 entry.path.as_deref().map(std::path::Path::new),
                 entry.text.clone(),
+                entry.disk_hash,
             );
+            if outcome == tabs::Recovered::DiskChanged {
+                changed += 1;
+            }
         }
-        self.recovery.clear();
         self.status = format!(
             "Recovered {} unsaved tab{} from the last session",
             entries.len(),
             if entries.len() == 1 { "" } else { "s" }
         );
+        if changed > 0 {
+            self.status.push_str(&format!(
+                "; {changed} file{} changed on disk since, so its text is in an untitled tab",
+                if changed == 1 { "" } else { "s" }
+            ));
+        }
+        self.last_recovery = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        self.autosave_recovery();
     }
 
     /// Every few seconds write the text of tabs with unsaved changes to the recovery folder, and
     /// forget the entries of tabs that were saved or closed. Only changed text is rewritten.
     fn autosave_recovery(&mut self) {
-        if self.last_recovery.elapsed() < std::time::Duration::from_secs(3) {
+        // Once the app is on its way out (the user chose to quit) nothing more is kept.
+        if self.allow_close || self.last_recovery.elapsed() < std::time::Duration::from_secs(3) {
             return;
         }
         self.last_recovery = std::time::Instant::now();
@@ -391,13 +405,15 @@ impl ForgeRoomApp {
                 continue;
             }
             live.push(tab.id);
-            let hash = text_hash(tab.doc.text());
+            let hash = recovery::text_hash(tab.doc.text());
             if self.recovery_written.get(&tab.id) == Some(&hash) {
                 continue;
             }
+            let path = tab.doc.path();
             let entry = recovery::Entry {
-                path: tab.doc.path().map(|path| path.display().to_string()),
+                path: path.map(|path| path.display().to_string()),
                 text: tab.doc.text().to_string(),
+                disk_hash: path.map(|_| recovery::text_hash(tab.doc.saved_text())),
             };
             if self.recovery.save(tab.id, &entry).is_ok() {
                 self.recovery_written.insert(tab.id, hash);
@@ -3124,6 +3140,8 @@ impl ForgeRoomApp {
             (Some(Pending::Quit), Choice::Save) => self.save_all_and_quit(context),
             (Some(Pending::Quit), Choice::Discard) => {
                 self.allow_close = true;
+                // Discarded means gone: not even a recovery copy may bring it back.
+                self.recovery.clear();
                 context.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             (Some(Pending::DiskConflict(..)) | None, _) => {}
@@ -3142,6 +3160,7 @@ impl ForgeRoomApp {
         self.resume = Resume::Nothing;
         if all_saved {
             self.allow_close = true;
+            self.recovery.clear();
             context.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
@@ -3731,14 +3750,6 @@ fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
 }
 
 /// Display name of the language for a file name, judged from its extension.
-/// A cheap fingerprint of a text, to notice that it changed.
-fn text_hash(text: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    text.hash(&mut hasher);
-    hasher.finish()
-}
-
 /// Whether Escape was pressed this frame (and takes it, so nothing else reacts).
 fn ui_escape(context: &egui::Context) -> bool {
     context.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))

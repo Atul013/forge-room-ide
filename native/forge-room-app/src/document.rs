@@ -297,6 +297,12 @@ impl DocumentSession {
         &mut self.text
     }
 
+    /// The text as it was last read from or written to the file (what unsaved changes are
+    /// measured against).
+    pub fn saved_text(&self) -> &str {
+        &self.saved_text
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.text != self.saved_text
     }
