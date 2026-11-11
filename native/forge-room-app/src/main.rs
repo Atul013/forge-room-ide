@@ -1250,13 +1250,31 @@ impl ForgeRoomApp {
                 underline_tab(ui, label, false, false).on_hover_text("Adapter not connected");
             }
             if self.bottom_tab == BottomTab::Terminal {
-                // One chip per terminal, a plus for another and a cross to end the shown one.
-                ui.add_space(6.0);
+                // One small number per terminal, a plus for another and a cross to end the shown
+                // one, all drawn with the app's own icons (a font glyph may be missing).
+                ui.add_space(8.0);
                 if self.terminals.len() > 1 {
                     for index in 0..self.terminals.len() {
-                        let label = format!("{}", index + 1);
-                        if ui
-                            .selectable_label(index == self.active_terminal, label)
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::vec2(24.0, 26.0), egui::Sense::click());
+                        let active = index == self.active_terminal;
+                        if active {
+                            ui.painter().rect_filled(rect, 6.0, theme::overlay(22));
+                        } else if response.hovered() {
+                            ui.painter().rect_filled(rect, 6.0, theme::overlay(12));
+                        }
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            index + 1,
+                            egui::FontId::proportional(13.0),
+                            if active {
+                                theme::text()
+                            } else {
+                                theme::text_dim()
+                            },
+                        );
+                        if response
                             .on_hover_text(format!("Terminal {}", index + 1))
                             .clicked()
                         {
@@ -1264,18 +1282,11 @@ impl ForgeRoomApp {
                         }
                     }
                 }
-                if ui
-                    .small_button("+")
-                    .on_hover_text("New terminal (Ctrl+Shift+`)")
-                    .clicked()
-                {
+                if icons::icon_button(ui, "New terminal (Ctrl+Shift+`)", icons::plus).clicked() {
                     add_terminal = true;
                 }
                 if self.terminals.len() > 1
-                    && ui
-                        .small_button("\u{2715}")
-                        .on_hover_text("End this terminal")
-                        .clicked()
+                    && icons::icon_button(ui, "End this terminal", icons::close_cross).clicked()
                 {
                     close_terminal = true;
                 }
