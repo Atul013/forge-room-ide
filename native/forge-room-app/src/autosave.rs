@@ -26,6 +26,12 @@ impl Tracker {
         !entry.2 && now.duration_since(entry.1) >= DELAY
     }
 
+    /// Text that is already there and must not be saved on its own (tabs brought back by crash
+    /// recovery): it waits for the user's next edit.
+    pub fn hold(&mut self, id: u64, hash: u64, now: Instant) {
+        self.seen.insert(id, (hash, now, true));
+    }
+
     /// The save of the text last reported by [`Tracker::due`] failed: do not try it again.
     pub fn failed(&mut self, id: u64) {
         if let Some(entry) = self.seen.get_mut(&id) {
@@ -59,6 +65,11 @@ mod tests {
         assert!(!tracker.due(1, 11, start + DELAY * 9));
         assert!(!tracker.due(1, 12, start + DELAY * 9));
         assert!(tracker.due(1, 12, start + DELAY * 11));
+        // Held text is not saved until it changes.
+        tracker.hold(2, 5, start);
+        assert!(!tracker.due(2, 5, start + DELAY * 30));
+        assert!(!tracker.due(2, 6, start + DELAY * 30));
+        assert!(tracker.due(2, 6, start + DELAY * 32));
         // Clean or closed tabs are forgotten, so a later edit starts a new wait.
         tracker.keep_only(&[]);
         assert!(!tracker.due(1, 12, start + DELAY * 20));

@@ -386,10 +386,20 @@ impl ForgeRoomApp {
             reselect_find: false,
         };
         app.restore_recovered();
+        // The last session comes back first, so a file given on the command line is added to it
+        // instead of replacing it in the session file a moment later.
+        app.restore_session();
         if let Some(path) = initial_path {
             app.open_path(path);
-        } else {
-            app.restore_session();
+        }
+        // Text brought back by crash recovery is for the user to look at: Auto Save leaves it until
+        // they change it.
+        let now = std::time::Instant::now();
+        for tab in &app.tabs.tabs {
+            if tab.doc.is_dirty() {
+                let hash = recovery::text_hash(tab.doc.text());
+                app.auto_saves.hold(tab.id, hash, now);
+            }
         }
         app
     }
@@ -439,7 +449,11 @@ impl ForgeRoomApp {
 
     /// Write the session when it changed (checked every couple of seconds, and on exit).
     fn save_session(&mut self, force: bool) {
-        if !force && self.session_checked.elapsed() < std::time::Duration::from_secs(2) {
+        const EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+        if !force && self.session_checked.elapsed() < EVERY {
+            // Nothing else may wake an idle window, so ask to be woken for the next check.
+            self.egui_ctx
+                .request_repaint_after(EVERY - self.session_checked.elapsed());
             return;
         }
         self.session_checked = std::time::Instant::now();
@@ -497,7 +511,11 @@ impl ForgeRoomApp {
         let mut saved = None;
         let mut failed = None;
         for tab in &mut self.tabs.tabs {
-            if tab.readonly || !tab.doc.is_dirty() || tab.doc.path().is_none() {
+            if tab.readonly || !tab.doc.is_dirty() {
+                continue;
+            }
+            // A file that is gone (deleted or moved away) is not created again behind the user's back.
+            if !tab.doc.path().is_some_and(|path| path.exists()) {
                 continue;
             }
             live.push(tab.id);

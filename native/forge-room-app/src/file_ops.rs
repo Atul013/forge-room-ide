@@ -31,10 +31,15 @@ pub fn reveal(path: &Path) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        let mut argument = std::ffi::OsString::from(if path.is_dir() { "" } else { "/select," });
-        argument.push(path);
+        use std::os::windows::process::CommandExt;
+        // Explorer wants `/select,"C:\path with spaces"`: the quotes belong to the path alone.
+        let argument = if path.is_dir() {
+            format!("\"{}\"", path.display())
+        } else {
+            format!("/select,\"{}\"", path.display())
+        };
         std::process::Command::new("explorer.exe")
-            .arg(argument)
+            .raw_arg(argument)
             .spawn()
             .map(|_| ())
             .map_err(|error| format!("Could not open File Explorer: {error}"))
