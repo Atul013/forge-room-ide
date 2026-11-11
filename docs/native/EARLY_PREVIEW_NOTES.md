@@ -4,6 +4,19 @@
 
 This is an early preview of the native Rust IDE: not a beta, unsigned, and Windows 11 x64 only.
 
+## Since alpha.2 (source only, not in a release yet)
+
+- Files keep their line endings (LF, CRLF; mixed files are kept byte for byte), UTF-8 BOM and UTF-16 LE/BE encoding when saved, and the status bar shows the real encoding. Saves are atomic.
+- Editor typing: Enter keeps the indentation and opens bracket blocks, Tab and Shift+Tab indent and unindent, brackets and quotes are completed in pairs (not in prose files, and not a single quote in Rust), and Ctrl+/ comments lines, Alt+Up/Down moves them, Shift+Alt+Up/Down duplicates them, Ctrl+Shift+K deletes them.
+- Find and Search in Files: whole word and regular expressions; invalid patterns are reported.
+- Quick Open and Search in Files follow `.gitignore` in a repository.
+- Explorer: rename files and folders. Tabs: Ctrl+Shift+T reopens the last closed tab; View: Close Saved Tabs. File > Open Recent.
+- Source Control: merge a branch, abort a merge, delete a branch; Changes and History pages; Git status is read on a worker thread.
+- Syntax colours for TypeScript, JSX, TOML, INI and dotenv files (borrowed from the closest bundled syntax).
+- Crash recovery: unsaved text is written to a recovery folder every few seconds and restored as unsaved tabs after an abnormal exit; a normal exit clears it.
+- Terminal: Ctrl+click a `file:line:column` reference in the output to open it (network and device paths are never followed).
+- Source Control: right-click a commit in the History graph to cherry-pick or revert it; merge, cherry-pick, revert and a rebase started elsewhere show a banner with an Abort button.
+
 ## Included
 
 - **New in alpha.2:** the new architectural Forge Room logo and icon; a Room Lobby page (goal, team, agents, milestones, project setup, invite and Room Pulse; the countdown is opt-in); a labeled left rail, new title and status bars and a muted-ember palette; a Room Pulse strip over the workspace; Team, Agents, Tasks and Activity tabs in the right panel, all from real room data; a Preview pane that finds a local dev-server address in the terminal and opens it in your browser (no embedded web view); saving over a file changed on disk now asks first, and clean tabs reload on their own; faster incremental syntax highlighting (plain text above 2 MiB or when a line is longer than 4000 bytes); terminal scrollback, selection and copy; a Merge Conflicts group in Source Control with Accept Current/Incoming; copy and paste now work everywhere in the app.

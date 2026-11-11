@@ -10,6 +10,7 @@ pub enum Action {
     NewFile,
     NewFileIn(PathBuf),
     NewFolder(PathBuf),
+    Rename(PathBuf),
 }
 
 #[derive(Clone, Copy)]
@@ -117,6 +118,10 @@ fn tree(
                     *action = Action::NewFolder(entry.path.clone());
                     ui.close();
                 }
+                if ui.button("Rename…").clicked() {
+                    *action = Action::Rename(entry.path.clone());
+                    ui.close();
+                }
                 if ui.button("Copy path").clicked() {
                     ui.ctx().copy_text(entry.path.display().to_string());
                     ui.close();
@@ -132,6 +137,10 @@ fn tree(
             let selected = active == Some(entry.path.as_path());
             let response = row(ui, depth, &entry.name, Kind::File, selected, false);
             response.context_menu(|ui| {
+                if ui.button("Rename…").clicked() {
+                    *action = Action::Rename(entry.path.clone());
+                    ui.close();
+                }
                 if ui.button("Copy path").clicked() {
                     ui.ctx().copy_text(entry.path.display().to_string());
                     ui.close();

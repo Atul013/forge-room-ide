@@ -28,7 +28,7 @@ impl fmt::Display for DocumentError {
                 MAX_FILE_BYTES / 1_048_576
             ),
             Self::Io(error) if error.kind() == io::ErrorKind::InvalidData => {
-                write!(formatter, "not a UTF-8 text file")
+                write!(formatter, "not a UTF-8 or UTF-16 text file")
             }
             Self::Io(error) => write!(formatter, "file operation failed: {error}"),
         }
@@ -40,6 +40,180 @@ impl std::error::Error for DocumentError {}
 impl From<io::Error> for DocumentError {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
+    }
+}
+
+/// How a file's bytes map to text. The buffer is always plain `\n` text; the encoding and line
+/// ending the file came with are remembered and restored on save, so editing a CRLF or UTF-16 file
+/// does not silently convert it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Encoding {
+    #[default]
+    Utf8,
+    Utf8Bom,
+    Utf16Le,
+    Utf16Be,
+}
+
+impl Encoding {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Utf8 => "UTF-8",
+            Self::Utf8Bom => "UTF-8 with BOM",
+            Self::Utf16Le => "UTF-16 LE",
+            Self::Utf16Be => "UTF-16 BE",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LineEnding {
+    #[default]
+    Lf,
+    CrLf,
+    /// CR and LF used inconsistently (or a stray CR): the text is kept exactly as it is on disk.
+    Mixed,
+}
+
+impl LineEnding {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Lf => "LF",
+            Self::CrLf => "CRLF",
+            Self::Mixed => "Mixed",
+        }
+    }
+}
+
+fn invalid(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.to_string())
+}
+
+/// Text, encoding and dominant line ending of a file's bytes. Fails with `InvalidData` for bytes
+/// that are not valid UTF-8 or well-formed UTF-16 (other legacy encodings are not guessed).
+fn decode(bytes: &[u8]) -> io::Result<(String, Encoding, LineEnding)> {
+    let (raw, encoding) = if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        (
+            String::from_utf8(rest.to_vec()).map_err(|_| invalid("not UTF-8"))?,
+            Encoding::Utf8Bom,
+        )
+    } else if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        (utf16(rest, u16::from_le_bytes)?, Encoding::Utf16Le)
+    } else if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        (utf16(rest, u16::from_be_bytes)?, Encoding::Utf16Be)
+    } else {
+        (
+            String::from_utf8(bytes.to_vec()).map_err(|_| invalid("not UTF-8"))?,
+            Encoding::Utf8,
+        )
+    };
+    let (crlf, lf, cr) = (
+        raw.matches("\r\n").count(),
+        raw.matches('\n').count(),
+        raw.matches('\r').count(),
+    );
+    // Only files that are purely one style are normalised. Anything else (mixed breaks, a stray
+    // CR, `\r\r\n`) is kept byte for byte, so saving can never alter a line the user did not edit.
+    Ok(if cr == 0 {
+        (raw, encoding, LineEnding::Lf)
+    } else if cr == crlf && lf == crlf {
+        (raw.replace("\r\n", "\n"), encoding, LineEnding::CrLf)
+    } else {
+        (raw, encoding, LineEnding::Mixed)
+    })
+}
+
+fn utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> io::Result<String> {
+    if !bytes.len().is_multiple_of(2) {
+        return Err(invalid("truncated UTF-16"));
+    }
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let units: Vec<u16> = pairs.iter().map(|c| unit(*c)).collect();
+    String::from_utf16(&units).map_err(|_| invalid("invalid UTF-16"))
+}
+
+/// The bytes to write for `text` in the file's own encoding and line ending.
+fn encode(text: &str, encoding: Encoding, ending: LineEnding) -> Vec<u8> {
+    let text = match ending {
+        LineEnding::Lf | LineEnding::Mixed => text.to_string(),
+        LineEnding::CrLf => text.replace("\r\n", "\n").replace('\n', "\r\n"),
+    };
+    match encoding {
+        Encoding::Utf8 => text.into_bytes(),
+        Encoding::Utf8Bom => {
+            let mut out = vec![0xEF, 0xBB, 0xBF];
+            out.extend_from_slice(text.as_bytes());
+            out
+        }
+        Encoding::Utf16Le => {
+            let mut out = vec![0xFF, 0xFE];
+            out.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+            out
+        }
+        Encoding::Utf16Be => {
+            let mut out = vec![0xFE, 0xFF];
+            out.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+            out
+        }
+    }
+}
+
+/// Replace `path` with `bytes` without ever leaving a half-written file. The data goes to a
+/// sibling temporary file, is flushed to disk, and is then renamed over the original, so a crash or
+/// power loss mid-save keeps either the old content or the new content. Anything that stops the
+/// atomic route (a symlink, a read-only file, a folder where the temporary file cannot be made, a
+/// file another program holds open) falls back to writing the file directly, as before; that also
+/// reports the right error when it fails too. The replacement keeps the hidden and system marks
+/// but not alternate data streams or custom permissions, and hard links are not followed.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let existing = fs::symlink_metadata(path).ok();
+    if existing
+        .as_ref()
+        .is_some_and(|m| m.file_type().is_symlink() || m.permissions().readonly())
+    {
+        return fs::write(path, bytes);
+    }
+    // A short name that does not depend on the file's own (possibly very long) name, unique per
+    // call and per running app.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let temporary = path.with_file_name(format!(
+        ".forge-{}-{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let remove_temporary = || {
+        if let Ok(metadata) = fs::metadata(&temporary) {
+            let mut permissions = metadata.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            let _ = fs::set_permissions(&temporary, permissions);
+        }
+        let _ = fs::remove_file(&temporary);
+    };
+    let written = (|| {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(windows)]
+        if let Some(existing) = &existing {
+            use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+            const HIDDEN_AND_SYSTEM: u32 = 0x2 | 0x4;
+            options.attributes(existing.file_attributes() & HIDDEN_AND_SYSTEM);
+        }
+        let mut file = options.open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })();
+    if written.is_err() {
+        remove_temporary();
+        return fs::write(path, bytes);
+    }
+    match fs::rename(&temporary, path) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            remove_temporary();
+            fs::write(path, bytes)
+        }
     }
 }
 
@@ -57,6 +231,8 @@ pub struct DocumentSession {
     text: String,
     saved_text: String,
     disk_stamp: Option<DiskStamp>,
+    encoding: Encoding,
+    line_ending: LineEnding,
 }
 
 impl DocumentSession {
@@ -67,11 +243,43 @@ impl DocumentSession {
             saved_text: text.clone(),
             text,
             disk_stamp: None,
+            encoding: Encoding::Utf8,
+            line_ending: LineEnding::Lf,
         }
+    }
+
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
+    }
+
+    pub fn line_ending(&self) -> LineEnding {
+        self.line_ending
+    }
+
+    /// The file's current text as this session would read it, or why it cannot be read.
+    fn read_disk(path: &Path) -> io::Result<(String, Encoding)> {
+        decode(&fs::read(path)?).map(|(text, encoding, _)| (text, encoding))
     }
 
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// Follow a rename: when this document's file is `from` (or inside the folder `from`), it now
+    /// lives under `to`. The text and the unsaved changes are untouched.
+    pub fn moved(&mut self, from: &Path, to: &Path) {
+        let Some(current) = &self.path else { return };
+        if let Ok(rest) = current.strip_prefix(from) {
+            // The file itself leaves an empty remainder: joining it would add a trailing separator.
+            let new = if rest.as_os_str().is_empty() {
+                to.to_path_buf()
+            } else {
+                to.join(rest)
+            };
+            // A rename keeps the modification time and size, so the fingerprint stays valid and an
+            // outside change made just before it is still noticed.
+            self.path = Some(new);
+        }
     }
 
     pub fn file_name(&self) -> Option<String> {
@@ -89,6 +297,12 @@ impl DocumentSession {
         &mut self.text
     }
 
+    /// The text as it was last read from or written to the file (what unsaved changes are
+    /// measured against).
+    pub fn saved_text(&self) -> &str {
+        &self.saved_text
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.text != self.saved_text
     }
@@ -102,7 +316,9 @@ impl DocumentSession {
         // Fingerprint first: a change landing between the stamp and the read is then noticed
         // later, instead of being hidden by a stamp that already includes it.
         let fingerprint = stamp(&path);
-        let text = fs::read_to_string(&path)?;
+        let (text, encoding, line_ending) = decode(&fs::read(&path)?)?;
+        self.encoding = encoding;
+        self.line_ending = line_ending;
         self.disk_stamp = fingerprint;
         self.path = Some(path);
         self.saved_text.clone_from(&text);
@@ -124,8 +340,8 @@ impl DocumentSession {
         if Some(current) == self.disk_stamp {
             return false;
         }
-        match fs::read_to_string(path) {
-            Ok(text) if text == self.saved_text => {
+        match Self::read_disk(path) {
+            Ok((text, encoding)) if text == self.saved_text && encoding == self.encoding => {
                 self.disk_stamp = Some(current);
                 false
             }
@@ -139,8 +355,8 @@ impl DocumentSession {
         let Some(path) = &self.path else {
             return Ok(false);
         };
-        match fs::read_to_string(path) {
-            Ok(text) => Ok(text != self.saved_text),
+        match Self::read_disk(path) {
+            Ok((text, encoding)) => Ok(text != self.saved_text || encoding != self.encoding),
             // Gone: saving recreates it. Not UTF-8 is a change. Any other failure (for example a
             // file another program holds open without read sharing) means the current bytes
             // cannot be inspected, which is no evidence that they are unchanged.
@@ -161,7 +377,7 @@ impl DocumentSession {
     /// Save without checking for outside changes (the user chose to overwrite them).
     pub fn overwrite(&mut self) -> Result<(), DocumentError> {
         let path = self.path.as_ref().ok_or(DocumentError::NoPath)?;
-        fs::write(path, self.text.as_bytes())?;
+        write_atomic(path, &encode(&self.text, self.encoding, self.line_ending))?;
         self.disk_stamp = stamp(path);
         self.saved_text.clone_from(&self.text);
         Ok(())
@@ -178,7 +394,7 @@ impl DocumentSession {
     /// if the write fails.
     pub fn save_as(&mut self, path: impl Into<PathBuf>) -> Result<(), DocumentError> {
         let path = path.into();
-        fs::write(&path, self.text.as_bytes())?;
+        write_atomic(&path, &encode(&self.text, self.encoding, self.line_ending))?;
         self.disk_stamp = stamp(&path);
         self.path = Some(path);
         self.saved_text.clone_from(&self.text);
@@ -200,6 +416,299 @@ mod tests {
             "forge-room-document-{}-{stamp}.txt",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn crlf_files_stay_crlf_and_the_buffer_is_plain_lf() {
+        let path = test_path();
+        fs::write(&path, "one\r\ntwo\r\n").unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&path).unwrap();
+        assert_eq!(document.text(), "one\ntwo\n");
+        assert_eq!(document.line_ending(), LineEnding::CrLf);
+        assert!(!document.is_dirty());
+
+        // Typing Enter in the editor inserts a bare `\n`; the file must not end up mixed.
+        document.text_mut().push_str("three\n");
+        document.save().unwrap();
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            b"one\r\ntwo\r\nthree\r\n".to_vec()
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn only_purely_lf_or_purely_crlf_files_are_normalised() {
+        assert_eq!(decode(b"a\nb\n").unwrap().2, LineEnding::Lf);
+        assert_eq!(decode(b"a\r\nb\r\n").unwrap().2, LineEnding::CrLf);
+        assert_eq!(decode(b"no newline").unwrap().2, LineEnding::Lf);
+        assert_eq!(decode(b"").unwrap().0, "");
+        // Mixed, lone CR and `\r\r\n` are kept exactly as written.
+        for raw in [
+            &b"a\nb\r\nc\n"[..],
+            b"a\r\nb\nc\r\n",
+            b"x\r\r\n",
+            b"old\rmac\r",
+        ] {
+            let (text, _, ending) = decode(raw).unwrap();
+            assert_eq!(ending, LineEnding::Mixed, "{raw:?}");
+            assert_eq!(text.as_bytes(), raw);
+            assert_eq!(encode(&text, Encoding::Utf8, ending), raw, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn mixed_files_save_back_byte_for_byte() {
+        let path = test_path();
+        let raw = b"a\nb\r\nc\r\r\nd".to_vec();
+        fs::write(&path, &raw).unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&path).unwrap();
+        assert_eq!(document.line_ending(), LineEnding::Mixed);
+        document.text_mut().push('!');
+        document.save().unwrap();
+        let mut expected = raw;
+        expected.push(b'!');
+        assert_eq!(fs::read(&path).unwrap(), expected);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_rewrite_in_another_encoding_counts_as_an_outside_change() {
+        let path = test_path();
+        fs::write(&path, "same\n").unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&path).unwrap();
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend("same\n".encode_utf16().flat_map(u16::to_le_bytes));
+        fs::write(&path, utf16).unwrap();
+        assert!(document.changed_on_disk());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn bom_and_utf16_files_round_trip_in_their_own_encoding() {
+        for (bytes, encoding) in [
+            (b"\xEF\xBB\xBFhello\n".to_vec(), Encoding::Utf8Bom),
+            (
+                [
+                    &[0xFF, 0xFE][..],
+                    &"hi\r\n\u{e9}\u{1f600}"
+                        .encode_utf16()
+                        .flat_map(u16::to_le_bytes)
+                        .collect::<Vec<_>>(),
+                ]
+                .concat(),
+                Encoding::Utf16Le,
+            ),
+            (
+                [
+                    &[0xFE, 0xFF][..],
+                    &"hi\n"
+                        .encode_utf16()
+                        .flat_map(u16::to_be_bytes)
+                        .collect::<Vec<_>>(),
+                ]
+                .concat(),
+                Encoding::Utf16Be,
+            ),
+        ] {
+            let path = test_path();
+            fs::write(&path, &bytes).unwrap();
+            let mut document = DocumentSession::default();
+            document.open(&path).unwrap();
+            assert_eq!(document.encoding(), encoding);
+            assert!(
+                !document.text().starts_with('\u{feff}'),
+                "the BOM is not text"
+            );
+            // Saving unchanged text reproduces the original bytes exactly.
+            document.text_mut().push('x');
+            document.text_mut().pop();
+            document.overwrite().unwrap();
+            assert_eq!(fs::read(&path).unwrap(), bytes, "{encoding:?}");
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn invalid_bytes_and_truncated_utf16_are_refused() {
+        assert!(decode(&[0xC3, 0x28]).is_err());
+        assert!(decode(&[0xFF, 0xFE, 0x41]).is_err());
+        // An unpaired surrogate is not valid UTF-16.
+        assert!(decode(&[0xFF, 0xFE, 0x00, 0xD8]).is_err());
+    }
+
+    #[test]
+    fn outside_edits_are_noticed_through_the_encoding() {
+        let path = test_path();
+        fs::write(&path, "a\r\nb\r\n").unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&path).unwrap();
+        // The same text with different line endings is not an outside change.
+        fs::write(&path, "a\nb\n").unwrap();
+        assert!(!document.changed_on_disk());
+        // A different size, so the check does not depend on the clock's resolution.
+        fs::write(&path, "a\nBB\n").unwrap();
+        assert!(document.changed_on_disk());
+        fs::remove_file(path).unwrap();
+    }
+
+    /// A path inside a fresh private folder, so leftovers can be checked without other tests'
+    /// temporary files getting in the way.
+    fn private_path() -> PathBuf {
+        let dir = test_path().with_extension("dir");
+        fs::create_dir_all(&dir).unwrap();
+        dir.join("file.txt")
+    }
+
+    fn leftovers(path: &Path) -> Vec<String> {
+        fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|file| file.starts_with(".forge-") && file.ends_with(".tmp"))
+            .collect()
+    }
+
+    #[test]
+    fn saving_replaces_the_file_and_leaves_no_temporary_behind() {
+        let path = private_path();
+        fs::write(&path, "old\n").unwrap();
+        write_atomic(&path, b"new content\n").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new content\n");
+        assert!(leftovers(&path).is_empty());
+        // A new file is created the same way.
+        fs::remove_file(&path).unwrap();
+        write_atomic(&path, b"fresh").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"fresh");
+        assert!(leftovers(&path).is_empty());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_atomic_route_really_replaces_the_file() {
+        let path = test_path();
+        fs::write(
+            &path, "old
+",
+        )
+        .unwrap();
+        let before = fs::metadata(&path).unwrap().created().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write_atomic(
+            &path, b"new
+",
+        )
+        .unwrap();
+        // A rename brings in the temporary file with its own creation time; a direct write
+        // would keep the original.
+        assert_ne!(fs::metadata(&path).unwrap().created().unwrap(), before);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_hidden_file_stays_hidden_after_a_save() {
+        use std::os::windows::fs::MetadataExt;
+        let path = test_path();
+        fs::write(&path, "x").unwrap();
+        let attribute = std::process::Command::new("attrib")
+            .arg("+H")
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(attribute.success());
+        write_atomic(&path, b"y").unwrap();
+        assert_ne!(fs::metadata(&path).unwrap().file_attributes() & 0x2, 0);
+        let _ = std::process::Command::new("attrib")
+            .arg("-H")
+            .arg(&path)
+            .status();
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_read_only_file_is_not_replaced_and_keeps_its_content() {
+        let path = private_path();
+        fs::write(&path, "keep me\n").unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&path, permissions).unwrap();
+
+        assert!(write_atomic(&path, b"overwritten").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"keep me\n");
+        assert!(leftovers(&path).is_empty());
+
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(&path, permissions).unwrap();
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_another_program_holds_open_is_written_in_place() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let path = private_path();
+        fs::write(&path, "old\n").unwrap();
+        // Readers and writers allowed, but not rename or delete: the atomic rename must fail.
+        let _holder = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        write_atomic(&path, b"updated\n").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"updated\n");
+        assert!(leftovers(&path).is_empty());
+        drop(_holder);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_renamed_file_keeps_its_buffer_and_saves_to_the_new_path() {
+        let dir = test_path().with_extension("moved");
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        let old = dir.join("sub").join("a.txt");
+        fs::write(&old, "one\n").unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&old).unwrap();
+        document.text_mut().push_str("two\n");
+
+        // Renaming the folder moves the file with it.
+        fs::rename(dir.join("sub"), dir.join("renamed")).unwrap();
+        document.moved(&dir.join("sub"), &dir.join("renamed"));
+        assert_eq!(
+            document.path(),
+            Some(dir.join("renamed").join("a.txt").as_path())
+        );
+        assert!(document.is_dirty(), "unsaved changes survive the rename");
+        document.save().unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("renamed").join("a.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+        // The file itself (not inside a folder) moves to exactly the new path, with no separator
+        // appended.
+        let exact_old = dir.join("renamed").join("a.txt");
+        let exact_new = dir.join("renamed").join("b.txt");
+        fs::rename(&exact_old, &exact_new).unwrap();
+        document.moved(&exact_old, &exact_new);
+        assert_eq!(document.path(), Some(exact_new.as_path()));
+        assert!(
+            !document.changed_on_disk(),
+            "the moved file is the same content"
+        );
+        document.text_mut().push_str("three\n");
+        document.save().unwrap();
+        // A path elsewhere is not touched.
+        let before = document.path().map(Path::to_path_buf);
+        document.moved(&dir.join("other"), &dir.join("x"));
+        assert_eq!(document.path().map(Path::to_path_buf), before);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

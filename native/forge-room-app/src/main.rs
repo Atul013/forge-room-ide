@@ -1,10 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai_panel;
+mod background;
 mod brand;
 mod commands;
 mod document;
+mod editing;
 mod explorer;
+mod file_ops;
 mod find;
 mod find_bar;
 mod fonts;
@@ -13,12 +16,15 @@ mod git;
 mod graph;
 mod gutter;
 mod icons;
+mod line_ops;
 mod lobby;
 mod mark;
 mod palette;
+mod path_links;
 mod position;
 mod preview;
 mod project_tools;
+mod recovery;
 mod room_state;
 mod rooms;
 mod search;
@@ -199,6 +205,14 @@ struct ForgeRoomApp {
     file_history: Vec<git::CommitInfo>,
     history_name: Option<String>,
     stash_count: usize,
+    /// Unsaved text kept on disk so a crash does not lose it.
+    recovery: recovery::Store,
+    last_recovery: std::time::Instant,
+    /// Hash of the text last written to the recovery folder, per tab id.
+    recovery_written: std::collections::HashMap<u64, u64>,
+    /// The repository snapshot being read on a worker thread.
+    git_refresh: background::Latest<git::Snapshot>,
+    operation: Option<git::Operation>,
     blame: Vec<git::BlameLine>,
     blame_enabled: bool,
     git_job: Option<GitJob>,
@@ -227,6 +241,8 @@ struct ForgeRoomApp {
     reselect_find: bool,
     new_folder_parent: Option<PathBuf>,
     new_folder_name: String,
+    /// The file or folder being renamed and the name typed so far.
+    rename: Option<(PathBuf, String)>,
 }
 
 /// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
@@ -300,6 +316,11 @@ impl ForgeRoomApp {
             file_history: Vec::new(),
             history_name: None,
             stash_count: 0,
+            recovery: recovery::Store::default_location(),
+            last_recovery: std::time::Instant::now(),
+            recovery_written: std::collections::HashMap::new(),
+            git_refresh: background::Latest::default(),
+            operation: None,
             blame: Vec::new(),
             blame_enabled: true,
             git_job: None,
@@ -323,15 +344,91 @@ impl ForgeRoomApp {
             search: search_view::SearchView::default(),
             new_folder_parent: None,
             new_folder_name: String::new(),
+            rename: None,
             find: find_bar::FindState::default(),
             pending_select: None,
             last_find_query: String::new(),
             reselect_find: false,
         };
+        app.restore_recovered();
         if let Some(path) = initial_path {
             app.open_path(path);
         }
         app
+    }
+
+    /// Bring back the unsaved tabs a dead instance left in the recovery folder (it ended without a
+    /// normal exit). They come back as unsaved tabs, and are written under this instance right
+    /// away, so a second crash a moment later loses nothing either.
+    fn restore_recovered(&mut self) {
+        let entries = self.recovery.take_orphans();
+        if entries.is_empty() {
+            return;
+        }
+        let mut changed = 0;
+        for entry in &entries {
+            let outcome = self.tabs.open_recovered(
+                entry.path.as_deref().map(std::path::Path::new),
+                entry.text.clone(),
+                entry.disk_hash,
+            );
+            if outcome == tabs::Recovered::DiskChanged {
+                changed += 1;
+            }
+        }
+        self.status = format!(
+            "Recovered {} unsaved tab{} from the last session",
+            entries.len(),
+            if entries.len() == 1 { "" } else { "s" }
+        );
+        if changed > 0 {
+            self.status.push_str(&format!(
+                "; {changed} file{} changed on disk since, so its text is in an untitled tab",
+                if changed == 1 { "" } else { "s" }
+            ));
+        }
+        self.last_recovery = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        self.autosave_recovery();
+    }
+
+    /// Every few seconds write the text of tabs with unsaved changes to the recovery folder, and
+    /// forget the entries of tabs that were saved or closed. Only changed text is rewritten.
+    fn autosave_recovery(&mut self) {
+        // Once the app is on its way out (the user chose to quit) nothing more is kept.
+        if self.allow_close || self.last_recovery.elapsed() < std::time::Duration::from_secs(3) {
+            return;
+        }
+        self.last_recovery = std::time::Instant::now();
+        let mut live = Vec::new();
+        for tab in &self.tabs.tabs {
+            if tab.readonly || !tab.doc.is_dirty() {
+                continue;
+            }
+            live.push(tab.id);
+            let hash = recovery::text_hash(tab.doc.text());
+            if self.recovery_written.get(&tab.id) == Some(&hash) {
+                continue;
+            }
+            let path = tab.doc.path();
+            let entry = recovery::Entry {
+                path: path.map(|path| path.display().to_string()),
+                text: tab.doc.text().to_string(),
+                disk_hash: path.map(|_| recovery::text_hash(tab.doc.saved_text())),
+            };
+            if self.recovery.save(tab.id, &entry).is_ok() {
+                self.recovery_written.insert(tab.id, hash);
+            }
+        }
+        let gone: Vec<u64> = self
+            .recovery_written
+            .keys()
+            .copied()
+            .filter(|id| !live.contains(id))
+            .collect();
+        for id in gone {
+            self.recovery.remove(id);
+            self.recovery_written.remove(&id);
+        }
     }
 
     // ---- File operations ---------------------------------------------------------------
@@ -342,8 +439,17 @@ impl ForgeRoomApp {
                 self.status = format!("Folder not opened: {error}");
                 return;
             }
+            let folder = normalize(&path);
+            // The recent list is a convenience: failing to save it is not worth a message.
+            let _ = settings::update(|settings| {
+                settings::remember_folder(
+                    &mut settings.recent_folders,
+                    &folder.display().to_string(),
+                );
+            });
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
+            self.clear_git_state();
             self.refresh_git();
             let root = self.repo_root();
             self.room.load_for(root.as_deref());
@@ -496,6 +602,26 @@ impl ForgeRoomApp {
                     self.request_close(self.tabs.active);
                 }
             }
+            Command::ReopenClosedTab => match self.tabs.reopen_closed() {
+                Ok(Some(path)) => {
+                    self.status = format!("Reopened {}", path.display());
+                    self.focus_editor = true;
+                }
+                Ok(None) => self.status = "No closed tab to reopen".into(),
+                Err(error) => self.status = format!("Cannot reopen: {error}"),
+            },
+            Command::CloseSavedTabs if self.pending.is_some() => {
+                // A dialog holds a tab's position: closing tabs now would point it at another one.
+                self.status = "Finish the open dialog first".into();
+            }
+            Command::CloseSavedTabs => {
+                let closed = self.tabs.close_saved();
+                self.status = match closed {
+                    0 => "Every open tab has unsaved changes".into(),
+                    1 => "Closed 1 saved tab".into(),
+                    count => format!("Closed {count} saved tabs"),
+                };
+            }
             Command::NextTab => {
                 self.tabs.next();
                 self.focus_editor = true;
@@ -524,11 +650,27 @@ impl ForgeRoomApp {
             Command::SwitchBranch => {
                 if let Some(root) = self.repo_root() {
                     match git::branches(&root) {
-                        Ok(list) => self.palette.open_branches(list),
+                        Ok(list) => self
+                            .palette
+                            .open_branches(list, palette::BranchPurpose::Checkout),
                         Err(error) => self.status = format!("Git: {error}"),
                     }
                 }
             }
+            Command::MergeBranch | Command::DeleteBranch => {
+                let purpose = if command == Command::MergeBranch {
+                    palette::BranchPurpose::Merge
+                } else {
+                    palette::BranchPurpose::Delete
+                };
+                if let Some(root) = self.repo_root() {
+                    match git::branches(&root) {
+                        Ok(list) => self.palette.open_branches(list, purpose),
+                        Err(error) => self.status = format!("Git: {error}"),
+                    }
+                }
+            }
+            Command::AbortOperation => self.git_action(source_control::Action::AbortOperation),
             Command::GitSync => self.git_action(source_control::Action::Sync),
             Command::GitPull => self.git_action(source_control::Action::Pull),
             Command::GitPush => self.git_action(source_control::Action::Push),
@@ -693,8 +835,12 @@ impl ForgeRoomApp {
             return;
         }
         let request = std::mem::take(&mut self.terminal_focus_request);
+        let mut link = None;
         match self.terminal.as_mut() {
-            Some(terminal) => self.terminal_has_focus = terminal.show(ui, request),
+            Some(terminal) => {
+                self.terminal_has_focus = terminal.show(ui, request);
+                link = terminal.take_link();
+            }
             None => {
                 self.terminal_has_focus = false;
                 let message = self
@@ -706,6 +852,36 @@ impl ForgeRoomApp {
                     ui.label(egui::RichText::new(message).color(theme::text_dim()));
                 });
             }
+        }
+        if let Some(link) = link {
+            self.open_terminal_link(&link);
+        }
+    }
+
+    /// Open the file a Ctrl+clicked reference in the terminal output points at, at its line and
+    /// column. References are resolved inside the open folder (or as absolute paths).
+    fn open_terminal_link(&mut self, link: &path_links::PathRef) {
+        let root = self
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone())
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        let Some(path) = path_links::resolve(link, &root) else {
+            self.status = format!("No file {} to open", link.path);
+            return;
+        };
+        self.open_path(path.clone());
+        // `open_path` reports a failure in the status bar and leaves the previous tab active: only
+        // place the caret when the file really is the active tab.
+        let opened = self.tabs.active_path() == Some(tabs::normalize(&path).as_path());
+        if !opened {
+            return;
+        }
+        if let (Some(line), Some(tab)) = (link.line, self.tabs.tabs.get(self.tabs.active)) {
+            let at = path_links::locate(tab.doc.text(), line, link.column.unwrap_or(1));
+            self.pending_select = Some((at, at));
+            self.focus_editor = true;
         }
     }
 
@@ -868,6 +1044,8 @@ impl ForgeRoomApp {
             self.switch_view(SidebarView::Room);
         } else if shortcut(ui, command_shift, Key::O) {
             self.open_folder_dialog();
+        } else if shortcut(ui, command_shift, Key::T) {
+            self.run_command(Command::ReopenClosedTab, false);
         } else if shortcut(ui, command, Key::P) {
             self.run_command(Command::QuickOpen, false);
         } else if shortcut(ui, command, Key::F) {
@@ -1110,6 +1288,39 @@ impl ForgeRoomApp {
         }
     }
 
+    /// File > Open Recent: the folders opened before that still exist, newest first.
+    fn recent_menu(&mut self, ui: &mut egui::Ui) {
+        let recent: Vec<String> = settings::load()
+            .recent_folders
+            .into_iter()
+            .filter(|folder| std::path::Path::new(folder).is_dir())
+            .collect();
+        let mut chosen = None;
+        let mut clear = false;
+        ui.add_enabled_ui(!recent.is_empty(), |ui| {
+            ui.menu_button("Open Recent", |ui| {
+                for folder in &recent {
+                    if ui.button(folder).clicked() {
+                        chosen = Some(PathBuf::from(folder));
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.button("Clear Recent").clicked() {
+                    clear = true;
+                    ui.close();
+                }
+            });
+        });
+        if clear {
+            let _ = settings::update(|settings| settings.recent_folders.clear());
+        }
+        if let Some(path) = chosen {
+            self.open_path(path);
+            ui.close();
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         {
             ui.menu_button("File", |ui| {
@@ -1131,6 +1342,7 @@ impl ForgeRoomApp {
                         ui.close();
                     }
                 }
+                self.recent_menu(ui);
                 ui.separator();
                 if ui
                     .add(egui::Button::new("Save").shortcut_text("Ctrl+S"))
@@ -1524,39 +1736,67 @@ impl ForgeRoomApp {
     }
 
     /// Re-read `git status` and the change markers for the active file.
+    /// Forget everything shown about the repository (a different folder was opened).
+    fn clear_git_state(&mut self) {
+        self.git_status = None;
+        self.operation = None;
+        self.is_repo = false;
+        self.branch = None;
+        self.hunks.clear();
+        self.graph_commits.clear();
+        self.graph_rows.clear();
+        self.file_history.clear();
+        self.history_name = None;
+        self.stash_count = 0;
+        // A read still running is for the folder that was just left: its result is not wanted, and
+        // the next request must not wait for it.
+        self.git_refresh.discard();
+    }
+
+    /// Ask for a fresh read of the repository. It runs on a worker thread, so a slow `git status`
+    /// in a big repository never freezes the window; [`Self::poll_git_refresh`] applies the result.
     fn refresh_git(&mut self) {
         self.last_git = std::time::Instant::now();
         let Some(root) = self.repo_root() else {
-            self.git_status = None;
-            self.is_repo = false;
-            self.branch = None;
-            self.hunks.clear();
-            self.graph_commits.clear();
-            self.graph_rows.clear();
-            self.file_history.clear();
-            self.history_name = None;
+            self.clear_git_state();
+            self.git_refresh.discard();
             return;
         };
-        self.is_repo = git::is_repo(&root);
-        if !self.is_repo {
-            self.git_status = Some(Err("not a repository".into()));
-            self.branch = None;
-            self.hunks.clear();
+        let context = self.egui_ctx.clone();
+        self.git_refresh
+            .request(&context, move || git::snapshot(&root));
+    }
+
+    /// Take a finished repository read, if any, and start another when one was asked for meanwhile.
+    fn poll_git_refresh(&mut self) {
+        let Some(snapshot) = self.git_refresh.poll() else {
+            if self.git_refresh.take_failed() {
+                // Say so, rather than showing a repository as "not a repository" (with a button
+                // that would run `git init`).
+                self.is_repo = true;
+                self.git_status = Some(Err("Reading the repository failed; retrying".into()));
+            }
             return;
+        };
+        // The result of a read for a folder that is no longer open is dropped.
+        if self.repo_root().as_deref() == Some(snapshot.root.as_path()) {
+            self.is_repo = snapshot.is_repo;
+            self.operation = snapshot.operation;
+            self.branch = snapshot.branch;
+            self.git_status = Some(snapshot.status);
+            if self.is_repo {
+                self.graph_commits = snapshot.commits;
+                self.graph_rows = graph::layout(&self.graph_commits);
+                self.stash_count = snapshot.stashes;
+                self.refresh_hunks();
+            } else {
+                // Not a repository: nothing to blame or diff, and no Git processes to run.
+                self.hunks.clear();
+            }
         }
-        let result = git::status(&root);
-        self.branch = match &result {
-            Ok(status) => status
-                .branch
-                .clone()
-                .or_else(|| workspace::git_branch(&root)),
-            Err(_) => workspace::git_branch(&root),
-        };
-        self.git_status = Some(result);
-        self.graph_commits = git::log_all(&root, 80).unwrap_or_default();
-        self.graph_rows = graph::layout(&self.graph_commits);
-        self.stash_count = git::stash_list(&root).len();
-        self.refresh_hunks();
+        if self.git_refresh.take_again() {
+            self.refresh_git();
+        }
     }
 
     fn refresh_hunks(&mut self) {
@@ -1764,6 +2004,24 @@ impl ForgeRoomApp {
             }
             Action::Stash => git::stash_push(&root, ""),
             Action::StashPop => git::stash_pop(&root, 0),
+            Action::AbortOperation => git::abort_operation(&root)
+                .map(|operation| format!("{} aborted", operation.label())),
+            Action::CherryPick(hash) => {
+                git::cherry_pick(&root, &hash).map(|outcome| match outcome {
+                    git::PickOutcome::Done(text) => format!("Cherry-picked: {text}"),
+                    git::PickOutcome::Conflicts => {
+                        "The cherry-pick has conflicts. Resolve them in \
+                     Source Control, then commit, or abort it"
+                            .into()
+                    }
+                })
+            }
+            Action::Revert(hash) => git::revert(&root, &hash).map(|outcome| match outcome {
+                git::PickOutcome::Done(text) => format!("Reverted: {text}"),
+                git::PickOutcome::Conflicts => "The revert has conflicts. Resolve them in \
+                     Source Control, then commit, or abort it"
+                    .into(),
+            }),
             Action::ShowCommit(hash) => {
                 match git::show(&root, &hash) {
                     Ok(text) => {
@@ -1957,6 +2215,8 @@ impl ForgeRoomApp {
     fn source_control_view(&mut self, ui: &mut egui::Ui, compact: bool) {
         let repo = if self.workspace.is_none() {
             source_control::Repo::NoFolder
+        } else if self.git_status.is_none() && self.git_refresh.busy() {
+            source_control::Repo::Loading
         } else if !self.is_repo {
             source_control::Repo::NoRepository
         } else {
@@ -1968,6 +2228,7 @@ impl ForgeRoomApp {
                     history: &self.file_history,
                     history_name: self.history_name.as_deref(),
                     stashes: self.stash_count,
+                    operation: self.operation,
                     busy: self.git_job.as_ref().map(|job| job.label.as_str()),
                 }),
                 Some(Err(error)) => source_control::Repo::Error(error),
@@ -1990,11 +2251,66 @@ impl ForgeRoomApp {
                 self.new_folder_parent = Some(parent);
                 self.new_folder_name.clear();
             }
+            explorer::Action::Rename(path) => {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.rename = Some((path, name));
+            }
             explorer::Action::Refresh => {
                 if let Some(workspace) = self.workspace.as_mut() {
                     workspace.refresh();
                 }
                 self.refresh_git();
+            }
+        }
+        if let Some((path, mut name)) = self.rename.take() {
+            let (mut confirm, mut cancel) = (false, false);
+            let error = file_ops::valid_name(&name).err();
+            egui::Window::new("Rename")
+                .collapsible(false)
+                .resizable(false)
+                .show(&self.egui_ctx, |ui| {
+                    ui.label(format!("{}", path.display()));
+                    let field = ui.text_edit_singleline(&mut name);
+                    field.request_focus();
+                    if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                        confirm = true;
+                    }
+                    if let Some(error) = &error {
+                        ui.colored_label(egui::Color32::from_rgb(240, 113, 120), error);
+                    }
+                    ui.horizontal(|ui| {
+                        confirm |= ui
+                            .add_enabled(error.is_none(), egui::Button::new("Rename"))
+                            .clicked();
+                        cancel = ui.button("Cancel").clicked();
+                    });
+                });
+            if ui_escape(&self.egui_ctx) {
+                cancel = true;
+            }
+            if confirm && error.is_none() {
+                // The tabs hold canonical paths, and the old path can only be made canonical
+                // while it still exists.
+                let old_path = tabs::normalize(&path);
+                match file_ops::rename(&path, &name) {
+                    Ok(new_path) => {
+                        self.tabs.path_moved(&old_path, &new_path);
+                        if let Some(workspace) = &mut self.workspace {
+                            workspace.refresh();
+                        }
+                        self.refresh_git();
+                        self.status = format!("Renamed to {}", name.trim());
+                    }
+                    Err(message) => {
+                        self.status = message;
+                        self.rename = Some((path, name));
+                    }
+                }
+            } else if !cancel {
+                self.rename = Some((path, name));
             }
         }
         if let Some(parent) = self.new_folder_parent.clone() {
@@ -2236,6 +2552,18 @@ impl ForgeRoomApp {
                     // The current-line wash is opaque, so it must sit behind the text: reserve its
                     // place in the paint order now and fill it once the line's position is known.
                     let line_wash = ui.painter().add(egui::Shape::Noop);
+                    if !readonly {
+                        // Enter keeps the indentation and opens bracket blocks; Tab and Shift+Tab
+                        // indent and unindent the line or the selected lines.
+                        if !editing::smart_tab(ui, id, tab.doc.text_mut()) {
+                            editing::smart_enter(ui, id, tab.doc.text_mut());
+                        }
+                        // Brackets and quotes are completed, stepped over and deleted in pairs.
+                        editing::smart_pairs(ui, id, tab.doc.text_mut(), &extension);
+                        // Ctrl+/ comments lines; Alt+Up/Down move them, Shift+Alt+Up/Down
+                        // duplicate them and Ctrl+Shift+K deletes them.
+                        line_ops::handle(ui, id, tab.doc.text_mut(), &extension);
+                    }
                     let output = egui::TextEdit::multiline(tab.doc.text_mut())
                         .id(id)
                         .font(font_id.clone())
@@ -2713,8 +3041,8 @@ impl ForgeRoomApp {
                 ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()));
                 ui.add_space(6.0);
                 if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
-                    ui.label(dim(position::line_ending(tab.doc.text()).to_string()));
-                    ui.label(dim("UTF-8".to_string()));
+                    ui.label(dim(tab.doc.line_ending().label().to_string()));
+                    ui.label(dim(tab.doc.encoding().label().to_string()));
                     if let Some(name) = tab.doc.file_name()
                         && let Some(language) = language_name(&name)
                     {
@@ -2812,6 +3140,8 @@ impl ForgeRoomApp {
             (Some(Pending::Quit), Choice::Save) => self.save_all_and_quit(context),
             (Some(Pending::Quit), Choice::Discard) => {
                 self.allow_close = true;
+                // Discarded means gone: not even a recovery copy may bring it back.
+                self.recovery.clear();
                 context.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             (Some(Pending::DiskConflict(..)) | None, _) => {}
@@ -2830,6 +3160,7 @@ impl ForgeRoomApp {
         self.resume = Resume::Nothing;
         if all_saved {
             self.allow_close = true;
+            self.recovery.clear();
             context.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
@@ -3097,11 +3428,14 @@ impl eframe::App for ForgeRoomApp {
 
     fn on_exit(&mut self) {
         let _ = self.lobby.finish();
+        // A normal exit already asked about every unsaved tab: nothing is left to recover.
+        self.recovery.clear();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
+        self.autosave_recovery();
         if context.input(|input| input.viewport().close_requested())
             && self.tabs.any_dirty()
             && !self.allow_close
@@ -3267,6 +3601,32 @@ impl eframe::App for ForgeRoomApp {
                     self.refresh_git();
                 }
             }
+            Some(palette::Outcome::Merge(name)) => {
+                if let Some(root) = self.repo_root() {
+                    self.status = match git::merge(&root, &name) {
+                        Ok(git::MergeOutcome::Merged(text)) => format!("Merged {name}: {text}"),
+                        Ok(git::MergeOutcome::UpToDate) => {
+                            format!("Already up to date with {name}")
+                        }
+                        Ok(git::MergeOutcome::Conflicts) => format!(
+                            "Merging {name} has conflicts. Resolve them in Source Control, \
+                             then commit, or run Git: Abort Merge"
+                        ),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                    self.reload_clean_tabs();
+                }
+            }
+            Some(palette::Outcome::DeleteBranch(name)) => {
+                if let Some(root) = self.repo_root() {
+                    self.status = match git::delete_branch(&root, &name, false) {
+                        Ok(()) => format!("Deleted branch {name}"),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                }
+            }
             Some(palette::Outcome::Run(command)) => self.run_command(command, false),
             Some(palette::Outcome::Open(path)) => self.open_path(path),
             Some(palette::Outcome::GoToLine(line)) => self.goto_line(line),
@@ -3275,10 +3635,8 @@ impl eframe::App for ForgeRoomApp {
 
         match theme_gallery::show(&context, &mut self.gallery) {
             Some(theme_gallery::Outcome::Keep) => {
-                let settings = settings::Settings {
-                    theme: Some(theme::current().key.clone()),
-                };
-                if let Err(error) = settings::save(&settings) {
+                let key = theme::current().key.clone();
+                if let Err(error) = settings::update(|settings| settings.theme = Some(key)) {
                     self.status = format!("Could not save settings: {error}");
                 }
             }
@@ -3287,6 +3645,7 @@ impl eframe::App for ForgeRoomApp {
         }
 
         self.poll_git_job(&context);
+        self.poll_git_refresh();
         self.discard_dialog(&context);
         self.pending_dialog(&context);
         self.update_title(&context);
@@ -3391,6 +3750,11 @@ fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
 }
 
 /// Display name of the language for a file name, judged from its extension.
+/// Whether Escape was pressed this frame (and takes it, so nothing else reacts).
+fn ui_escape(context: &egui::Context) -> bool {
+    context.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+}
+
 fn language_name(name: &str) -> Option<&'static str> {
     let extension = name.rsplit_once('.')?.1.to_ascii_lowercase();
     Some(match extension.as_str() {
