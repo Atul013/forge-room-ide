@@ -350,6 +350,14 @@ impl ForgeRoomApp {
                 self.status = format!("Folder not opened: {error}");
                 return;
             }
+            let folder = normalize(&path);
+            // The recent list is a convenience: failing to save it is not worth a message.
+            let _ = settings::update(|settings| {
+                settings::remember_folder(
+                    &mut settings.recent_folders,
+                    &folder.display().to_string(),
+                );
+            });
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
             self.refresh_git();
@@ -1152,6 +1160,39 @@ impl ForgeRoomApp {
         }
     }
 
+    /// File > Open Recent: the folders opened before that still exist, newest first.
+    fn recent_menu(&mut self, ui: &mut egui::Ui) {
+        let recent: Vec<String> = settings::load()
+            .recent_folders
+            .into_iter()
+            .filter(|folder| std::path::Path::new(folder).is_dir())
+            .collect();
+        let mut chosen = None;
+        let mut clear = false;
+        ui.add_enabled_ui(!recent.is_empty(), |ui| {
+            ui.menu_button("Open Recent", |ui| {
+                for folder in &recent {
+                    if ui.button(folder).clicked() {
+                        chosen = Some(PathBuf::from(folder));
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui.button("Clear Recent").clicked() {
+                    clear = true;
+                    ui.close();
+                }
+            });
+        });
+        if clear {
+            let _ = settings::update(|settings| settings.recent_folders.clear());
+        }
+        if let Some(path) = chosen {
+            self.open_path(path);
+            ui.close();
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         {
             ui.menu_button("File", |ui| {
@@ -1173,6 +1214,7 @@ impl ForgeRoomApp {
                         ui.close();
                     }
                 }
+                self.recent_menu(ui);
                 ui.separator();
                 if ui
                     .add(egui::Button::new("Save").shortcut_text("Ctrl+S"))
@@ -3415,10 +3457,8 @@ impl eframe::App for ForgeRoomApp {
 
         match theme_gallery::show(&context, &mut self.gallery) {
             Some(theme_gallery::Outcome::Keep) => {
-                let settings = settings::Settings {
-                    theme: Some(theme::current().key.clone()),
-                };
-                if let Err(error) = settings::save(&settings) {
+                let key = theme::current().key.clone();
+                if let Err(error) = settings::update(|settings| settings.theme = Some(key)) {
                     self.status = format!("Could not save settings: {error}");
                 }
             }

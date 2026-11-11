@@ -8,6 +8,37 @@ use std::{fs, io, path::PathBuf};
 pub struct Settings {
     #[serde(default)]
     pub theme: Option<String>,
+    /// Folders opened most recently, newest first.
+    #[serde(default)]
+    pub recent_folders: Vec<String>,
+}
+
+/// How many recent folders are kept.
+pub const MAX_RECENT_FOLDERS: usize = 10;
+
+/// Put `folder` first in `recent`, dropping an earlier entry for the same folder (compared
+/// without regard to case or the direction of slashes, as Windows paths are) and keeping at most
+/// [`MAX_RECENT_FOLDERS`].
+pub fn remember_folder(recent: &mut Vec<String>, folder: &str) {
+    let key = |path: &str| {
+        path.replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
+    };
+    let wanted = key(folder);
+    if wanted.is_empty() {
+        return;
+    }
+    recent.retain(|known| key(known) != wanted);
+    recent.insert(0, folder.to_string());
+    recent.truncate(MAX_RECENT_FOLDERS);
+}
+
+/// Load the settings, change them and save them again, so one setting never overwrites another.
+pub fn update(change: impl FnOnce(&mut Settings)) -> io::Result<()> {
+    let mut settings = load();
+    change(&mut settings);
+    save(&settings)
 }
 
 fn path() -> PathBuf {
@@ -52,8 +83,27 @@ mod tests {
         assert!(empty.theme.is_none());
         let text = serde_json::to_string(&Settings {
             theme: Some("ink-ember".into()),
+            ..Default::default()
         })
         .unwrap();
         assert!(text.contains("ink-ember"));
+        // Settings written before recent folders existed still load.
+        assert!(empty.recent_folders.is_empty());
+    }
+
+    #[test]
+    fn recent_folders_are_newest_first_without_duplicates_and_capped() {
+        let mut recent = Vec::new();
+        remember_folder(&mut recent, r"C:\a");
+        remember_folder(&mut recent, r"C:\b");
+        remember_folder(&mut recent, "c:/A/");
+        assert_eq!(recent, vec!["c:/A/".to_string(), r"C:\b".to_string()]);
+        remember_folder(&mut recent, "");
+        assert_eq!(recent.len(), 2);
+        for index in 0..30 {
+            remember_folder(&mut recent, &format!(r"C:\folder{index}"));
+        }
+        assert_eq!(recent.len(), MAX_RECENT_FOLDERS);
+        assert_eq!(recent[0], r"C:\folder29");
     }
 }
