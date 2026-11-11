@@ -4,6 +4,7 @@ mod ai_panel;
 mod brand;
 mod commands;
 mod document;
+mod editing;
 mod explorer;
 mod find;
 mod find_bar;
@@ -2259,6 +2260,10 @@ impl ForgeRoomApp {
                     // The current-line wash is opaque, so it must sit behind the text: reserve its
                     // place in the paint order now and fill it once the line's position is known.
                     let line_wash = ui.painter().add(egui::Shape::Noop);
+                    if !readonly {
+                        // Enter keeps the indentation and opens bracket blocks.
+                        editing::smart_enter(ui, id, tab.doc.text_mut());
+                    }
                     let output = egui::TextEdit::multiline(tab.doc.text_mut())
                         .id(id)
                         .font(font_id.clone())
