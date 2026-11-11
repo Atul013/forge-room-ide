@@ -57,6 +57,7 @@ pub enum Command {
     GitStashApply,
     ToggleTerminal,
     CheckProject,
+    TrustFolder,
     NewTerminal,
 }
 
@@ -150,6 +151,7 @@ pub const ALL: &[(Command, &str, &str)] = &[
         "Rust: Check Project (cargo check)",
         "",
     ),
+    (Command::TrustFolder, "Folder: Trust This Folder", ""),
     (
         Command::NewTerminal,
         "Terminal: New Terminal",

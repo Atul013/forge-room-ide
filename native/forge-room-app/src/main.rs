@@ -211,6 +211,12 @@ struct ForgeRoomApp {
     checked_folders: std::collections::HashSet<PathBuf>,
     auto_checked: std::time::Instant,
     recovery_warned: bool,
+    /// The user trusts the open folder: until then Git and project tools stay off.
+    trusted: bool,
+    /// The folder waiting for the answer to the trust question.
+    trust_prompt: Option<PathBuf>,
+    /// The top folder of the repository when the open folder is a subfolder of it.
+    git_top: Option<PathBuf>,
     /// The files git reported as changed at the last read; the Explorer refreshes when it differs.
     change_paths: Vec<String>,
     terminals_confirmed: bool,
@@ -350,6 +356,9 @@ impl ForgeRoomApp {
             checked_folders: std::collections::HashSet::new(),
             auto_checked: std::time::Instant::now(),
             recovery_warned: false,
+            trusted: true,
+            trust_prompt: None,
+            git_top: None,
             change_paths: Vec::new(),
             terminals_confirmed: false,
             graph_commits: Vec::new(),
@@ -636,10 +645,36 @@ impl ForgeRoomApp {
                     &folder.display().to_string(),
                 );
             });
+            let previous = self.git_root();
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
             self.clear_git_state();
-            self.refresh_git();
+            // Tabs of the folder that was left would otherwise sit among the new project's files, and
+            // a shell would go on working in the old one.
+            let mut moved = String::new();
+            if previous.as_ref().is_some_and(|old| *old != folder) {
+                let closed = self.tabs.close_clean_outside(&folder);
+                if closed > 0 {
+                    moved.push_str(&format!(
+                        "; closed {closed} saved tab(s) of the other folder"
+                    ));
+                }
+                if self.terminals.iter().any(|t| !t.has_exited()) {
+                    self.spawn_terminal(true);
+                    moved.push_str(
+                        "; a new terminal is open here, the old ones still run in the other folder",
+                    );
+                }
+            }
+            // Git and the project's tools only run where the user said so: a folder can carry
+            // settings that make them start programs.
+            let known = settings::load().trusted_folders;
+            if settings::is_trusted(&known, &folder.display().to_string()) {
+                self.set_trust(true);
+            } else {
+                self.set_trust(false);
+                self.trust_prompt = Some(folder.clone());
+            }
             let root = self.repo_root();
             self.room.load_for(root.as_deref());
             let kept = self
@@ -649,8 +684,8 @@ impl ForgeRoomApp {
             self.search.reset();
             self.preview.forget_project();
             self.status = match kept {
-                Ok(()) => format!("Opened folder {}", path.display()),
-                Err(error) => format!("Opened folder {}. {error}", path.display()),
+                Ok(()) => format!("Opened folder {}{moved}", path.display()),
+                Err(error) => format!("Opened folder {}. {error}{moved}", path.display()),
             };
             return;
         }
@@ -931,7 +966,7 @@ impl ForgeRoomApp {
                 };
             }
             Command::SwitchBranch => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     match git::branches(&root) {
                         Ok(list) => self
                             .palette
@@ -946,7 +981,7 @@ impl ForgeRoomApp {
                 } else {
                     palette::BranchPurpose::Delete
                 };
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     match git::branches(&root) {
                         Ok(list) => self.palette.open_branches(list, purpose),
                         Err(error) => self.status = format!("Git: {error}"),
@@ -959,7 +994,7 @@ impl ForgeRoomApp {
                 } else {
                     palette::BranchPurpose::TagDelete
                 };
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     match git::tags(&root) {
                         Ok(list) => {
                             let tags = list
@@ -992,6 +1027,17 @@ impl ForgeRoomApp {
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
+            Command::TrustFolder => {
+                if let Some(root) = self.repo_root() {
+                    if self.trusted {
+                        self.status = "This folder is already trusted".into();
+                    } else {
+                        self.trust_prompt = Some(root);
+                    }
+                } else {
+                    self.status = "Open a folder first".into();
+                }
+            }
             Command::CheckProject => {
                 self.show_terminal = true;
                 self.bottom_tab = BottomTab::Problems;
@@ -1053,6 +1099,10 @@ impl ForgeRoomApp {
             self.status = "Open a folder to check it".into();
             return;
         };
+        if !self.trusted {
+            self.status = "Trust this folder first (Folder: Trust This Folder): cargo check runs its build scripts".into();
+            return;
+        }
         if !self.checked_folders.contains(&root) {
             self.confirm = Some(Confirm::RunCheck);
             return;
@@ -2264,6 +2314,30 @@ impl ForgeRoomApp {
 
     // ---- Version control ---------------------------------------------------------------
 
+    /// Where Git commands run: the top folder of the repository (which is above the open folder
+    /// when a subfolder of a bigger repository was opened). `None` until the folder is trusted.
+    fn git_root(&self) -> Option<PathBuf> {
+        if !self.trusted {
+            return None;
+        }
+        self.git_top.clone().or_else(|| self.repo_root())
+    }
+
+    /// Switch the open folder to trusted or restricted, and read the repository when trusted.
+    fn set_trust(&mut self, trusted: bool) {
+        self.trusted = trusted;
+        self.git_top = None;
+        if trusted {
+            if let Some(root) = self.repo_root() {
+                self.git_top = git::toplevel(&root);
+            }
+            self.refresh_git();
+        } else {
+            self.clear_git_state();
+            self.git_refresh.discard();
+        }
+    }
+
     fn repo_root(&self) -> Option<PathBuf> {
         self.workspace
             .as_ref()
@@ -2292,7 +2366,7 @@ impl ForgeRoomApp {
     /// in a big repository never freezes the window; [`Self::poll_git_refresh`] applies the result.
     fn refresh_git(&mut self) {
         self.last_git = std::time::Instant::now();
-        let Some(root) = self.repo_root() else {
+        let Some(root) = self.git_root() else {
             self.clear_git_state();
             self.git_refresh.discard();
             return;
@@ -2354,7 +2428,7 @@ impl ForgeRoomApp {
             return;
         };
         // The result of a read for a folder that is no longer open is dropped.
-        if self.repo_root().as_deref() == Some(snapshot.root.as_path()) {
+        if self.git_root().as_deref() == Some(snapshot.root.as_path()) {
             self.is_repo = snapshot.is_repo;
             self.operation = snapshot.operation;
             self.branch = snapshot.branch;
@@ -2388,7 +2462,7 @@ impl ForgeRoomApp {
 
     /// Stage or revert the single change at `line` of the active file (from the gutter menu).
     fn change_at_line(&mut self, stage: bool, line: usize) {
-        let (Some(root), Some(tab)) = (self.repo_root(), self.tabs.tabs.get(self.tabs.active))
+        let (Some(root), Some(tab)) = (self.git_root(), self.tabs.tabs.get(self.tabs.active))
         else {
             return;
         };
@@ -2429,7 +2503,7 @@ impl ForgeRoomApp {
         }
         self.hunks_tab = active;
         let (Some(root), Some(path), Some(tab)) = (
-            self.repo_root(),
+            self.git_root(),
             self.tabs.active_path().map(std::path::Path::to_path_buf),
             active,
         ) else {
@@ -2487,7 +2561,7 @@ impl ForgeRoomApp {
             self.status = "Another Git operation is still running".into();
             return;
         }
-        let Some(root) = self.repo_root() else {
+        let Some(root) = self.git_root() else {
             return;
         };
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -2528,7 +2602,7 @@ impl ForgeRoomApp {
 
     fn git_action(&mut self, action: source_control::Action) {
         use source_control::Action;
-        let Some(root) = self.repo_root() else {
+        let Some(root) = self.git_root() else {
             return;
         };
         let upstream = self.has_upstream();
@@ -2778,7 +2852,7 @@ impl ForgeRoomApp {
             return;
         };
         let changes = self.pending_discard.take().unwrap_or_default();
-        if confirmed && let Some(root) = self.repo_root() {
+        if confirmed && let Some(root) = self.git_root() {
             let mut failed = None;
             for change in &changes {
                 if let Err(error) = git::discard(&root, change) {
@@ -2937,12 +3011,48 @@ impl ForgeRoomApp {
                 self.refresh_git();
             }
         }
+        if let Some(folder) = self.trust_prompt.take() {
+            let (mut trust, mut restricted) = (false, false);
+            egui::Window::new("Trust this folder?")
+                .collapsible(false)
+                .resizable(false)
+                .show(&self.egui_ctx, |ui| {
+                    ui.set_max_width(440.0);
+                    ui.label(format!("{}", folder.display()));
+                    ui.add_space(4.0);
+                    ui.label(
+                        "Forge Room runs Git and your project's tools in this folder. A folder from \
+                         someone you do not trust can carry settings that make them start \
+                         programs. Trust it only if you know where it came from.",
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        trust = ui.button("Trust this folder").clicked();
+                        restricted = ui.button("Browse without Git and tools").clicked();
+                    });
+                });
+            if ui_escape(&self.egui_ctx) {
+                restricted = true;
+            }
+            if trust {
+                let shown = folder.display().to_string();
+                let _ = settings::update(|settings| {
+                    settings::trust(&mut settings.trusted_folders, &shown)
+                });
+                self.set_trust(true);
+                self.status = format!("Trusted {shown}");
+            } else if restricted {
+                self.status = "Restricted mode: Git and cargo check are off (Folder: Trust This Folder turns them on)".into();
+            } else {
+                self.trust_prompt = Some(folder);
+            }
+        }
         if let Some(question) = self.confirm.take() {
             let (mut yes, mut no) = (false, false);
             let (title, text, button) = match question {
                 Confirm::DropStash => {
                     let latest = self
-                        .repo_root()
+                        .git_root()
                         .and_then(|root| git::stash_list(&root).into_iter().next())
                         .map(|stash| stash.message)
                         .unwrap_or_default();
@@ -3019,7 +3129,7 @@ impl ForgeRoomApp {
             if yes {
                 match question {
                     Confirm::DropStash => {
-                        if let Some(root) = self.repo_root() {
+                        if let Some(root) = self.git_root() {
                             self.status = match git::stash_drop(&root, 0) {
                                 Ok(text) => format!(
                                     "{text}. To bring it back: git stash store <that commit>"
@@ -3031,7 +3141,7 @@ impl ForgeRoomApp {
                     }
                     Confirm::EndTerminal => self.close_terminal(),
                     Confirm::AbortOperation => {
-                        if let Some(root) = self.repo_root() {
+                        if let Some(root) = self.git_root() {
                             self.status = match git::abort_operation(&root) {
                                 Ok(operation) => format!("{} aborted", operation.label()),
                                 Err(error) => format!("Git: {error}"),
@@ -4485,7 +4595,7 @@ impl eframe::App for ForgeRoomApp {
         }
         match palette::show(&context, &mut self.palette) {
             Some(palette::Outcome::Checkout { name, remote }) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::checkout(&root, &name, remote) {
                         Ok(()) => format!("Switched to {name}"),
                         Err(error) => format!("Git: {error}"),
@@ -4495,7 +4605,7 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::CreateBranch(name)) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::create_branch(&root, &name) {
                         Ok(()) => format!("Created and switched to {name}"),
                         Err(error) => format!("Git: {error}"),
@@ -4504,7 +4614,7 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::Merge(name)) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::merge(&root, &name) {
                         Ok(git::MergeOutcome::Merged(text)) => format!("Merged {name}: {text}"),
                         Ok(git::MergeOutcome::UpToDate) => {
@@ -4521,7 +4631,7 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::DeleteBranch(name)) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::delete_branch(&root, &name, false) {
                         Ok(()) => format!("Deleted branch {name}"),
                         Err(error) => format!("Git: {error}"),
@@ -4530,7 +4640,7 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::CreateTag(name)) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::create_tag(&root, &name) {
                         Ok(()) => format!("Tagged the current commit {name}"),
                         Err(error) => format!("Git: {error}"),
@@ -4539,7 +4649,7 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::DeleteTag(name)) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::delete_tag(&root, &name) {
                         Ok(text) => match text.split("(was ").nth(1) {
                             Some(rest) => format!(

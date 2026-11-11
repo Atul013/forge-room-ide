@@ -17,6 +17,37 @@ pub struct Settings {
     /// Save file tabs automatically once their text stops changing.
     #[serde(default)]
     pub auto_save: Option<bool>,
+    /// Folders the user trusts: Git and project tools only run in these (or below them).
+    #[serde(default)]
+    pub trusted_folders: Vec<String>,
+}
+
+fn trust_key(path: &str) -> String {
+    path.replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+/// Whether `folder` is one of the trusted folders or inside one (compared the way Windows paths
+/// are: without regard to case or the direction of slashes).
+pub fn is_trusted(trusted: &[String], folder: &str) -> bool {
+    let folder = trust_key(folder);
+    trusted.iter().any(|known| {
+        let known = trust_key(known);
+        !known.is_empty() && (folder == known || folder.starts_with(&format!("{known}\\")))
+    })
+}
+
+/// Add `folder` to the trusted ones (once).
+pub fn trust(trusted: &mut Vec<String>, folder: &str) {
+    if !is_trusted(trusted, folder)
+        || !trusted
+            .iter()
+            .any(|known| trust_key(known) == trust_key(folder))
+    {
+        trusted.retain(|known| trust_key(known) != trust_key(folder));
+        trusted.push(folder.to_string());
+    }
 }
 
 /// Smallest and largest editor text scale.
@@ -155,5 +186,19 @@ mod tests {
         }
         assert_eq!(recent.len(), MAX_RECENT_FOLDERS);
         assert_eq!(recent[0], r"C:\folder29");
+    }
+
+    #[test]
+    fn a_trusted_folder_covers_what_is_inside_it_and_nothing_next_to_it() {
+        let mut trusted = Vec::new();
+        assert!(!is_trusted(&trusted, r"C:\work\app"));
+        trust(&mut trusted, r"C:\Work\App");
+        trust(&mut trusted, r"c:/work/app/");
+        assert_eq!(trusted.len(), 1);
+        assert!(is_trusted(&trusted, r"C:\work\app"));
+        assert!(is_trusted(&trusted, r"c:\WORK\app\sub\deeper"));
+        assert!(!is_trusted(&trusted, r"C:\work\application"));
+        assert!(!is_trusted(&trusted, r"C:\work"));
+        assert!(!is_trusted(&[String::new()], r"C:\work"));
     }
 }

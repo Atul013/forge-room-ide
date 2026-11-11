@@ -191,6 +191,15 @@ pub fn run(root: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// The top folder of the repository that `root` is inside, when that is a different folder (the
+/// user opened a subfolder of a bigger repository). Git reports paths from the top folder, so every
+/// Git command has to run from there.
+pub fn toplevel(root: &Path) -> Option<std::path::PathBuf> {
+    let out = run(root, &["rev-parse", "--show-toplevel"]).ok()?;
+    let top = crate::tabs::normalize(Path::new(out.trim()));
+    (top != crate::tabs::normalize(root)).then_some(top)
+}
+
 pub fn is_repo(root: &Path) -> bool {
     run(root, &["rev-parse", "--is-inside-work-tree"])
         .map(|out| out.trim() == "true")
@@ -1274,6 +1283,34 @@ mod tests {
         assert!(delete_tag(&dir, "v1").unwrap().contains("v1"));
         assert_eq!(tags(&dir).unwrap(), vec!["v2"]);
         assert!(delete_tag(&dir, "v1").is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_subfolder_of_a_repository_reports_the_top_folder() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        assert_eq!(
+            toplevel(&dir),
+            None,
+            "the top folder itself is not a subfolder"
+        );
+        assert_eq!(toplevel(&sub), Some(crate::tabs::normalize(&dir)));
+        // Commands run from the top folder see paths the way status reports them.
+        fs::write(sub.join("n.txt"), "x").unwrap();
+        let top = toplevel(&sub).unwrap();
+        stage(&top, &["sub/n.txt".to_string()]).unwrap();
+        assert!(
+            status(&top)
+                .unwrap()
+                .changes
+                .iter()
+                .any(|c| c.path == "sub/n.txt" && c.is_staged())
+        );
         let _ = fs::remove_dir_all(dir);
     }
 
