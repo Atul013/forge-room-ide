@@ -8,6 +8,7 @@ use std::sync::mpsc;
 pub struct Latest<T> {
     receiver: Option<mpsc::Receiver<T>>,
     again: bool,
+    failed: bool,
 }
 
 impl<T> Default for Latest<T> {
@@ -15,6 +16,7 @@ impl<T> Default for Latest<T> {
         Self {
             receiver: None,
             again: false,
+            failed: false,
         }
     }
 }
@@ -56,10 +58,18 @@ impl<T: Send + 'static> Latest<T> {
             }
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => {
+                // The worker died without answering (it panicked).
                 self.receiver = None;
+                self.failed = true;
                 None
             }
         }
+    }
+
+    /// True once after a job died without a result, so the caller can show that instead of
+    /// waiting for an answer that will never come.
+    pub fn take_failed(&mut self) -> bool {
+        std::mem::take(&mut self.failed)
     }
 
     /// True once if another job was requested while the last one ran (and clears that memory).
@@ -71,6 +81,7 @@ impl<T: Send + 'static> Latest<T> {
     pub fn discard(&mut self) {
         self.receiver = None;
         self.again = false;
+        self.failed = false;
     }
 }
 
@@ -125,8 +136,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(!latest.busy());
+        assert!(latest.take_failed(), "the caller is told the job died");
+        assert!(!latest.take_failed());
         assert!(latest.request(&context, || 1));
         assert_eq!(wait(&mut latest), Some(1));
+        assert!(!latest.take_failed());
     }
 
     #[test]

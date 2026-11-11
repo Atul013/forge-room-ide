@@ -84,7 +84,10 @@ pub fn run(root: &Path, args: &[&str]) -> Result<String, String> {
     command
         .current_dir(root)
         .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0");
+        .env("GIT_TERMINAL_PROMPT", "0")
+        // Reads such as `git status` otherwise refresh the index and take its lock, which could
+        // make a stage or commit running at the same moment fail with "index.lock exists".
+        .env("GIT_OPTIONAL_LOCKS", "0");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

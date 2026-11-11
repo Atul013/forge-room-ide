@@ -1629,6 +1629,9 @@ impl ForgeRoomApp {
         self.file_history.clear();
         self.history_name = None;
         self.stash_count = 0;
+        // A read still running is for the folder that was just left: its result is not wanted, and
+        // the next request must not wait for it.
+        self.git_refresh.discard();
     }
 
     /// Ask for a fresh read of the repository. It runs on a worker thread, so a slow `git status`
@@ -1648,6 +1651,12 @@ impl ForgeRoomApp {
     /// Take a finished repository read, if any, and start another when one was asked for meanwhile.
     fn poll_git_refresh(&mut self) {
         let Some(snapshot) = self.git_refresh.poll() else {
+            if self.git_refresh.take_failed() {
+                // Say so, rather than showing a repository as "not a repository" (with a button
+                // that would run `git init`).
+                self.is_repo = true;
+                self.git_status = Some(Err("Reading the repository failed; retrying".into()));
+            }
             return;
         };
         // The result of a read for a folder that is no longer open is dropped.
@@ -1660,10 +1669,11 @@ impl ForgeRoomApp {
                 self.graph_commits = snapshot.commits;
                 self.graph_rows = graph::layout(&self.graph_commits);
                 self.stash_count = snapshot.stashes;
+                self.refresh_hunks();
             } else {
+                // Not a repository: nothing to blame or diff, and no Git processes to run.
                 self.hunks.clear();
             }
-            self.refresh_hunks();
         }
         if self.git_refresh.take_again() {
             self.refresh_git();
