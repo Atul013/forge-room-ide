@@ -73,6 +73,15 @@ impl Tabs {
         for tab in &mut self.tabs {
             tab.doc.moved(from, &to);
         }
+        for known in &mut self.closed {
+            if let Ok(rest) = known.strip_prefix(from) {
+                *known = if rest.as_os_str().is_empty() {
+                    to.clone()
+                } else {
+                    to.join(rest)
+                };
+            }
+        }
     }
 
     pub fn any_dirty(&self) -> bool {
@@ -97,6 +106,8 @@ impl Tabs {
     /// Open `path`, or just activate its tab when it is already open.
     pub fn open_file(&mut self, path: &Path) -> Result<(), DocumentError> {
         let path = normalize(path);
+        // A file that is open again is no longer a closed tab to bring back.
+        self.closed.retain(|known| known != &path);
         if let Some(index) = self
             .tabs
             .iter()
@@ -185,9 +196,12 @@ impl Tabs {
     pub fn close_saved(&mut self) -> usize {
         let active_id = self.tabs.get(self.active).map(|tab| tab.id);
         let before = self.tabs.len();
-        // From the back, so the indexes still to visit stay valid.
-        for index in (0..self.tabs.len()).rev() {
-            if !self.tabs[index].doc.is_dirty() {
+        // Left to right, so the closed history keeps the tabs' visual order.
+        let mut index = 0;
+        while index < self.tabs.len() {
+            if self.tabs[index].doc.is_dirty() {
+                index += 1;
+            } else {
                 self.close(index);
             }
         }
@@ -309,6 +323,53 @@ mod tests {
             "a generated view has no file to reopen"
         );
         fs::remove_file(a).unwrap();
+    }
+
+    #[test]
+    fn the_active_tab_stays_active_when_it_has_unsaved_work() {
+        let (a, b, c) = (temp_file("a.txt"), temp_file("b.txt"), temp_file("c.txt"));
+        let mut tabs = Tabs::default();
+        for path in [&a, &b, &c] {
+            tabs.open_file(path).unwrap();
+        }
+        tabs.tabs[0].doc.text_mut().push('x');
+        tabs.tabs[1].doc.text_mut().push('x');
+        tabs.active = 1;
+        assert_eq!(tabs.close_saved(), 1);
+        assert_eq!(tabs.tabs.len(), 2);
+        assert_eq!(tabs.active, 1, "still on the same tab");
+        assert_eq!(
+            tabs.tabs[tabs.active].doc.file_name().unwrap(),
+            b.file_name().unwrap().to_string_lossy()
+        );
+        for path in [a, b, c] {
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_closed_history_reads_left_to_right_and_follows_renames() {
+        let (a, b) = (temp_file("a.txt"), temp_file("b.txt"));
+        let mut tabs = Tabs::default();
+        tabs.open_file(&a).unwrap();
+        tabs.open_file(&b).unwrap();
+        assert_eq!(tabs.close_saved(), 2);
+        // Newest closed is the rightmost tab, so it comes back first.
+        assert_eq!(tabs.reopen_closed().unwrap(), Some(normalize(&b)));
+        // Opening a file by hand takes it off the list.
+        tabs.open_file(&a).unwrap();
+        assert_eq!(tabs.reopen_closed().unwrap(), None);
+        // A renamed closed file is found at its new path.
+        tabs.close(0);
+        tabs.close(0);
+        let renamed = a.with_file_name("renamed-a.txt");
+        let canonical = normalize(&a);
+        fs::rename(&a, &renamed).unwrap();
+        tabs.path_moved(&canonical, &renamed);
+        assert_eq!(tabs.reopen_closed().unwrap(), Some(normalize(&renamed)));
+        assert_eq!(tabs.reopen_closed().unwrap(), Some(normalize(&b)));
+        fs::remove_file(renamed).unwrap();
+        fs::remove_file(b).unwrap();
     }
 
     #[test]

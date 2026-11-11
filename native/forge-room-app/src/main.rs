@@ -520,6 +520,10 @@ impl ForgeRoomApp {
                 Ok(None) => self.status = "No closed tab to reopen".into(),
                 Err(error) => self.status = format!("Cannot reopen: {error}"),
             },
+            Command::CloseSavedTabs if self.pending.is_some() => {
+                // A dialog holds a tab's position: closing tabs now would point it at another one.
+                self.status = "Finish the open dialog first".into();
+            }
             Command::CloseSavedTabs => {
                 let closed = self.tabs.close_saved();
                 self.status = match closed {
