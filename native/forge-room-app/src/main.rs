@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent;
 mod ai_panel;
 mod autosave;
 mod background;
@@ -4199,7 +4200,14 @@ impl ForgeRoomApp {
             }
             RightTab::Ai => {
                 let name = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.title());
-                ai_panel::show(ui, &mut self.ai, name.as_deref());
+                let cwd = self.repo_root();
+                ai_panel::show(
+                    ui,
+                    &mut self.ai,
+                    name.as_deref(),
+                    cwd.as_deref(),
+                    self.trusted,
+                );
             }
         }
     }
@@ -4665,6 +4673,13 @@ impl eframe::App for ForgeRoomApp {
         self.lobby.flush_pending();
         for terminal in &self.terminals {
             terminal.set_hidden();
+        }
+        // An agent that was started from the AI panel: show what it says, and when it ends look at
+        // the files again (it may have edited some).
+        if self.ai.poll() {
+            self.reload_clean_tabs();
+            self.refresh_git();
+            self.status = "The agent finished".into();
         }
         self.auto_save_tabs();
         self.poll_check();
