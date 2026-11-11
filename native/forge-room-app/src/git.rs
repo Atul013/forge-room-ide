@@ -263,7 +263,7 @@ pub fn diff(root: &Path, path: &str, staged: bool) -> Result<String, String> {
 
 /// Changed regions of a tracked file compared to HEAD (staged and unstaged together).
 /// Like [`run`], with `input` written to the command's standard input.
-fn run_with_input(root: &Path, args: &[&str], input: &str) -> Result<String, String> {
+fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<String, String> {
     use std::io::Write;
     use std::process::Stdio;
     let mut command = Command::new("git");
@@ -285,7 +285,7 @@ fn run_with_input(root: &Path, args: &[&str], input: &str) -> Result<String, Str
         .map_err(|error| format!("could not run git: {error}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         // A write error shows up as git's own complaint about the patch below.
-        let _ = stdin.write_all(input.as_bytes());
+        let _ = stdin.write_all(input);
     }
     let output = child
         .wait_with_output()
@@ -302,38 +302,92 @@ fn run_with_input(root: &Path, args: &[&str], input: &str) -> Result<String, Str
     }
 }
 
+/// The raw bytes Git prints for `args`. A patch must reach `git apply` unchanged, which text
+/// conversion would not guarantee for a file that is not UTF-8.
+fn run_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let mut command = Command::new("git");
+    command
+        .current_dir(root)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("could not run git: {error}"))?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
 /// The change of `path` that is not staged yet (working tree against the index) which covers
 /// `line` (1-based, in the file as it is now), as a patch that applies on its own. A deleted
 /// block is covered by the line just above it, the line the gutter marks it on.
-pub fn unstaged_hunk_patch(root: &Path, path: &str, line: usize) -> Result<String, String> {
-    let diff = run(root, &["diff", "--no-color", "-U0", "--", path])?;
-    let mut header = String::new();
-    let mut chosen: Option<String> = None;
-    let mut current: Option<(bool, String)> = None;
-    let finish = |current: &mut Option<(bool, String)>, chosen: &mut Option<String>| {
-        if let Some((covers, text)) = current.take()
-            && covers
+///
+/// It refuses what could do more than the clicked bar shows: a file that is new or deleted as a
+/// whole (reverting would delete it for good), and a change that overlaps something already staged
+/// (the gutter draws staged and unstaged changes together, so the bar might mean another change).
+pub fn unstaged_hunk_patch(root: &Path, path: &str, line: usize) -> Result<Vec<u8>, String> {
+    let diff = run_bytes(root, &["diff", "--no-color", "-U0", "--", path])?;
+    let mut header: Vec<u8> = Vec::new();
+    let mut chosen: Option<(Vec<u8>, Hunk)> = None;
+    let mut current: Option<(Vec<u8>, Option<Hunk>)> = None;
+    let finish = |current: &mut Option<(Vec<u8>, Option<Hunk>)>,
+                  chosen: &mut Option<(Vec<u8>, Hunk)>| {
+        if let Some((text, Some(hunk))) = current.take()
             && chosen.is_none()
+            && hunk.covers(line)
         {
-            *chosen = Some(text);
+            *chosen = Some((text, hunk));
         }
     };
-    for text in diff.split_inclusive('\n') {
-        if text.starts_with("@@ ") {
+    for piece in diff.split_inclusive(|byte| *byte == b'\n') {
+        if piece.starts_with(b"@@ ") {
             finish(&mut current, &mut chosen);
-            let hunks = parse_hunks(text);
-            let covers = hunks.first().is_some_and(|hunk| hunk.covers(line));
-            current = Some((covers, text.to_string()));
-        } else if let Some((_, body)) = &mut current {
-            body.push_str(text);
+            // The header line is plain ASCII, so lossy text is exact here.
+            let hunk = parse_hunks(&String::from_utf8_lossy(piece))
+                .into_iter()
+                .next();
+            current = Some((piece.to_vec(), hunk));
+        } else if let Some((body, _)) = &mut current {
+            body.extend_from_slice(piece);
         } else {
-            header.push_str(text);
+            header.extend_from_slice(piece);
         }
     }
     finish(&mut current, &mut chosen);
-    chosen
-        .map(|hunk| format!("{header}{hunk}"))
-        .ok_or_else(|| "There is no unstaged change at this line".to_string())
+    let (hunk_text, hunk) =
+        chosen.ok_or_else(|| "There is no unstaged change at this line".to_string())?;
+    let header_text = String::from_utf8_lossy(&header);
+    if header_text.contains("\nnew file mode") || header_text.contains("--- /dev/null") {
+        return Err("This file is new: stage or discard it as a whole in Source Control".into());
+    }
+    if header_text.contains("\ndeleted file mode") || header_text.contains("+++ /dev/null") {
+        return Err(
+            "This file is deleted: restore or stage it as a whole in Source Control".into(),
+        );
+    }
+    // The change must be exactly one of the changes the gutter draws (from the diff against HEAD).
+    let same = file_hunks(root, path).iter().any(|shown| {
+        shown.covers(line)
+            && shown.start == hunk.start
+            && shown.len == hunk.len
+            && shown.kind == hunk.kind
+    });
+    if !same {
+        return Err(
+            "This change overlaps something already staged: use Source Control for it".into(),
+        );
+    }
+    let mut patch = header;
+    patch.extend_from_slice(&hunk_text);
+    Ok(patch)
 }
 
 /// Stage the single change at `line` of `path`, leaving the rest of the file unstaged.
@@ -1126,6 +1180,60 @@ mod tests {
         stage_hunk(&dir, "f.txt", 5).unwrap();
         assert!(g(&dir, &["diff", "--cached", "-U0", "--", "f.txt"]).contains("-line 6"));
         assert!(unstaged_hunk_patch(&dir, "f.txt", 1).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_new_file_or_an_overlapping_staged_change_is_never_staged_or_reverted_by_a_bar() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        // An intent-to-add file: reverting its only change would delete the file for good.
+        fs::write(dir.join("new.txt"), "one\ntwo\n").unwrap();
+        g(&dir, &["add", "-N", "new.txt"]);
+        assert!(revert_hunk(&dir, "new.txt", 1).unwrap_err().contains("new"));
+        assert!(stage_hunk(&dir, "new.txt", 1).is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join("new.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "one\ntwo\n"
+        );
+
+        // A staged insertion with an unstaged deletion next to it: the bar on the insertion must not
+        // act on the deletion.
+        fs::write(dir.join("o.txt"), "a\nb\nc\n").unwrap();
+        g(&dir, &["add", "o.txt"]);
+        g(&dir, &["commit", "-q", "-m", "o"]);
+        fs::write(dir.join("o.txt"), "a\nX\nb\nc\n").unwrap();
+        g(&dir, &["add", "o.txt"]);
+        fs::write(dir.join("o.txt"), "a\nX\n").unwrap();
+        let before = fs::read_to_string(dir.join("o.txt")).unwrap();
+        assert!(
+            revert_hunk(&dir, "o.txt", 2)
+                .unwrap_err()
+                .contains("overlaps")
+        );
+        assert!(stage_hunk(&dir, "o.txt", 2).is_err());
+        assert_eq!(fs::read_to_string(dir.join("o.txt")).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_reverted_change_in_a_file_that_is_not_utf8_comes_back_byte_for_byte() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        // Windows-1252 text: 0xE9 is an e-acute and is not valid UTF-8 on its own.
+        let original: Vec<u8> = b"keep\ncaf\xe9\nend\n".to_vec();
+        fs::write(dir.join("latin.txt"), &original).unwrap();
+        g(&dir, &["add", "."]);
+        g(&dir, &["commit", "-q", "-m", "latin"]);
+        fs::write(dir.join("latin.txt"), b"keep\nend\n").unwrap();
+        revert_hunk(&dir, "latin.txt", 1).unwrap();
+        assert_eq!(fs::read(dir.join("latin.txt")).unwrap(), original);
         let _ = fs::remove_dir_all(dir);
     }
 
