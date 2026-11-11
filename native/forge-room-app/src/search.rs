@@ -26,7 +26,11 @@ pub struct Hit {
     pub line: usize,
     /// 1-based column in characters.
     pub column: usize,
+    /// Characters in the first match.
+    pub length: usize,
     pub preview: String,
+    /// The matches inside `preview`, as character ranges, for highlighting.
+    pub marks: Vec<std::ops::Range<usize>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -35,6 +39,8 @@ pub struct Results {
     pub files_scanned: usize,
     pub truncated: bool,
     pub cancelled: bool,
+    /// Why the query could not run (an invalid regular expression).
+    pub error: Option<String>,
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>, cancel: &AtomicBool) {
@@ -124,11 +130,18 @@ pub fn list_files(root: &Path) -> Vec<PathBuf> {
 
 /// Search every text file under `root` for `query`. Checks `cancel` so a newer query can
 /// stop an older one.
-pub fn search(root: &Path, query: &str, case_sensitive: bool, cancel: &AtomicBool) -> Results {
+pub fn search(root: &Path, query: &str, mode: find::Mode, cancel: &AtomicBool) -> Results {
     let mut results = Results::default();
     if query.is_empty() {
         return results;
     }
+    let matcher = match find::Matcher::new(query, mode) {
+        Ok(matcher) => matcher,
+        Err(error) => {
+            results.error = Some(error);
+            return results;
+        }
+    };
     for path in collect(root, cancel) {
         if cancel.load(Ordering::Relaxed) {
             results.cancelled = true;
@@ -145,13 +158,26 @@ pub fn search(root: &Path, query: &str, case_sensitive: bool, cancel: &AtomicBoo
         };
         results.files_scanned += 1;
         for (index, line) in text.lines().enumerate() {
-            let matches = find::find_all(line, query, case_sensitive);
+            let matches = matcher.find_all(line);
             if let Some(first) = matches.first() {
+                // The preview drops leading whitespace and is cut short: the marks follow it.
+                let lead = line.chars().take_while(|c| c.is_whitespace()).count();
+                let preview: String = line.trim().chars().take(160).collect();
+                let shown = preview.chars().count();
+                let marks = matches
+                    .iter()
+                    .filter_map(|range| {
+                        let (start, end) = (range.start.checked_sub(lead)?, range.end - lead);
+                        (start < shown).then_some(start..end.min(shown))
+                    })
+                    .collect();
                 results.hits.push(Hit {
                     path: path.clone(),
                     line: index + 1,
                     column: first.start + 1,
-                    preview: line.trim().chars().take(160).collect(),
+                    length: first.end - first.start,
+                    preview,
+                    marks,
                 });
                 if results.hits.len() >= MAX_HITS {
                     results.truncated = true;
@@ -166,6 +192,13 @@ pub fn search(root: &Path, query: &str, case_sensitive: bool, cancel: &AtomicBoo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exact() -> find::Mode {
+        find::Mode {
+            case_sensitive: true,
+            ..find::Mode::default()
+        }
+    }
 
     fn tree() -> PathBuf {
         let stamp = std::time::SystemTime::now()
@@ -267,7 +300,7 @@ mod tests {
             "{names:?}"
         );
         // Search sees exactly the same files.
-        let found = search(&root, "x", true, &AtomicBool::new(false));
+        let found = search(&root, "x", exact(), &AtomicBool::new(false));
         assert!(
             found
                 .hits
@@ -281,7 +314,7 @@ mod tests {
     fn finds_lines_with_positions_and_skips_junk() {
         let root = tree();
         let cancel = AtomicBool::new(false);
-        let insensitive = search(&root, "todo", false, &cancel);
+        let insensitive = search(&root, "todo", find::Mode::default(), &cancel);
         let lines: Vec<(usize, usize)> = insensitive
             .hits
             .iter()
@@ -291,9 +324,37 @@ mod tests {
         assert!(insensitive.hits.iter().all(|h| h.path.ends_with("a.rs")));
         assert_eq!(insensitive.hits[0].preview, "// TODO: later");
 
-        let sensitive = search(&root, "todo", true, &cancel);
+        let sensitive = search(&root, "todo", exact(), &cancel);
         assert_eq!(sensitive.hits.len(), 1);
-        assert!(search(&root, "", true, &cancel).hits.is_empty());
+        assert!(search(&root, "", exact(), &cancel).hits.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn regex_and_whole_word_searches_mark_their_matches() {
+        let root = tree();
+        let cancel = AtomicBool::new(false);
+        let regex = find::Mode {
+            regex: true,
+            ..find::Mode::default()
+        };
+        let found = search(&root, r"t.do\b", regex, &cancel);
+        assert_eq!(found.hits.len(), 2);
+        // `marks` are inside the trimmed preview, and `length` is the real match length.
+        let first = &found.hits[0];
+        assert_eq!(first.preview, "// TODO: later");
+        assert_eq!(first.marks, vec![3..7]);
+        assert_eq!(first.length, 4);
+        // A bad pattern is reported, not searched.
+        let bad = search(&root, "(", regex, &cancel);
+        assert!(bad.error.is_some() && bad.hits.is_empty());
+        // Whole word skips `todo` inside longer words.
+        let words = find::Mode {
+            whole_word: true,
+            ..find::Mode::default()
+        };
+        assert_eq!(search(&root, "tod", words, &cancel).hits.len(), 0);
+        assert_eq!(search(&root, "todo", words, &cancel).hits.len(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -301,7 +362,7 @@ mod tests {
     fn a_cancelled_search_stops() {
         let root = tree();
         let cancel = AtomicBool::new(true);
-        let results = search(&root, "todo", false, &cancel);
+        let results = search(&root, "todo", find::Mode::default(), &cancel);
         assert!(results.hits.is_empty());
         fs::remove_dir_all(root).unwrap();
     }

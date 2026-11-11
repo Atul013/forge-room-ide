@@ -1253,6 +1253,7 @@ name = "forge-room-app"
 version = "0.110.0-alpha.2"
 dependencies = [
  "eframe",
+ "fancy-regex",
  "forge-room-early-preview",
  "kurbo 0.11.3",
  "portable-pty",

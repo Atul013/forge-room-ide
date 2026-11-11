@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 pub struct SearchView {
     pub query: String,
-    pub case_sensitive: bool,
+    pub mode: find::Mode,
     results: Option<search::Results>,
     searched_query: String,
     running: bool,
@@ -24,7 +24,7 @@ impl Default for SearchView {
     fn default() -> Self {
         Self {
             query: String::new(),
-            case_sensitive: false,
+            mode: find::Mode::default(),
             results: None,
             searched_query: String::new(),
             running: false,
@@ -73,9 +73,9 @@ impl SearchView {
             return;
         }
         let (sender, receiver) = mpsc::channel();
-        let (root, query, case) = (root.to_path_buf(), self.query.clone(), self.case_sensitive);
+        let (root, query, mode) = (root.to_path_buf(), self.query.clone(), self.mode);
         std::thread::spawn(move || {
-            let _ = sender.send(search::search(&root, &query, case, &cancel));
+            let _ = sender.send(search::search(&root, &query, mode, &cancel));
         });
         self.receiver = Some(receiver);
         self.running = true;
@@ -139,12 +139,14 @@ impl SearchView {
                         self.dirty_since = None;
                         self.start(root);
                     }
-                    if ui
-                        .toggle_value(&mut self.case_sensitive, "Aa")
-                        .on_hover_text("Match case")
-                        .changed()
-                    {
-                        self.dirty_since = Some(Instant::now());
+                    for (flag, label, hint) in [
+                        (&mut self.mode.case_sensitive, "Aa", "Match case"),
+                        (&mut self.mode.whole_word, "W", "Match whole word"),
+                        (&mut self.mode.regex, ".*", "Use regular expression"),
+                    ] {
+                        if ui.toggle_value(flag, label).on_hover_text(hint).changed() {
+                            self.dirty_since = Some(Instant::now());
+                        }
                     }
                 });
             });
@@ -182,7 +184,9 @@ impl SearchView {
                 seen.dedup();
                 seen.len()
             };
-            let text = if results.hits.is_empty() {
+            let text = if let Some(error) = &results.error {
+                format!("Invalid pattern: {}", error.lines().next().unwrap_or(""))
+            } else if results.hits.is_empty() {
                 format!("No results in {} files", results.files_scanned)
             } else if results.truncated {
                 format!(
@@ -198,8 +202,6 @@ impl SearchView {
         });
         ui.add_space(4.0);
 
-        let query = self.searched_query.clone();
-        let case = self.case_sensitive;
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -209,12 +211,12 @@ impl SearchView {
                         last = Some(&hit.path);
                         file_header(ui, root, &hit.path);
                     }
-                    if hit_row(ui, hit, &query, case) {
+                    if hit_row(ui, hit) {
                         action = Action::Open {
                             path: hit.path.clone(),
                             line: hit.line,
                             column: hit.column,
-                            length: query.chars().count(),
+                            length: hit.length,
                         };
                     }
                 }
@@ -261,7 +263,7 @@ fn file_header(ui: &mut egui::Ui, root: &Path, path: &Path) {
 }
 
 /// One result line with the matched text highlighted. True when clicked.
-fn hit_row(ui: &mut egui::Ui, hit: &search::Hit, query: &str, case: bool) -> bool {
+fn hit_row(ui: &mut egui::Ui, hit: &search::Hit) -> bool {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
     if response.hovered() {
@@ -279,7 +281,7 @@ fn hit_row(ui: &mut egui::Ui, hit: &search::Hit, query: &str, case: bool) -> boo
     );
     let chars: Vec<char> = hit.preview.chars().collect();
     let mut cursor = 0;
-    for range in find::find_all(&hit.preview, query, case) {
+    for range in hit.marks.iter().cloned() {
         job.append(
             &chars[cursor..range.start].iter().collect::<String>(),
             0.0,

@@ -10,11 +10,13 @@ pub struct FindState {
     pub replace: bool,
     pub query: String,
     pub replacement: String,
-    pub case_sensitive: bool,
+    pub mode: find::Mode,
+    /// Why the query is not a valid pattern.
+    pub error: Option<String>,
     pub matches: Vec<Range<usize>>,
     pub current: Option<usize>,
     focus_query: bool,
-    key: Option<(u64, u64, String, bool)>,
+    key: Option<(u64, u64, String, find::Mode)>,
 }
 
 pub enum Intent {
@@ -42,12 +44,15 @@ impl FindState {
     /// Recompute matches when the tab, its text, the query or the case option changed.
     /// `cursor` is the caret's character index, used to pick the first match to show.
     pub fn refresh(&mut self, tab_id: u64, text: &str, cursor: usize) {
-        let key = (tab_id, hash(text), self.query.clone(), self.case_sensitive);
+        let key = (tab_id, hash(text), self.query.clone(), self.mode);
         if self.key.as_ref() == Some(&key) {
             return;
         }
         let query_changed = self.key.as_ref().map(|old| (&old.2, old.3)) != Some((&key.2, key.3));
-        self.matches = find::find_all(text, &self.query, self.case_sensitive);
+        (self.matches, self.error) = match find::Matcher::new(&self.query, self.mode) {
+            Ok(matcher) => (matcher.find_all(text), None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
         self.key = Some(key);
         if self.matches.is_empty() {
             self.current = None;
@@ -117,6 +122,8 @@ pub fn show(context: &egui::Context, state: &mut FindState) -> Vec<Intent> {
                         }
                         let summary = if state.query.is_empty() {
                             String::new()
+                        } else if state.error.is_some() {
+                            "Invalid pattern".to_string()
                         } else if state.matches.is_empty() {
                             "No results".to_string()
                         } else {
@@ -142,8 +149,12 @@ pub fn show(context: &egui::Context, state: &mut FindState) -> Vec<Intent> {
                         if ui.small_button("›").on_hover_text("Next (Enter)").clicked() {
                             intents.push(Intent::Next);
                         }
-                        ui.toggle_value(&mut state.case_sensitive, "Aa")
+                        ui.toggle_value(&mut state.mode.case_sensitive, "Aa")
                             .on_hover_text("Match case");
+                        ui.toggle_value(&mut state.mode.whole_word, "W")
+                            .on_hover_text("Match whole word");
+                        ui.toggle_value(&mut state.mode.regex, ".*")
+                            .on_hover_text("Use regular expression");
                         if ui.small_button("×").on_hover_text("Close (Esc)").clicked() {
                             intents.push(Intent::Close);
                         }
