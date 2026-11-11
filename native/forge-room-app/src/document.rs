@@ -160,49 +160,58 @@ fn encode(text: &str, encoding: Encoding, ending: LineEnding) -> Vec<u8> {
 
 /// Replace `path` with `bytes` without ever leaving a half-written file. The data goes to a
 /// sibling temporary file, is flushed to disk, and is then renamed over the original, so a crash or
-/// power loss mid-save keeps either the old content or the new content. Symlinks, and files the
-/// rename cannot replace (for example one another program holds open), are written in place
-/// instead. The replacement inherits the folder's permissions, and hard links to the old file
-/// are not followed.
+/// power loss mid-save keeps either the old content or the new content. Anything that stops the
+/// atomic route (a symlink, a read-only file, a folder where the temporary file cannot be made, a
+/// file another program holds open) falls back to writing the file directly, as before; that also
+/// reports the right error when it fails too. The replacement keeps the hidden and system marks
+/// but not alternate data streams or custom permissions, and hard links are not followed.
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
     let existing = fs::symlink_metadata(path).ok();
     if existing
         .as_ref()
-        .is_some_and(|m| m.file_type().is_symlink())
+        .is_some_and(|m| m.file_type().is_symlink() || m.permissions().readonly())
     {
         return fs::write(path, bytes);
     }
-    let name = path.file_name().ok_or_else(|| invalid("not a file path"))?;
+    // A short name that does not depend on the file's own (possibly very long) name, unique per
+    // call and per running app.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let temporary = path.with_file_name(format!(
-        ".{}.forge-save-{}",
-        name.to_string_lossy(),
-        std::process::id()
+        ".forge-{}-{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    let written = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        if let Some(existing) = &existing {
-            // Keeps a read-only mark, so the rename below fails like a direct write would.
-            fs::set_permissions(&temporary, existing.permissions())?;
+    let remove_temporary = || {
+        if let Ok(metadata) = fs::metadata(&temporary) {
+            let mut permissions = metadata.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            let _ = fs::set_permissions(&temporary, permissions);
         }
-        Ok::<(), io::Error>(())
-    })();
-    if let Err(error) = written {
         let _ = fs::remove_file(&temporary);
-        return Err(error);
+    };
+    let written = (|| {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(windows)]
+        if let Some(existing) = &existing {
+            use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+            const HIDDEN_AND_SYSTEM: u32 = 0x2 | 0x4;
+            options.attributes(existing.file_attributes() & HIDDEN_AND_SYSTEM);
+        }
+        let mut file = options.open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })();
+    if written.is_err() {
+        remove_temporary();
+        return fs::write(path, bytes);
     }
     match fs::rename(&temporary, path) {
         Ok(()) => Ok(()),
         Err(_) => {
-            // The original is locked or read-only: fall back to writing it directly, which also
-            // reports the right error (for example permission denied) when that fails too.
-            let _ = fs::remove_file(&temporary);
+            remove_temporary();
             fs::write(path, bytes)
         }
     }
@@ -522,19 +531,26 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
 
+    /// A path inside a fresh private folder, so leftovers can be checked without other tests'
+    /// temporary files getting in the way.
+    fn private_path() -> PathBuf {
+        let dir = test_path().with_extension("dir");
+        fs::create_dir_all(&dir).unwrap();
+        dir.join("file.txt")
+    }
+
     fn leftovers(path: &Path) -> Vec<String> {
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
         fs::read_dir(path.parent().unwrap())
             .unwrap()
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|file| file.starts_with(&format!(".{name}.forge-save")))
+            .filter(|file| file.starts_with(".forge-") && file.ends_with(".tmp"))
             .collect()
     }
 
     #[test]
     fn saving_replaces_the_file_and_leaves_no_temporary_behind() {
-        let path = test_path();
+        let path = private_path();
         fs::write(&path, "old\n").unwrap();
         write_atomic(&path, b"new content\n").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"new content\n");
@@ -547,9 +563,52 @@ mod tests {
         fs::remove_file(path).unwrap();
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn the_atomic_route_really_replaces_the_file() {
+        let path = test_path();
+        fs::write(
+            &path, "old
+",
+        )
+        .unwrap();
+        let before = fs::metadata(&path).unwrap().created().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        write_atomic(
+            &path, b"new
+",
+        )
+        .unwrap();
+        // A rename brings in the temporary file with its own creation time; a direct write
+        // would keep the original.
+        assert_ne!(fs::metadata(&path).unwrap().created().unwrap(), before);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_hidden_file_stays_hidden_after_a_save() {
+        use std::os::windows::fs::MetadataExt;
+        let path = test_path();
+        fs::write(&path, "x").unwrap();
+        let attribute = std::process::Command::new("attrib")
+            .arg("+H")
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(attribute.success());
+        write_atomic(&path, b"y").unwrap();
+        assert_ne!(fs::metadata(&path).unwrap().file_attributes() & 0x2, 0);
+        let _ = std::process::Command::new("attrib")
+            .arg("-H")
+            .arg(&path)
+            .status();
+        fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn a_read_only_file_is_not_replaced_and_keeps_its_content() {
-        let path = test_path();
+        let path = private_path();
         fs::write(&path, "keep me\n").unwrap();
         let mut permissions = fs::metadata(&path).unwrap().permissions();
         permissions.set_readonly(true);
@@ -570,7 +629,7 @@ mod tests {
     #[test]
     fn a_file_another_program_holds_open_is_written_in_place() {
         use std::os::windows::fs::OpenOptionsExt;
-        let path = test_path();
+        let path = private_path();
         fs::write(&path, "old\n").unwrap();
         // Readers and writers allowed, but not rename or delete: the atomic rename must fail.
         let _holder = fs::OpenOptions::new()
