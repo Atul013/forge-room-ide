@@ -23,6 +23,8 @@ pub struct Terminal {
     snapshot: Option<String>,
     wheel_rows: f32,
     pub shell: String,
+    /// A file reference Ctrl+clicked in the output, waiting for the app to open it.
+    link: Option<crate::path_links::PathRef>,
 }
 
 /// Rows scrolled per mouse-wheel notch, and the wheel distance egui reports per notch.
@@ -121,6 +123,7 @@ impl Terminal {
             snapshot: None,
             wheel_rows: 0.0,
             shell: program,
+            link: None,
         })
     }
 
@@ -172,6 +175,22 @@ impl Terminal {
     /// The text currently on the screen, for noticing a dev server's address.
     pub fn screen_text(&self) -> String {
         self.parser.lock().unwrap().screen().contents()
+    }
+
+    /// The file reference under a screen cell, read from that row's text.
+    fn reference_at(&self, row: u16, column: u16, cols: u16) -> Option<crate::path_links::PathRef> {
+        let text = self
+            .parser
+            .lock()
+            .unwrap()
+            .screen()
+            .contents_between(row, 0, row, cols);
+        crate::path_links::ref_at(&text, usize::from(column))
+    }
+
+    /// The reference the user Ctrl+clicked since the last call, once.
+    pub fn take_link(&mut self) -> Option<crate::path_links::PathRef> {
+        self.link.take()
     }
 
     pub fn has_exited(&self) -> bool {
@@ -246,6 +265,22 @@ impl Terminal {
         }
         if response.clicked() {
             self.clear_selection();
+            // Ctrl+click on `file:line:column` in the output opens that place in the editor.
+            if ui.input(|input| input.modifiers.command)
+                && let Some(position) = response.interact_pointer_pos()
+            {
+                let (row, column) = cell_at(position);
+                self.link = self.reference_at(row, column, cols);
+            }
+        }
+        if response.hovered()
+            && ui.input(|input| input.modifiers.command)
+            && let Some(position) = response.hover_pos()
+        {
+            let (row, column) = cell_at(position);
+            if self.reference_at(row, column, cols).is_some() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
         }
         if response.hovered() {
             // Smoothed wheel movement arrives in small pieces; keep the fraction between frames.

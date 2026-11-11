@@ -20,6 +20,7 @@ mod line_ops;
 mod lobby;
 mod mark;
 mod palette;
+mod path_links;
 mod position;
 mod preview;
 mod project_tools;
@@ -750,8 +751,12 @@ impl ForgeRoomApp {
             return;
         }
         let request = std::mem::take(&mut self.terminal_focus_request);
+        let mut link = None;
         match self.terminal.as_mut() {
-            Some(terminal) => self.terminal_has_focus = terminal.show(ui, request),
+            Some(terminal) => {
+                self.terminal_has_focus = terminal.show(ui, request);
+                link = terminal.take_link();
+            }
             None => {
                 self.terminal_has_focus = false;
                 let message = self
@@ -763,6 +768,30 @@ impl ForgeRoomApp {
                     ui.label(egui::RichText::new(message).color(theme::text_dim()));
                 });
             }
+        }
+        if let Some(link) = link {
+            self.open_terminal_link(&link);
+        }
+    }
+
+    /// Open the file a Ctrl+clicked reference in the terminal output points at, at its line and
+    /// column. References are resolved inside the open folder (or as absolute paths).
+    fn open_terminal_link(&mut self, link: &path_links::PathRef) {
+        let root = self
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone())
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        let Some(path) = path_links::resolve(link, &root) else {
+            self.status = format!("No file {} to open", link.path);
+            return;
+        };
+        self.open_path(path);
+        if let (Some(line), Some(tab)) = (link.line, self.tabs.tabs.get(self.tabs.active)) {
+            let at = path_links::locate(tab.doc.text(), line, link.column.unwrap_or(1));
+            self.pending_select = Some((at, at));
+            self.focus_editor = true;
         }
     }
 
