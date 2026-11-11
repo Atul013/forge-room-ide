@@ -29,6 +29,7 @@ pub struct State {
     provider: Provider,
     model: String,
     pending: Option<mpsc::Receiver<Result<String, String>>>,
+    login_requested: bool,
 }
 
 const QUICK_ACTIONS: [(&str, &str); 4] = [
@@ -39,6 +40,10 @@ const QUICK_ACTIONS: [(&str, &str); 4] = [
 ];
 
 impl State {
+    pub fn take_login_request(&mut self) -> bool {
+        std::mem::take(&mut self.login_requested)
+    }
+
     fn send(&mut self, context: &egui::Context, root: Option<&Path>) {
         if self.pending.is_some() {
             return;
@@ -226,6 +231,10 @@ fn composer(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>, roo
         );
     });
     ui.label(RichText::new("Ask only · read-only Codex CLI. Sign in with `codex login` in Terminal; local providers use Codex CLI too.").size(11.0).color(theme::text_dim()));
+    if state.provider == Provider::Codex && ui.button("Open Codex sign-in in Terminal…").clicked()
+    {
+        state.login_requested = true;
+    }
     if root.is_none() {
         ui.label("Open and trust a project folder before asking.");
     }

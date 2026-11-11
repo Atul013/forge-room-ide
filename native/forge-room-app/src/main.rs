@@ -4206,6 +4206,14 @@ impl ForgeRoomApp {
                     .filter(|_| self.trusted)
                     .map(|workspace| workspace.root.as_path());
                 ai_panel::show(ui, &mut self.ai, name.as_deref(), root);
+                if self.ai.take_login_request() {
+                    self.spawn_terminal(true);
+                    if let Some(terminal) = self.terminals.get_mut(self.active_terminal) {
+                        terminal.send(b"codex login\r");
+                        self.show_terminal = true;
+                        self.bottom_tab = BottomTab::Terminal;
+                    }
+                }
             }
         }
     }
