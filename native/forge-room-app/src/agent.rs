@@ -39,8 +39,20 @@ impl Provider {
         let mut folders: Vec<PathBuf> = std::env::var_os("PATH")
             .map(|path| std::env::split_paths(&path).collect())
             .unwrap_or_default();
+        // Where the installers put command-line tools, which a program started from the Start menu
+        // may not have on its PATH: npm's folder, the native installer's, WinGet's links.
         if let Some(appdata) = std::env::var_os("APPDATA") {
             folders.push(PathBuf::from(appdata).join("npm"));
+        }
+        if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+            let home = PathBuf::from(home);
+            folders.push(home.join(".local").join("bin"));
+            folders.push(home.join(".claude").join("local"));
+        }
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let local = PathBuf::from(local);
+            folders.push(local.join("Microsoft").join("WinGet").join("Links"));
+            folders.push(local.join("Programs").join("claude"));
         }
         let names: &[&str] = if cfg!(windows) {
             &["exe", "cmd"]
@@ -108,6 +120,7 @@ pub fn efforts(provider: Provider) -> &'static [&'static str] {
 pub fn valid_model(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
+        && name.starts_with(|c: char| c.is_ascii_alphanumeric())
         && name.chars().all(|c| {
             c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '/' | '[' | ']')
         })
@@ -135,6 +148,8 @@ pub enum Event {
     Tool(String),
     /// The id to pass back to continue this conversation.
     Session(String),
+    /// Something the agent reported that does not end the run (a retry, a warning).
+    Notice(String),
     /// The run ended. `error` is why it failed, if it did.
     Done {
         cost: Option<f64>,
@@ -154,7 +169,12 @@ pub fn arguments(request: &Request) -> Vec<String> {
                     .map(|a| a.to_string()),
             );
             match request.mode {
-                Mode::ReadOnly => args.extend(["--permission-mode".into(), "plan".into()]),
+                Mode::ReadOnly => {
+                    // "Cannot change anything" has to hold even when the repository ships its own
+                    // Claude settings (hooks, allow rules): only the user's own settings apply.
+                    args.extend(["--setting-sources".into(), "user".into()]);
+                    args.extend(["--permission-mode".into(), "plan".into()]);
+                }
                 Mode::Edit => args.extend(["--permission-mode".into(), "acceptEdits".into()]),
                 Mode::Full => args.push("--dangerously-skip-permissions".into()),
             }
@@ -244,6 +264,22 @@ pub fn parse_claude(line: &str) -> Vec<Event> {
             if let Some(id) = value.get("session_id").and_then(Value::as_str) {
                 events.push(Event::Session(id.to_string()));
             }
+            if let Some(denials) = value.get("permission_denials").and_then(Value::as_array)
+                && !denials.is_empty()
+            {
+                let mut names: Vec<String> = denials
+                    .iter()
+                    .filter_map(|d| d.get("tool_name").and_then(Value::as_str))
+                    .map(String::from)
+                    .collect();
+                names.sort();
+                names.dedup();
+                events.push(Event::Notice(format!(
+                    "The agent was not allowed to use: {}. A run from here cannot ask for \
+                     permission: choose Full access to let it run commands.",
+                    names.join(", ")
+                )));
+            }
             let failed = value.get("is_error").and_then(Value::as_bool) == Some(true)
                 || value
                     .get("subtype")
@@ -282,13 +318,17 @@ fn describe_tool(name: &str, input: Option<&Value>) -> String {
     });
     match detail {
         Some(detail) => {
-            let detail: String = detail
+            // Every line of a command is shown (joined), so nothing a multi-line command does after
+            // its first line is hidden; only an extremely long one is cut.
+            let lines: Vec<&str> = detail
                 .lines()
-                .next()
-                .unwrap_or("")
-                .chars()
-                .take(120)
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
                 .collect();
+            let mut detail = lines.join("  ;  ");
+            if detail.chars().count() > 400 {
+                detail = detail.chars().take(400).collect::<String>() + "…";
+            }
             format!("{name} {detail}")
         }
         None => name.to_string(),
@@ -333,7 +373,7 @@ pub fn parse_codex(line: &str) -> Vec<Event> {
             cost: None,
             error: None,
         }),
-        Some("turn.failed" | "error") => {
+        Some("turn.failed") => {
             let message = value
                 .pointer("/error/message")
                 .or_else(|| value.get("message"))
@@ -344,6 +384,16 @@ pub fn parse_codex(line: &str) -> Vec<Event> {
                 error: Some(message.to_string()),
             });
         }
+        // An error in the middle of a turn can be a retry: the run goes on until the turn ends or
+        // the process does.
+        Some("error") => {
+            let message = value
+                .pointer("/error/message")
+                .or_else(|| value.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("The agent reported an error");
+            events.push(Event::Notice(message.to_string()));
+        }
         _ => {}
     }
     events
@@ -352,6 +402,8 @@ pub fn parse_codex(line: &str) -> Vec<Event> {
 /// A run in progress.
 pub struct Run {
     receiver: mpsc::Receiver<Event>,
+    /// The agent's process until it has been waited for. Once it is gone from here its process
+    /// number may be reused, so nothing is ever killed by number after that.
     child: Arc<Mutex<Option<Child>>>,
     cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -366,15 +418,35 @@ impl Run {
         events
     }
 
-    /// Stop the agent.
+    /// Stop the agent and everything it started. An npm-installed agent is a `.cmd` file that runs
+    /// `node`, so killing the first process alone would leave the real agent running.
     pub fn cancel(&self) {
         self.cancelled
             .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Ok(mut child) = self.child.lock()
             && let Some(child) = child.as_mut()
         {
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                // The whole tree (/T), without asking (/F). The process handle is still open, so
+                // the number cannot belong to anything else yet.
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                    .creation_flags(0x0800_0000)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
             let _ = child.kill();
         }
+    }
+}
+
+impl Drop for Run {
+    /// Leaving the panel (or closing the app) never leaves an agent running unseen.
+    fn drop(&mut self) {
+        self.cancel();
     }
 }
 
@@ -385,6 +457,19 @@ pub fn start(
     wake: impl Fn() + Send + 'static,
 ) -> Result<Run, String> {
     let mut command = Command::new(program);
+    if request.mode != Mode::Full {
+        // Without full access the agent has no business with the user's tokens for other services.
+        for name in [
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "NPM_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        ] {
+            command.env_remove(name);
+        }
+    }
     command
         .args(arguments(request))
         .current_dir(&request.cwd)
@@ -399,35 +484,50 @@ pub fn start(
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start {}: {error}", request.provider.name()))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(request.prompt.as_bytes())
-            .map_err(|error| format!("Could not send the message: {error}"))?;
-        // Closing the pipe tells the agent the message is complete.
-    }
+    let stdin = child.stdin.take();
     let stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
     let child = Arc::new(Mutex::new(Some(child)));
     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (sender, receiver) = mpsc::channel();
     let provider = request.provider;
+    // The message is written on its own thread: a long one cannot fill the pipe while this one
+    // waits (the window must never freeze on it), and the output is already being read.
+    let prompt = request.prompt.clone().into_bytes();
+    std::thread::spawn(move || {
+        if let Some(mut stdin) = stdin {
+            // A failure shows up as the agent's own complaint; closing the pipe ends the message.
+            let _ = stdin.write_all(&prompt);
+        }
+    });
     {
         let (child, cancelled) = (child.clone(), cancelled.clone());
         std::thread::spawn(move || {
             // The error output is read on its own thread so a chatty agent cannot fill the pipe.
             let errors = std::thread::spawn(move || {
-                let mut text = String::new();
+                let mut bytes = Vec::new();
                 if let Some(pipe) = &mut stderr {
-                    let _ = pipe.read_to_string(&mut text);
+                    let _ = pipe.read_to_end(&mut bytes);
                 }
-                text
+                String::from_utf8_lossy(&bytes).into_owned()
             });
             let mut finished = false;
             if let Some(stdout) = stdout {
-                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                let mut reader = BufReader::new(stdout);
+                let mut line = Vec::new();
+                loop {
+                    line.clear();
+                    // Bytes, not text: one line that is not valid UTF-8 must not end the reading
+                    // (the agent would then block on a full pipe for ever).
+                    match reader.read_until(b'\n', &mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    let text = String::from_utf8_lossy(&line);
+                    let text = text.trim_end();
                     let events = match provider {
-                        Provider::Claude => parse_claude(&line),
-                        Provider::Codex => parse_codex(&line),
+                        Provider::Claude => parse_claude(text),
+                        Provider::Codex => parse_codex(text),
                     };
                     for event in events {
                         finished |= matches!(event, Event::Done { .. });
@@ -510,6 +610,13 @@ mod tests {
         assert!(!odd.iter().any(|a| a == "--resume"));
         // The prompt is never an argument.
         assert!(!edit.iter().any(|a| a == "hello"));
+        // Read only leaves repository settings out; edit mode keeps the project's own.
+        assert!(read.windows(2).any(|w| w == ["--setting-sources", "user"]));
+        assert!(!edit.iter().any(|a| a == "--setting-sources"));
+        // A model name that looks like an option is never passed on.
+        assert!(!valid_model("--dangerously-skip-permissions"));
+        assert!(!valid_model("-x"));
+        assert!(valid_model("claude-opus-4-1"));
     }
 
     #[test]
@@ -566,7 +673,7 @@ mod tests {
             vec![
                 Event::Text("Looking".into()),
                 Event::Tool("Edit src/a.rs".into()),
-                Event::Tool("Bash cargo test".into()),
+                Event::Tool("Bash cargo test  ;  more".into()),
             ]
         );
         let done = r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s-1","total_cost_usd":0.0123}"#;
@@ -626,9 +733,14 @@ mod tests {
         );
         assert_eq!(
             parse_codex(r#"{"type":"error","message":"no auth"}"#),
+            vec![Event::Notice("no auth".into())]
+        );
+        // Only the end of the turn ends the run.
+        assert_eq!(
+            parse_codex(r#"{"type":"turn.failed","error":{"message":"quota"}}"#),
             vec![Event::Done {
                 cost: None,
-                error: Some("no auth".into())
+                error: Some("quota".into())
             }]
         );
     }

@@ -13,8 +13,10 @@ enum Author {
     Assistant,
     /// A tool the agent used (an edit, a command): a small dim line.
     Tool,
-    /// Something Forge Room says (an error, how a run ended).
+    /// Something Forge Room says (how a run ended, what the agent was not allowed).
     Note,
+    /// Something went wrong: shown in red.
+    Error,
 }
 
 struct Message {
@@ -39,6 +41,8 @@ pub struct State {
     /// The conversation the next message continues (Claude Code only).
     session: Option<String>,
     run: Option<agent::Run>,
+    /// When the running agent was started.
+    started: Option<std::time::Instant>,
     /// Where each provider's program was found, looked up once.
     programs: Option<[Option<PathBuf>; 2]>,
     /// Full access was picked and waits for the user's confirmation.
@@ -59,6 +63,7 @@ impl Default for State {
             saved: Default::default(),
             session: None,
             run: None,
+            started: None,
             programs: None,
             confirm_full: false,
         }
@@ -132,6 +137,13 @@ impl State {
         self.run.is_some()
     }
 
+    fn fail(&mut self, text: impl Into<String>) {
+        self.messages.push(Message {
+            author: Author::Error,
+            text: text.into(),
+        });
+    }
+
     fn note(&mut self, text: impl Into<String>) {
         self.messages.push(Message {
             author: Author::Note,
@@ -146,37 +158,38 @@ impl State {
         found[usize::from(provider == Provider::Codex)].clone()
     }
 
-    /// Send the typed message to the agent, in `cwd`, when that is allowed.
+    /// Send the typed message to the agent, in `cwd`, when that is allowed. A message that is
+    /// refused stays in the box, and the reason is shown.
     fn send(&mut self, context: &egui::Context, cwd: Option<&Path>, trusted: bool) {
         let text = self.input.trim().to_string();
         if text.is_empty() || self.run.is_some() {
             return;
         }
-        self.messages.push(Message {
-            author: Author::User,
-            text: text.clone(),
-        });
-        self.input.clear();
-        self.focus_input = true;
         let Some(cwd) = cwd else {
-            self.note("Open a folder first: the agent works in the open folder.");
+            self.fail("Open a folder first: the agent works in the open folder.");
             return;
         };
         if !trusted {
-            self.note(
+            self.fail(
                 "This folder is not trusted yet. An agent runs programs with your rights, so use \
                  Folder: Trust This Folder first.",
             );
             return;
         }
         let provider = self.provider;
+        // Installed since the panel last looked? Look again before saying it is missing.
+        if self.program(provider).is_none() {
+            self.programs = None;
+        }
         let Some(program) = self.program(provider) else {
             let how = match provider {
-                Provider::Claude => "Install it with: npm install -g @anthropic-ai/claude-code",
+                Provider::Claude => {
+                    "Install it with: npm install -g @anthropic-ai/claude-code (or the native installer)"
+                }
                 Provider::Codex => "Install it with: npm install -g @openai/codex",
             };
-            self.note(format!(
-                "{} was not found on this computer (looked on PATH and in the npm folder). {how}",
+            self.fail(format!(
+                "{} was not found on this computer (looked on PATH and where installers put it). {how}",
                 provider.name()
             ));
             return;
@@ -186,14 +199,23 @@ impl State {
             model: self.model.clone(),
             effort: self.effort.clone(),
             mode: self.mode,
-            prompt: text,
+            prompt: text.clone(),
             cwd: cwd.to_path_buf(),
             session: self.session.clone(),
         };
         let wake = context.clone();
         match agent::start(&program, &request, move || wake.request_repaint()) {
-            Ok(run) => self.run = Some(run),
-            Err(error) => self.note(error),
+            Ok(run) => {
+                self.run = Some(run);
+                self.started = Some(std::time::Instant::now());
+                self.messages.push(Message {
+                    author: Author::User,
+                    text,
+                });
+                self.input.clear();
+                self.focus_input = true;
+            }
+            Err(error) => self.fail(error),
         }
     }
 
@@ -216,6 +238,7 @@ impl State {
                         text,
                     }),
                 },
+                agent::Event::Notice(text) => self.note(text),
                 agent::Event::Tool(line) => self.messages.push(Message {
                     author: Author::Tool,
                     text: line,
@@ -229,7 +252,7 @@ impl State {
                 agent::Event::Done { cost, error } => {
                     finished = true;
                     match error {
-                        Some(error) => self.note(error),
+                        Some(error) => self.fail(error),
                         None => {
                             if let Some(cost) = cost {
                                 self.note(format!("Done (cost ${cost:.3})"));
@@ -241,6 +264,7 @@ impl State {
         }
         if finished {
             self.run = None;
+            self.started = None;
         }
         finished
     }
@@ -253,7 +277,7 @@ impl State {
     }
 
     /// Forget the conversation (and stop the agent): the next message starts fresh.
-    fn new_chat(&mut self) {
+    pub fn new_chat(&mut self) {
         self.stop();
         self.messages.clear();
         self.session = None;
@@ -300,6 +324,32 @@ pub fn show(
             for message in &state.messages {
                 ui.add_space(12.0);
                 bubble(ui, message);
+            }
+            if state.busy() {
+                ui.add_space(10.0);
+                let seconds = state.started.map_or(0, |at| at.elapsed().as_secs());
+                let last_tool = state
+                    .messages
+                    .iter()
+                    .rev()
+                    .take_while(|m| m.author != Author::User)
+                    .find(|m| m.author == Author::Tool)
+                    .map(|m| m.text.clone());
+                ui.horizontal(|ui| {
+                    ui.add_space(52.0);
+                    ui.spinner();
+                    ui.label(
+                        RichText::new(match last_tool {
+                            Some(tool) => format!("Working {seconds}s · {tool}"),
+                            None => format!("Working {seconds}s"),
+                        })
+                        .size(13.0)
+                        .color(theme::text_dim()),
+                    );
+                });
+                // The seconds count up even when nothing arrives.
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(1));
             }
             ui.add_space(12.0);
         });
@@ -552,9 +602,31 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
                 ui.set_max_width((ui.available_width() - 14.0).max(120.0));
                 ui.label(
                     RichText::new(&message.text)
-                        .size(12.5)
+                        .size(13.0)
                         .color(theme::text_dim()),
                 );
+            });
+            return;
+        }
+        Author::Error => {
+            ui.horizontal_top(|ui| {
+                ui.add_space(52.0);
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(240, 113, 120, 26))
+                    .stroke(Stroke::new(
+                        1.0,
+                        Color32::from_rgba_unmultiplied(240, 113, 120, 110),
+                    ))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::symmetric(10, 7))
+                    .show(ui, |ui| {
+                        ui.set_max_width((ui.available_width() - 14.0).max(120.0));
+                        ui.label(
+                            RichText::new(&message.text)
+                                .size(13.0)
+                                .color(Color32::from_rgb(244, 150, 156)),
+                        );
+                    });
             });
             return;
         }
@@ -588,6 +660,14 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
             .show(ui, |ui| {
                 ui.set_max_width((ui.available_width() - 14.0).max(120.0));
                 ui.label(RichText::new(&message.text).size(14.0).color(theme::text()));
+                if !user
+                    && ui
+                        .small_button("Copy")
+                        .on_hover_text("Copy this answer")
+                        .clicked()
+                {
+                    ui.ctx().copy_text(message.text.clone());
+                }
             });
     });
 }
@@ -602,8 +682,14 @@ fn composer(
     let id = ui.scope_id().with("ai-input");
     // Enter sends, Shift+Enter adds a line. Consumed before the text box sees it.
     let focused = ui.memory(|memory| memory.has_focus(id));
+    // `consume_key` ignores a held Shift, so Shift+Enter has to be told apart first.
+    let enter =
+        focused && ui.input(|input| input.key_pressed(Key::Enter) && !input.modifiers.shift);
     let send_requested =
-        focused && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+        enter && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+    if focused && state.busy() && ui.input(|input| input.key_pressed(Key::Escape)) {
+        state.stop();
+    }
 
     egui::Frame::new()
         .stroke(Stroke::new(1.0, theme::border()))
@@ -612,16 +698,25 @@ fn composer(
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            let hint = if state.busy() {
+                format!("{} is working… (Esc stops it)", state.provider.name())
+            } else {
+                format!(
+                    "Ask {} to work in this folder…  (Enter sends, Shift+Enter adds a line)",
+                    state.provider.name()
+                )
+            };
             let editor = egui::TextEdit::multiline(&mut state.input)
                 .id(id)
                 .frame(egui::Frame::NONE)
                 .desired_rows(2)
                 .desired_width(f32::INFINITY)
-                .hint_text(format!(
-                    "Ask {} to work in this folder…  (Enter sends, Shift+Enter adds a line)",
-                    state.provider.name()
-                ));
-            ui.add(editor);
+                .hint_text(hint);
+            // A long paste scrolls inside the box instead of pushing the answers out of view.
+            egui::ScrollArea::vertical()
+                .max_height(200.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| ui.add(editor));
             if std::mem::take(&mut state.focus_input) {
                 ui.memory_mut(|memory| memory.request_focus(id));
             }
@@ -682,6 +777,14 @@ fn composer(
                             .size(13.0)
                             .color(theme::text_dim()),
                     );
+                    if state.mode == Mode::Full {
+                        ui.label(
+                            RichText::new("Full access")
+                                .size(12.0)
+                                .strong()
+                                .color(Color32::from_rgb(244, 150, 156)),
+                        );
+                    }
                 });
             });
         });
@@ -699,12 +802,13 @@ mod tests {
             ..State::default()
         };
         state.send(&context, None, true);
-        assert_eq!(state.messages[0].text, "explain main.rs");
-        assert!(state.messages[1].text.contains("Open a folder"));
-        assert!(state.input.is_empty() && !state.busy());
-        state.input = "again".into();
+        assert!(state.messages[0].text.contains("Open a folder"));
+        // A refused message stays in the box, to be sent again.
+        assert_eq!(state.input.trim(), "explain main.rs");
+        assert!(!state.busy());
         state.send(&context, Some(Path::new(".")), false);
         assert!(state.messages.last().unwrap().text.contains("not trusted"));
+        assert_eq!(state.input.trim(), "explain main.rs");
         assert!(!state.busy());
     }
 

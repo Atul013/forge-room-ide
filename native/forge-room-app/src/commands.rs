@@ -157,7 +157,7 @@ pub const ALL: &[(Command, &str, &str)] = &[
     (
         Command::OpenAgent,
         "AI: Open Agent Panel (Claude Code / Codex)",
-        "",
+        "Ctrl+Shift+A",
     ),
     (Command::CopyTerminalOutput, "Terminal: Copy All Output", ""),
     (

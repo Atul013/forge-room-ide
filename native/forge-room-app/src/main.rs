@@ -405,7 +405,7 @@ impl ForgeRoomApp {
             lobby_close_warned: false,
             preview: preview::Preview::default(),
             ai: ai_panel::State::from_settings(&settings::load()),
-            right_tab: RightTab::Room,
+            right_tab: RightTab::Ai,
             terminal_focus_request: false,
             terminal_has_focus: false,
             terminal_error: None,
@@ -697,7 +697,11 @@ impl ForgeRoomApp {
                     &folder.display().to_string(),
                 );
             });
-            let previous = self.git_root();
+            let previous = self.repo_root();
+            if previous.as_ref().is_some_and(|old| *old != folder) {
+                // The agent's conversation belongs to the folder it ran in.
+                self.ai.new_chat();
+            }
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
             self.clear_git_state();
@@ -1836,6 +1840,8 @@ impl ForgeRoomApp {
             self.switch_view(SidebarView::Room);
         } else if shortcut(ui, command_shift, Key::O) {
             self.open_folder_dialog();
+        } else if shortcut(ui, command_shift, Key::A) {
+            self.run_command(Command::OpenAgent, false);
         } else if shortcut(ui, command_shift, Key::Y) {
             self.run_command(Command::GoToSymbol, false);
         } else if shortcut(ui, command_shift, Key::T) {
@@ -1960,7 +1966,11 @@ impl ForgeRoomApp {
                 }
                 ui.add_space(10.0);
                 for (icon, tip, command) in [
-                    ("panel-right", "Toggle side panel", Command::ShowRoom),
+                    (
+                        "panel-right",
+                        "Side panel: AI agent, team, chat",
+                        Command::ShowRoom,
+                    ),
                     ("panel-bottom", "Toggle terminal", Command::ToggleTerminal),
                     ("panel-left", "Toggle sidebar", Command::ToggleSidebar),
                 ] {
@@ -2297,6 +2307,8 @@ impl ForgeRoomApp {
         // (item, icon, label, tooltip); `None` is a divider.
         type Entry = Option<(Rail, &'static str, &'static str, &'static str)>;
         let top: [Entry; 13] = [
+            Some((Rail::Ai, "ai", "AI Agent", "AI Agent (Ctrl+Shift+A)")),
+            None,
             Some((
                 Rail::View(SidebarView::Explorer),
                 "code",
@@ -2348,8 +2360,6 @@ impl ForgeRoomApp {
                 "Extensions",
                 "Extension support status",
             )),
-            None,
-            Some((Rail::Ai, "ai", "AI Assistant", "AI Assistant")),
         ];
         for entry in top {
             match entry {
@@ -2522,8 +2532,10 @@ impl ForgeRoomApp {
                 }
                 Rail::Room => self.show_lobby = !self.show_lobby,
                 Rail::Ai => {
+                    // Open only: a click while the answer is arriving must not hide it.
                     self.show_lobby = false;
-                    self.show_dock(RightTab::Ai);
+                    self.show_right = true;
+                    self.right_tab = RightTab::Ai;
                 }
                 Rail::Studio => self.gallery.open(),
                 Rail::Project(page) => {
@@ -3243,9 +3255,10 @@ impl ForgeRoomApp {
                     ui.label(format!("{}", folder.display()));
                     ui.add_space(4.0);
                     ui.label(
-                        "Forge Room runs Git and your project's tools in this folder. A folder from \
-                         someone you do not trust can carry settings that make them start \
-                         programs. Trust it only if you know where it came from.",
+                        "Forge Room runs Git, your project's tools and the AI agent in this folder. \
+                         A folder from someone you do not trust can carry settings that make them \
+                         start programs. Trust it only if you know where it came from. Trusting a \
+                         folder also trusts the folders inside it.",
                     );
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -3303,9 +3316,14 @@ impl ForgeRoomApp {
                 Confirm::QuitWithTerminals => (
                     "Quit",
                     format!(
-                        "{} terminal(s) are still running. Quitting stops the programs in them \
+                        "{} terminal(s) are still running{}. Quitting stops the programs in them \
                          (coding agents, dev servers).",
-                        self.terminals.iter().filter(|t| !t.has_exited()).count()
+                        self.terminals.iter().filter(|t| !t.has_exited()).count(),
+                        if self.ai.busy() {
+                            " and the AI panel's agent is working"
+                        } else {
+                            ""
+                        }
                     ),
                     "Quit anyway",
                 ),
@@ -4686,18 +4704,14 @@ impl eframe::App for ForgeRoomApp {
         // the files again (it may have edited some).
         let finished = self.ai.poll();
         let busy = self.ai.busy();
-        // The answer is shown in the AI panel, so it is brought up when an agent starts and when it
-        // ends, whatever the dock was doing before.
-        if (busy && !self.ai_was_busy) || finished {
-            self.show_right = true;
-            self.right_tab = RightTab::Ai;
-            self.show_lobby = false;
-        }
+        // A run is started from the AI panel, so it is already in front; it is not pulled up again
+        // when the run ends (the user may have gone elsewhere meanwhile).
         if busy && !self.ai_was_busy {
             self.status = "The agent is working: see the AI panel".into();
         }
         self.ai_was_busy = busy;
         if finished {
+            self.checked_folders.clear();
             self.reload_clean_tabs();
             self.refresh_git();
             self.status = "The agent finished".into();
@@ -4718,7 +4732,7 @@ impl eframe::App for ForgeRoomApp {
             && !self.allow_close
             && !self.terminals_confirmed
             && self.pending.is_none()
-            && self.terminals.iter().any(|t| !t.has_exited())
+            && (self.ai.busy() || self.terminals.iter().any(|t| !t.has_exited()))
         {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.confirm = Some(Confirm::QuitWithTerminals);
