@@ -213,6 +213,10 @@ struct ForgeRoomApp {
     recovery_warned: bool,
     /// Sidebar width, right dock width and terminal height as last drawn, in points.
     panel_sizes: (u16, u16, u16),
+    /// The terminal panel fills most of the window.
+    terminal_maximized: bool,
+    /// Two terminals shown side by side: their indexes.
+    split_pair: Option<(usize, usize)>,
     /// The user trusts the open folder: until then Git and project tools stay off.
     trusted: bool,
     /// The folder waiting for the answer to the trust question.
@@ -359,6 +363,8 @@ impl ForgeRoomApp {
             auto_checked: std::time::Instant::now(),
             recovery_warned: false,
             panel_sizes: (250, 364, 200),
+            terminal_maximized: false,
+            split_pair: None,
             trusted: true,
             trust_prompt: None,
             git_top: None,
@@ -1209,6 +1215,7 @@ impl ForgeRoomApp {
 
     /// Close the active terminal (its shell is ended); the one before it comes forward.
     fn close_terminal(&mut self) {
+        self.split_pair = None;
         if self.active_terminal < self.terminals.len() {
             self.terminals.remove(self.active_terminal);
         }
@@ -1234,6 +1241,9 @@ impl ForgeRoomApp {
         let mut add_terminal = false;
         let mut close_terminal = false;
         let mut switch_to = None;
+        let mut toggle_split = false;
+        let mut toggle_maximize = false;
+        let mut copy_all = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(12.0);
@@ -1282,14 +1292,6 @@ impl ForgeRoomApp {
                         }
                     }
                 }
-                if icons::icon_button(ui, "New terminal (Ctrl+Shift+`)", icons::plus).clicked() {
-                    add_terminal = true;
-                }
-                if self.terminals.len() > 1
-                    && icons::icon_button(ui, "End this terminal", icons::close_cross).clicked()
-                {
-                    close_terminal = true;
-                }
             }
             if ui.available_width() > 760.0
                 && let Some(terminal) = self.terminals.get(self.active_terminal)
@@ -1311,8 +1313,69 @@ impl ForgeRoomApp {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
+                // Right to left: close, maximize, a divider, then the terminal's own actions.
                 if icons::icon_button(ui, "Hide terminal (Ctrl+`)", icons::close_cross).clicked() {
                     close = true;
+                }
+                let maximize_tip = if self.terminal_maximized {
+                    "Restore panel size"
+                } else {
+                    "Maximize panel"
+                };
+                if icons::icon_button(ui, maximize_tip, icons::maximize).clicked() {
+                    toggle_maximize = true;
+                }
+                if self.bottom_tab == BottomTab::Terminal {
+                    let (divider, _) =
+                        ui.allocate_exact_size(egui::vec2(9.0, 16.0), egui::Sense::hover());
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(divider.center().x, divider.top()),
+                            egui::pos2(divider.center().x, divider.bottom()),
+                        ],
+                        egui::Stroke::new(1.0, theme::border()),
+                    );
+                    let more = icons::icon_button(ui, "More terminal actions", icons::more);
+                    egui::Popup::menu(&more).show(|ui| {
+                        if ui.button("Copy all output").clicked() {
+                            copy_all = true;
+                            ui.close();
+                        }
+                        if ui.button("Restart this terminal").clicked() {
+                            restart = true;
+                            ui.close();
+                        }
+                    });
+                    if icons::icon_button(ui, "Kill terminal", icons::trash).clicked() {
+                        close_terminal = true;
+                    }
+                    let split_tip = if self.split_pair.is_some() {
+                        "Unsplit terminals"
+                    } else {
+                        "Split terminal"
+                    };
+                    if icons::icon_button(ui, split_tip, icons::split).clicked() {
+                        toggle_split = true;
+                    }
+                    let menu = icons::icon_button(ui, "Terminal types", icons::chevron_small);
+                    egui::Popup::menu(&menu).show(|ui| {
+                        if ui
+                            .button(format!(
+                                "New {}",
+                                self.terminals
+                                    .first()
+                                    .map_or("terminal", |t| t.shell.as_str())
+                            ))
+                            .clicked()
+                        {
+                            add_terminal = true;
+                            ui.close();
+                        }
+                    });
+                    if icons::icon_button(ui, "New terminal (Ctrl+Shift+`)", icons::plus).clicked()
+                    {
+                        add_terminal = true;
+                    }
                 }
                 if (exited || self.terminals.is_empty()) && ui.small_button("Restart").clicked() {
                     restart = true;
@@ -1324,6 +1387,37 @@ impl ForgeRoomApp {
             self.terminal_has_focus = false;
             self.focus_editor = true;
             return;
+        }
+        if toggle_maximize {
+            self.terminal_maximized = !self.terminal_maximized;
+        }
+        if copy_all && let Some(terminal) = self.terminals.get(self.active_terminal) {
+            let text = terminal.all_text();
+            self.status = format!(
+                "Copied the whole terminal output ({} lines)",
+                text.lines().count()
+            );
+            ui.ctx().copy_text(text);
+        }
+        if toggle_split {
+            if self.split_pair.is_some() {
+                self.split_pair = None;
+            } else {
+                // Two terminals side by side: the shown one and another (made when there is none).
+                if self.terminals.len() < 2 {
+                    self.spawn_terminal(true);
+                }
+                if self.terminals.len() >= 2 {
+                    let shown = self.active_terminal.min(self.terminals.len() - 1);
+                    let other = if shown + 1 < self.terminals.len() {
+                        shown + 1
+                    } else {
+                        shown - 1
+                    };
+                    self.split_pair = Some((shown.min(other), shown.max(other)));
+                    self.active_terminal = shown;
+                }
+            }
         }
         if restart {
             self.spawn_terminal(false);
@@ -1343,6 +1437,12 @@ impl ForgeRoomApp {
             }
         }
         if let Some(index) = switch_to {
+            if self
+                .split_pair
+                .is_some_and(|(a, b)| index != a && index != b)
+            {
+                self.split_pair = None;
+            }
             self.active_terminal = index;
             self.terminal_focus_request = true;
         }
@@ -1414,6 +1514,36 @@ impl ForgeRoomApp {
         let request = std::mem::take(&mut self.terminal_focus_request);
         let mut link = None;
         let active = self.active_terminal;
+        // A split that no longer fits the terminals that exist is dropped.
+        if self
+            .split_pair
+            .is_some_and(|(a, b)| a >= b || b >= self.terminals.len())
+        {
+            self.split_pair = None;
+        }
+        if let Some((a, b)) = self.split_pair {
+            let (first, second) = self.terminals.split_at_mut(b);
+            let (left, right) = (&mut first[a], &mut second[0]);
+            let (mut left_focus, mut right_focus) = (false, false);
+            ui.columns(2, |columns| {
+                left_focus = left.show(&mut columns[0], request && active == a);
+                right_focus = right.show(&mut columns[1], request && active == b);
+            });
+            if let Some(found) = left.take_link().or_else(|| right.take_link()) {
+                link = Some(found);
+            }
+            self.terminal_has_focus = left_focus || right_focus;
+            // Actions that follow the shown terminal follow the one that has the keyboard.
+            if right_focus {
+                self.active_terminal = b;
+            } else if left_focus {
+                self.active_terminal = a;
+            }
+            if let Some(link) = link {
+                self.open_terminal_link(&link);
+            }
+            return;
+        }
         match self.terminals.get_mut(active) {
             Some(terminal) => {
                 self.terminal_has_focus = terminal.show(ui, request);
@@ -3972,8 +4102,14 @@ impl ForgeRoomApp {
                                     (RightTab::Activity, "Activity"),
                                     (RightTab::Ai, "AI"),
                                 ] {
-                                    if underline_tab(ui, label, self.right_tab == tab, true)
-                                        .clicked()
+                                    if underline_tab_padded(
+                                        ui,
+                                        label,
+                                        self.right_tab == tab,
+                                        true,
+                                        16.0,
+                                    )
+                                    .clicked()
                                     {
                                         self.right_tab = tab;
                                     }
@@ -4012,7 +4148,7 @@ impl ForgeRoomApp {
                     .inner_margin(egui::Margin::symmetric(14, 7))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.horizontal_centered(|ui| {
+                        ui.horizontal(|ui| {
                             let label = if conflicts > 0 {
                                 format!(
                                     "{conflicts} merge conflict{}",
@@ -4631,10 +4767,17 @@ impl eframe::App for ForgeRoomApp {
         }
 
         if self.show_terminal && !self.show_lobby {
-            let drawn = egui::Panel::bottom("terminal")
-                .resizable(true)
-                .default_size(f32::from(self.panel_sizes.2))
-                .size_range(120.0..=720.0)
+            let panel = if self.terminal_maximized {
+                // Most of the window; the editor keeps a strip above it.
+                egui::Panel::bottom("terminal-maximized")
+                    .exact_size((ui.available_height() - 90.0).max(200.0))
+            } else {
+                egui::Panel::bottom("terminal")
+                    .resizable(true)
+                    .default_size(f32::from(self.panel_sizes.2))
+                    .size_range(120.0..=720.0)
+            };
+            let drawn = panel
                 .frame(card(theme::bg_editor()).inner_margin(egui::Margin {
                     left: 0,
                     right: 0,
@@ -4642,7 +4785,10 @@ impl eframe::App for ForgeRoomApp {
                     bottom: 0,
                 }))
                 .show(ui, |ui| self.terminal_panel(ui));
-            self.panel_sizes.2 = drawn.response.rect.height().round().clamp(120.0, 720.0) as u16;
+            if !self.terminal_maximized {
+                self.panel_sizes.2 =
+                    drawn.response.rect.height().round().clamp(120.0, 720.0) as u16;
+            }
         }
 
         if self.show_preview && !self.show_lobby && ui.available_width() > 760.0 {
@@ -5034,6 +5180,17 @@ fn detect_runtimes(root: &std::path::Path) -> Vec<String> {
 
 /// Native tab button with the active theme underline, shared by dock and terminal headers.
 fn underline_tab(ui: &mut egui::Ui, label: &str, active: bool, enabled: bool) -> egui::Response {
+    underline_tab_padded(ui, label, active, enabled, 30.0)
+}
+
+/// A tab label with an underline when active; `pad` is the space added around the text.
+fn underline_tab_padded(
+    ui: &mut egui::Ui,
+    label: &str,
+    active: bool,
+    enabled: bool,
+    pad: f32,
+) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_string(),
         egui::FontId::proportional(14.0),
@@ -5048,7 +5205,7 @@ fn underline_tab(ui: &mut egui::Ui, label: &str, active: bool, enabled: bool) ->
     };
     let button = egui::Button::new(egui::RichText::new(label).size(14.0).color(color))
         .frame(false)
-        .min_size(egui::vec2(galley.size().x + 30.0, 36.0));
+        .min_size(egui::vec2(galley.size().x + pad, 36.0));
     let response = ui.add_enabled(enabled, button);
     if active {
         ui.painter().rect_filled(
