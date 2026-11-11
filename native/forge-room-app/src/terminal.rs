@@ -23,6 +23,9 @@ pub struct Terminal {
     snapshot: Option<String>,
     wheel_rows: f32,
     pub shell: String,
+    /// Whether this terminal was drawn this frame. A terminal nobody looks at does not need the
+    /// window redrawn for every chunk of its output.
+    visible: Arc<AtomicBool>,
     /// A file reference Ctrl+clicked in the output, waiting for the app to open it.
     link: Option<crate::path_links::PathRef>,
 }
@@ -63,6 +66,9 @@ impl Terminal {
             command.cwd(cwd);
         }
         command.env("TERM", "xterm-256color");
+        // Coding agents and other TUIs look at these to decide whether to use 24-bit colour.
+        command.env("COLORTERM", "truecolor");
+        command.env("TERM_PROGRAM", "forge-room");
         let child = pair
             .slave
             .spawn_command(command)
@@ -77,11 +83,13 @@ impl Terminal {
             Arc::new(Mutex::new(pair.master.take_writer().map_err(|error| {
                 format!("could not write to the terminal: {error}")
             })?));
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(size.rows, size.cols, 2000)));
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(size.rows, size.cols, 6000)));
         let exited = Arc::new(AtomicBool::new(false));
+        let visible = Arc::new(AtomicBool::new(true));
         {
             let parser = parser.clone();
             let exited = exited.clone();
+            let visible = visible.clone();
             let writer = writer.clone();
             let context = context.clone();
             std::thread::spawn(move || {
@@ -104,7 +112,14 @@ impl Terminal {
                                 }
                             }
                             drop(parser);
-                            context.request_repaint();
+                            if visible.load(Ordering::Relaxed) {
+                                context.request_repaint();
+                            } else {
+                                // Hidden: a slow refresh is enough, and many terminals streaming
+                                // at once no longer redraw the whole window for every chunk.
+                                context
+                                    .request_repaint_after(std::time::Duration::from_millis(500));
+                            }
                         }
                     }
                 }
@@ -113,6 +128,7 @@ impl Terminal {
             });
         }
         Ok(Self {
+            visible,
             parser,
             writer,
             master: pair.master,
@@ -172,6 +188,19 @@ impl Terminal {
         self.snapshot.clone().or_else(|| self.live_selected_text())
     }
 
+    /// Forget that this terminal was drawn; [`Terminal::show`] marks it again.
+    pub fn set_hidden(&self) {
+        self.visible.store(false, Ordering::Relaxed);
+    }
+
+    /// Everything the terminal still remembers, from the oldest scrollback line to the screen, for
+    /// copying more than fits on one screen.
+    pub fn all_text(&self) -> String {
+        let mut parser = self.parser.lock().unwrap();
+        let (rows, cols) = (self.size.0, self.size.1);
+        all_text_of(&mut parser, rows, cols)
+    }
+
     /// The text currently on the screen, for noticing a dev server's address.
     pub fn screen_text(&self) -> String {
         self.parser.lock().unwrap().screen().contents()
@@ -223,6 +252,7 @@ impl Terminal {
 
     /// Draw the grid and forward keyboard input. Returns true while the terminal has focus.
     pub fn show(&mut self, ui: &mut egui::Ui, request_focus: bool) -> bool {
+        self.visible.store(true, Ordering::Relaxed);
         let font = egui::FontId::monospace(13.5);
         let (cell_height, cell_width) =
             ui.fonts_mut(|fonts| (fonts.row_height(&font), fonts.glyph_width(&font, 'M')));
@@ -303,9 +333,19 @@ impl Terminal {
             let events = ui.input(|input| input.events.clone());
             for event in events {
                 match event {
-                    Event::Text(text) | Event::Paste(text) => {
+                    Event::Text(text) => {
                         self.follow_output();
                         self.send(text.as_bytes());
+                    }
+                    Event::Paste(text) => {
+                        self.follow_output();
+                        let bracketed = self
+                            .parser
+                            .lock()
+                            .map(|parser| parser.screen().bracketed_paste())
+                            .unwrap_or(false);
+                        let bytes = paste_bytes(&text, bracketed);
+                        self.send(&bytes);
                     }
                     // egui turns Ctrl+C into Copy and Ctrl+X into Cut, so a terminal must
                     // translate them back: copy a selection, otherwise interrupt the program.
@@ -543,44 +583,133 @@ fn push_cell(
 }
 
 pub fn key_bytes(key: Key, modifiers: Modifiers) -> Option<Vec<u8>> {
-    let sequence: &[u8] = match key {
-        Key::Enter => b"\r",
-        Key::Backspace => b"\x7f",
-        Key::Tab => {
-            if modifiers.shift {
-                b"\x1b[Z"
-            } else {
-                b"\t"
-            }
-        }
-        Key::Escape => b"\x1b",
-        Key::ArrowUp => b"\x1b[A",
-        Key::ArrowDown => b"\x1b[B",
-        Key::ArrowRight => b"\x1b[C",
-        Key::ArrowLeft => b"\x1b[D",
-        Key::Home => b"\x1b[H",
-        Key::End => b"\x1b[F",
-        Key::Delete => b"\x1b[3~",
-        Key::PageUp => b"\x1b[5~",
-        Key::PageDown => b"\x1b[6~",
-        Key::Insert => b"\x1b[2~",
-        _ => {
-            // Ctrl+letter sends the matching control character (Ctrl+C is 0x03).
-            if modifiers.ctrl
-                && !modifiers.alt
-                && let Some(name) = key
-                    .name()
-                    .chars()
-                    .next()
-                    .filter(|c| c.is_ascii_alphabetic())
-                && key.name().len() == 1
-            {
-                return Some(vec![(name.to_ascii_uppercase() as u8) - b'@']);
-            }
-            return None;
+    // xterm's number for held modifiers: 1, plus 1 for Shift, 2 for Alt and 4 for Ctrl.
+    let param =
+        1 + u8::from(modifiers.shift) + 2 * u8::from(modifiers.alt) + 4 * u8::from(modifiers.ctrl);
+    let modified = param > 1;
+    // Arrows, Home and End: `ESC [ A`, or `ESC [ 1 ; 5 A` with Ctrl held.
+    let cursor = |letter: char| -> Vec<u8> {
+        if modified {
+            format!("\x1b[1;{param}{letter}").into_bytes()
+        } else {
+            format!("\x1b[{letter}").into_bytes()
         }
     };
-    Some(sequence.to_vec())
+    // Delete, Insert, Page keys and F5 and up: `ESC [ 3 ~`, or `ESC [ 3 ; 5 ~`.
+    let tilde = |number: u8| -> Vec<u8> {
+        if modified {
+            format!("\x1b[{number};{param}~").into_bytes()
+        } else {
+            format!("\x1b[{number}~").into_bytes()
+        }
+    };
+    // F1 to F4: `ESC O P`, or `ESC [ 1 ; 2 P` with a modifier.
+    let function = |letter: char| -> Vec<u8> {
+        if modified {
+            format!("\x1b[1;{param}{letter}").into_bytes()
+        } else {
+            format!("\x1bO{letter}").into_bytes()
+        }
+    };
+    Some(match key {
+        // Shift or Alt with Enter is "a new line, not a submit" for coding agents (ESC then CR).
+        Key::Enter if modifiers.shift || modifiers.alt => b"\x1b\r".to_vec(),
+        Key::Enter => b"\r".to_vec(),
+        Key::Backspace if modifiers.ctrl => vec![0x17],
+        Key::Backspace if modifiers.alt => b"\x1b\x7f".to_vec(),
+        Key::Backspace => b"\x7f".to_vec(),
+        Key::Tab if modifiers.shift => b"\x1b[Z".to_vec(),
+        Key::Tab => b"\t".to_vec(),
+        Key::Escape => b"\x1b".to_vec(),
+        Key::ArrowUp => cursor('A'),
+        Key::ArrowDown => cursor('B'),
+        Key::ArrowRight => cursor('C'),
+        Key::ArrowLeft => cursor('D'),
+        Key::Home => cursor('H'),
+        Key::End => cursor('F'),
+        Key::Insert => tilde(2),
+        Key::Delete => tilde(3),
+        Key::PageUp => tilde(5),
+        Key::PageDown => tilde(6),
+        Key::F1 => function('P'),
+        Key::F2 => function('Q'),
+        Key::F3 => function('R'),
+        Key::F4 => function('S'),
+        Key::F5 => tilde(15),
+        Key::F6 => tilde(17),
+        Key::F7 => tilde(18),
+        Key::F8 => tilde(19),
+        Key::F9 => tilde(20),
+        Key::F10 => tilde(21),
+        Key::F11 => tilde(23),
+        Key::F12 => tilde(24),
+        _ => {
+            let letter = (key.name().len() == 1)
+                .then(|| key.name().chars().next())
+                .flatten()
+                .filter(|c| c.is_ascii_alphabetic())?;
+            if modifiers.ctrl && !modifiers.alt {
+                // Ctrl+letter sends the matching control character (Ctrl+C is 0x03).
+                vec![(letter.to_ascii_uppercase() as u8) - b'@']
+            } else if modifiers.alt && !modifiers.ctrl {
+                // Alt+letter is ESC and then the letter (word movement, agent shortcuts).
+                let letter = if modifiers.shift {
+                    letter.to_ascii_uppercase()
+                } else {
+                    letter.to_ascii_lowercase()
+                };
+                vec![0x1b, letter as u8]
+            } else {
+                return None;
+            }
+        }
+    })
+}
+
+/// What a paste sends. A program that asked for bracketed paste (coding agents do) gets the text
+/// between `ESC [ 200 ~` and `ESC [ 201 ~`, so a pasted newline is text and not Enter; for any other
+/// program the line breaks become carriage returns, which is what Enter sends.
+pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
+    let text = text.replace("\r\n", "\n");
+    if bracketed {
+        let mut bytes = b"\x1b[200~".to_vec();
+        bytes.extend_from_slice(text.as_bytes());
+        bytes.extend_from_slice(b"\x1b[201~");
+        bytes
+    } else {
+        text.replace('\n', "\r").into_bytes()
+    }
+}
+
+/// The scrollback and the screen of `parser` as plain text, one line per row with trailing blanks
+/// and trailing empty lines removed. The view is put back where it was.
+fn all_text_of(parser: &mut vt100::Parser, rows: u16, cols: u16) -> String {
+    let rows = usize::from(rows).max(1);
+    let saved = parser.screen().scrollback();
+    parser.screen_mut().set_scrollback(usize::MAX);
+    let total = parser.screen().scrollback();
+    let mut lines: Vec<String> = Vec::new();
+    // At scrollback `offset` the screen shows lines `total - offset ..` of the whole history.
+    let mut offset = total;
+    let mut next_line: usize = 0;
+    loop {
+        parser.screen_mut().set_scrollback(offset);
+        let first = total - offset;
+        let skip = next_line.saturating_sub(first);
+        let chunk: Vec<String> = parser.screen().rows(0, cols).collect();
+        lines.extend(chunk.into_iter().skip(skip));
+        next_line = first + rows;
+        if offset == 0 {
+            break;
+        }
+        offset = offset.saturating_sub(rows);
+    }
+    parser.screen_mut().set_scrollback(saved);
+    let mut text: Vec<&str> = lines.iter().map(|line| line.trim_end()).collect();
+    while text.last().is_some_and(|line| line.is_empty()) {
+        text.pop();
+    }
+    text.join("\n")
 }
 
 /// Standard xterm colors; the first sixteen are softened to sit well on a dark or light editor.
@@ -691,7 +820,46 @@ mod tests {
             key_bytes(Key::Delete, Modifiers::NONE),
             Some(b"\x1b[3~".to_vec())
         );
-        assert_eq!(key_bytes(Key::F5, Modifiers::NONE), None);
+        assert_eq!(
+            key_bytes(Key::F5, Modifiers::NONE),
+            Some(b"\x1b[15~".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::F1, Modifiers::NONE),
+            Some(b"\x1bOP".to_vec())
+        );
+        assert_eq!(key_bytes(Key::A, Modifiers::NONE), None);
+        // Modified keys: the xterm forms that shells and agents understand.
+        assert_eq!(
+            key_bytes(Key::ArrowRight, Modifiers::CTRL),
+            Some(b"\x1b[1;5C".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::ArrowLeft, Modifiers::ALT),
+            Some(b"\x1b[1;3D".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::Delete, Modifiers::SHIFT),
+            Some(b"\x1b[3;2~".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::Enter, Modifiers::SHIFT),
+            Some(b"\x1b\r".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::Enter, Modifiers::ALT),
+            Some(b"\x1b\r".to_vec())
+        );
+        assert_eq!(key_bytes(Key::Backspace, Modifiers::CTRL), Some(vec![0x17]));
+        assert_eq!(key_bytes(Key::P, Modifiers::ALT), Some(b"\x1bp".to_vec()));
+        // AltGr (Ctrl and Alt together) is a way to type a character, not a shortcut.
+        assert_eq!(key_bytes(Key::Q, Modifiers::CTRL | Modifiers::ALT), None);
+        // A paste is wrapped when the program asked for that, and otherwise typed with Enter.
+        assert_eq!(
+            paste_bytes("a\nb", true),
+            b"\x1b[200~a\nb\x1b[201~".to_vec()
+        );
+        assert_eq!(paste_bytes("a\r\nb\nc", false), b"a\rb\rc".to_vec());
     }
 
     #[test]
@@ -710,6 +878,29 @@ mod tests {
         assert_eq!(indexed(231, true), Color32::from_rgb(255, 255, 255));
         assert_eq!(indexed(232, true), Color32::from_rgb(8, 8, 8));
         assert_eq!(indexed(255, true), Color32::from_rgb(238, 238, 238));
+    }
+
+    #[test]
+    fn the_whole_history_is_copied_in_order_without_gaps_or_repeats() {
+        let mut parser = vt100::Parser::new(5, 20, 100);
+        for number in 1..=23 {
+            parser.process(format!("line {number}\r\n").as_bytes());
+        }
+        parser.process(b"last");
+        // Scroll the view away from the bottom: copying must not depend on, or disturb, it.
+        parser.screen_mut().set_scrollback(3);
+        let text = all_text_of(&mut parser, 5, 20);
+        let expected: Vec<String> = (1..=23)
+            .map(|number| format!("line {number}"))
+            .chain(std::iter::once("last".to_string()))
+            .collect();
+        assert_eq!(text, expected.join("\n"));
+        assert_eq!(parser.screen().scrollback(), 3);
+        // Less than a screen of text, and an empty terminal.
+        let mut small = vt100::Parser::new(5, 20, 100);
+        small.process(b"a\r\nb");
+        assert_eq!(all_text_of(&mut small, 5, 20), "a\nb");
+        assert_eq!(all_text_of(&mut vt100::Parser::new(5, 20, 100), 5, 20), "");
     }
 
     /// Needs a console session (ConPTY), so it is run by hand: `cargo test -- --ignored`.

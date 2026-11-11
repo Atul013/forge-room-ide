@@ -78,11 +78,90 @@ impl Hunk {
     }
 }
 
+/// How long a Git process may run: reads are quick, so a read that is still going after half a
+/// minute is stuck (a stalled share, a hung helper); changes and network work get far longer.
+fn time_limit(args: &[&str]) -> std::time::Duration {
+    const READS: &[&str] = &[
+        "status",
+        "diff",
+        "log",
+        "blame",
+        "show",
+        "branch",
+        "stash",
+        "rev-parse",
+        "ls-files",
+        "for-each-ref",
+        "tag",
+        "check-ref-format",
+        "rev-list",
+        "cat-file",
+    ];
+    let seconds = match args.first() {
+        Some(name) if READS.contains(name) => 30,
+        _ => 15 * 60,
+    };
+    std::time::Duration::from_secs(seconds)
+}
+
+/// `command.output()` with a deadline: a process that outlives it is killed and reported.
+fn output_within(
+    command: &mut Command,
+    limit: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut out_pipe = child.stdout.take();
+    let mut err_pipe = child.stderr.take();
+    let out = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(pipe) = &mut out_pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let err = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(pipe) = &mut err_pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "git took too long and was stopped",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    })
+}
+
 pub fn run(root: &Path, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new("git");
     // Credentials come from a helper (e.g. Git Credential Manager); never block on a console prompt.
+    // `core.fsmonitor` is switched off because a repository's own config could name a program there
+    // that Git would then run on every `status`.
     command
         .current_dir(root)
+        .args(["-c", "core.fsmonitor=false"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         // Reads such as `git status` otherwise refresh the index and take its lock, which could
@@ -93,7 +172,7 @@ pub fn run(root: &Path, args: &[&str]) -> Result<String, String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash from a GUI app
     }
-    let output = command.output().map_err(|error| {
+    let output = output_within(&mut command, time_limit(args)).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             "Git is not installed or not on PATH".to_string()
         } else {
@@ -110,6 +189,15 @@ pub fn run(root: &Path, args: &[&str]) -> Result<String, String> {
             message
         })
     }
+}
+
+/// The top folder of the repository that `root` is inside, when that is a different folder (the
+/// user opened a subfolder of a bigger repository). Git reports paths from the top folder, so every
+/// Git command has to run from there.
+pub fn toplevel(root: &Path) -> Option<std::path::PathBuf> {
+    let out = run(root, &["rev-parse", "--show-toplevel"]).ok()?;
+    let top = crate::tabs::normalize(Path::new(out.trim()));
+    (top != crate::tabs::normalize(root)).then_some(top)
 }
 
 pub fn is_repo(root: &Path) -> bool {
@@ -252,7 +340,7 @@ pub fn commit(root: &Path, message: &str) -> Result<String, String> {
 
 /// Unified diff of one file, staged (`--cached`) or working tree.
 pub fn diff(root: &Path, path: &str, staged: bool) -> Result<String, String> {
-    let mut args = vec!["diff", "--no-color"];
+    let mut args = vec!["diff", "--no-color", "--no-ext-diff", "--no-textconv"];
     if staged {
         args.push("--cached");
     }
@@ -262,10 +350,174 @@ pub fn diff(root: &Path, path: &str, staged: bool) -> Result<String, String> {
 }
 
 /// Changed regions of a tracked file compared to HEAD (staged and unstaged together).
+/// Like [`run`], with `input` written to the command's standard input.
+fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut command = Command::new("git");
+    command
+        .current_dir(root)
+        .args(["-c", "core.fsmonitor=false"])
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("could not run git: {error}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // A write error shows up as git's own complaint about the patch below.
+        let _ = stdin.write_all(input);
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("could not run git: {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if message.is_empty() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            message
+        })
+    }
+}
+
+/// The raw bytes Git prints for `args`. A patch must reach `git apply` unchanged, which text
+/// conversion would not guarantee for a file that is not UTF-8.
+fn run_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let mut command = Command::new("git");
+    command
+        .current_dir(root)
+        .args(["-c", "core.fsmonitor=false"])
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let output = output_within(&mut command, time_limit(args))
+        .map_err(|error| format!("could not run git: {error}"))?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// The change of `path` that is not staged yet (working tree against the index) which covers
+/// `line` (1-based, in the file as it is now), as a patch that applies on its own. A deleted
+/// block is covered by the line just above it, the line the gutter marks it on.
+///
+/// It refuses what could do more than the clicked bar shows: a file that is new or deleted as a
+/// whole (reverting would delete it for good), and a change that overlaps something already staged
+/// (the gutter draws staged and unstaged changes together, so the bar might mean another change).
+pub fn unstaged_hunk_patch(root: &Path, path: &str, line: usize) -> Result<Vec<u8>, String> {
+    let diff = run_bytes(
+        root,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-U0",
+            "--",
+            path,
+        ],
+    )?;
+    let mut header: Vec<u8> = Vec::new();
+    let mut chosen: Option<(Vec<u8>, Hunk)> = None;
+    let mut current: Option<(Vec<u8>, Option<Hunk>)> = None;
+    let finish = |current: &mut Option<(Vec<u8>, Option<Hunk>)>,
+                  chosen: &mut Option<(Vec<u8>, Hunk)>| {
+        if let Some((text, Some(hunk))) = current.take()
+            && chosen.is_none()
+            && hunk.covers(line)
+        {
+            *chosen = Some((text, hunk));
+        }
+    };
+    for piece in diff.split_inclusive(|byte| *byte == b'\n') {
+        if piece.starts_with(b"@@ ") {
+            finish(&mut current, &mut chosen);
+            // The header line is plain ASCII, so lossy text is exact here.
+            let hunk = parse_hunks(&String::from_utf8_lossy(piece))
+                .into_iter()
+                .next();
+            current = Some((piece.to_vec(), hunk));
+        } else if let Some((body, _)) = &mut current {
+            body.extend_from_slice(piece);
+        } else {
+            header.extend_from_slice(piece);
+        }
+    }
+    finish(&mut current, &mut chosen);
+    let (hunk_text, hunk) =
+        chosen.ok_or_else(|| "There is no unstaged change at this line".to_string())?;
+    let header_text = String::from_utf8_lossy(&header);
+    if header_text.contains("\nnew file mode") || header_text.contains("--- /dev/null") {
+        return Err("This file is new: stage or discard it as a whole in Source Control".into());
+    }
+    if header_text.contains("\ndeleted file mode") || header_text.contains("+++ /dev/null") {
+        return Err(
+            "This file is deleted: restore or stage it as a whole in Source Control".into(),
+        );
+    }
+    // The change must be exactly one of the changes the gutter draws (from the diff against HEAD).
+    let same = file_hunks(root, path).iter().any(|shown| {
+        shown.covers(line)
+            && shown.start == hunk.start
+            && shown.len == hunk.len
+            && shown.kind == hunk.kind
+    });
+    if !same {
+        return Err(
+            "This change overlaps something already staged: use Source Control for it".into(),
+        );
+    }
+    let mut patch = header;
+    patch.extend_from_slice(&hunk_text);
+    Ok(patch)
+}
+
+/// Stage the single change at `line` of `path`, leaving the rest of the file unstaged.
+pub fn stage_hunk(root: &Path, path: &str, line: usize) -> Result<(), String> {
+    let patch = unstaged_hunk_patch(root, path, line)?;
+    run_with_input(root, &["apply", "--cached", "--unidiff-zero", "-"], &patch).map(|_| ())
+}
+
+/// Throw away the single unstaged change at `line` of `path` in the working tree.
+pub fn revert_hunk(root: &Path, path: &str, line: usize) -> Result<(), String> {
+    let patch = unstaged_hunk_patch(root, path, line)?;
+    run_with_input(root, &["apply", "--reverse", "--unidiff-zero", "-"], &patch).map(|_| ())
+}
+
 pub fn file_hunks(root: &Path, path: &str) -> Vec<Hunk> {
-    run(root, &["diff", "HEAD", "--no-color", "-U0", "--", path])
-        .map(|output| parse_hunks(&output))
-        .unwrap_or_default()
+    run(
+        root,
+        &[
+            "diff",
+            "HEAD",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-U0",
+            "--",
+            path,
+        ],
+    )
+    .map(|output| parse_hunks(&output))
+    .unwrap_or_default()
 }
 
 pub fn parse_hunks(diff: &str) -> Vec<Hunk> {
@@ -379,6 +631,37 @@ pub fn checkout(root: &Path, name: &str, remote: bool) -> Result<(), String> {
 pub fn create_branch(root: &Path, name: &str) -> Result<(), String> {
     check_branch_name(root, name)?;
     run(root, &["checkout", "-b", name]).map(|_| ())
+}
+
+/// Every tag, newest first.
+pub fn tags(root: &Path) -> Result<Vec<String>, String> {
+    run(root, &["tag", "--list", "--sort=-creatordate"]).map(|out| {
+        out.lines()
+            .map(str::to_string)
+            .filter(|t| !t.is_empty())
+            .collect()
+    })
+}
+
+fn check_tag_name(root: &Path, name: &str) -> Result<(), String> {
+    if name.is_empty() || name.starts_with('-') {
+        return Err(format!("\"{name}\" is not a valid tag name"));
+    }
+    run(root, &["check-ref-format", &format!("refs/tags/{name}")])
+        .map(|_| ())
+        .map_err(|_| format!("\"{name}\" is not a valid tag name"))
+}
+
+/// A lightweight tag on the current commit.
+pub fn create_tag(root: &Path, name: &str) -> Result<(), String> {
+    check_tag_name(root, name)?;
+    run(root, &["tag", name]).map(|_| ())
+}
+
+/// Delete a local tag. The message carries the commit it pointed at, so it can be made again.
+pub fn delete_tag(root: &Path, name: &str) -> Result<String, String> {
+    check_tag_name(root, name)?;
+    run(root, &["tag", "-d", name]).map(|out| first_line(&out, "Deleted tag"))
 }
 
 /// Refuses names Git itself would reject, and anything that could be read as an option
@@ -670,6 +953,18 @@ pub fn stash_pop(root: &Path, index: usize) -> Result<String, String> {
     run(root, &["stash", "pop", &reference]).map(|out| first_line(&out, "Applied stash"))
 }
 
+/// Apply a stash and keep it in the list (unlike a pop, a conflict cannot lose it).
+pub fn stash_apply(root: &Path, index: usize) -> Result<String, String> {
+    let reference = format!("stash@{{{index}}}");
+    run(root, &["stash", "apply", &reference]).map(|out| first_line(&out, "Applied stash"))
+}
+
+/// Drop a stash. The message names the commit that held it, which `git stash store` can bring back.
+pub fn stash_drop(root: &Path, index: usize) -> Result<String, String> {
+    let reference = format!("stash@{{{index}}}");
+    run(root, &["stash", "drop", &reference]).map(|out| first_line(&out, "Dropped stash"))
+}
+
 /// Undo the last commit but keep its changes staged.
 pub fn undo_last_commit(root: &Path) -> Result<(), String> {
     run(root, &["reset", "--soft", "HEAD~1"]).map(|_| ())
@@ -771,7 +1066,18 @@ pub fn file_log(root: &Path, path: &str, limit: usize) -> Result<Vec<CommitInfo>
 
 /// Full details of one commit: message, files changed and the patch.
 pub fn show(root: &Path, hash: &str) -> Result<String, String> {
-    run(root, &["show", "--no-color", "--stat", "--patch", hash])
+    run(
+        root,
+        &[
+            "show",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--stat",
+            "--patch",
+            hash,
+        ],
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -859,6 +1165,8 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         run(&dir, &["init", "-q"]).unwrap();
+        // Byte-exact fixtures must not inherit a Windows-wide autocrlf setting.
+        run(&dir, &["config", "core.autocrlf", "false"]).unwrap();
         dir
     }
 
@@ -955,6 +1263,78 @@ mod tests {
         assert!(!git(&["ls-files", "-u"]).unwrap().contains("gone.txt"));
     }
 
+    #[test]
+    fn tags_can_be_made_listed_and_deleted_and_bad_names_are_refused() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        create_tag(&dir, "v1").unwrap();
+        create_tag(&dir, "v2").unwrap();
+        assert!(
+            create_tag(&dir, "v1").is_err(),
+            "an existing tag is not overwritten"
+        );
+        for bad in ["", "-d", "a b", "x..y", "--force"] {
+            assert!(create_tag(&dir, bad).is_err(), "{bad:?}");
+            assert!(delete_tag(&dir, bad).is_err(), "{bad:?}");
+        }
+        let mut found = tags(&dir).unwrap();
+        found.sort();
+        assert_eq!(found, vec!["v1", "v2"]);
+        assert!(delete_tag(&dir, "v1").unwrap().contains("v1"));
+        assert_eq!(tags(&dir).unwrap(), vec!["v2"]);
+        assert!(delete_tag(&dir, "v1").is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_subfolder_of_a_repository_reports_the_top_folder() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        assert_eq!(
+            toplevel(&dir),
+            None,
+            "the top folder itself is not a subfolder"
+        );
+        assert_eq!(toplevel(&sub), Some(crate::tabs::normalize(&dir)));
+        // Commands run from the top folder see paths the way status reports them.
+        fs::write(sub.join("n.txt"), "x").unwrap();
+        let top = toplevel(&sub).unwrap();
+        stage(&top, &["sub/n.txt".to_string()]).unwrap();
+        assert!(
+            status(&top)
+                .unwrap()
+                .changes
+                .iter()
+                .any(|c| c.path == "sub/n.txt" && c.is_staged())
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_stash_can_be_applied_and_kept_or_dropped() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        fs::write(dir.join("a.txt"), "changed\n").unwrap();
+        stash_push(&dir, "work").unwrap();
+        assert_eq!(stash_list(&dir).len(), 1);
+        stash_apply(&dir, 0).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "changed\n");
+        // Applied, not popped: still in the list.
+        assert_eq!(stash_list(&dir).len(), 1);
+        stash_drop(&dir, 0).unwrap();
+        assert!(stash_list(&dir).is_empty());
+        assert!(stash_drop(&dir, 0).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
     /// A repo with one commit on the default branch; returns the directory, a git runner and the
     /// name of the default branch.
     fn merge_fixture() -> (PathBuf, String) {
@@ -994,6 +1374,107 @@ mod tests {
         ];
         full.extend_from_slice(args);
         run(dir, &full).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+    }
+
+    #[test]
+    fn single_changes_can_be_staged_or_reverted_leaving_the_rest() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        let lines: Vec<String> = (1..=12).map(|n| format!("line {n}")).collect();
+        fs::write(dir.join("f.txt"), lines.join("\n") + "\n").unwrap();
+        g(&dir, &["add", "."]);
+        g(&dir, &["commit", "-q", "-m", "twelve lines"]);
+        // Three separate changes: modify line 2, delete line 6, add a line after line 10.
+        let mut edited = lines.clone();
+        edited[1] = "line 2 changed".into();
+        edited.remove(5);
+        edited.insert(9, "inserted".into());
+        fs::write(dir.join("f.txt"), edited.join("\n") + "\n").unwrap();
+
+        // Stage only the first change: the index holds it, the other two are still unstaged.
+        stage_hunk(&dir, "f.txt", 2).unwrap();
+        let staged = g(&dir, &["diff", "--cached", "-U0", "--", "f.txt"]);
+        assert!(staged.contains("+line 2 changed") && !staged.contains("inserted"));
+        assert!(!staged.contains("-line 6"));
+        let unstaged = g(&dir, &["diff", "-U0", "--", "f.txt"]);
+        assert!(!unstaged.contains("line 2 changed") && unstaged.contains("+inserted"));
+        // Nothing is left to stage there now.
+        assert!(
+            stage_hunk(&dir, "f.txt", 2)
+                .unwrap_err()
+                .contains("no unstaged change")
+        );
+
+        // Revert the inserted line: it leaves the file, the others stay.
+        revert_hunk(&dir, "f.txt", 10).unwrap();
+        let text = fs::read_to_string(dir.join("f.txt"))
+            .unwrap()
+            .replace("\r\n", "\n");
+        assert!(!text.contains("inserted"));
+        assert!(text.contains("line 2 changed"));
+        assert!(!text.contains("line 6"), "the deletion is still there");
+
+        // A deleted block is covered by the line just above it, as the gutter marks it.
+        stage_hunk(&dir, "f.txt", 5).unwrap();
+        assert!(g(&dir, &["diff", "--cached", "-U0", "--", "f.txt"]).contains("-line 6"));
+        assert!(unstaged_hunk_patch(&dir, "f.txt", 1).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_new_file_or_an_overlapping_staged_change_is_never_staged_or_reverted_by_a_bar() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        // An intent-to-add file: reverting its only change would delete the file for good.
+        fs::write(dir.join("new.txt"), "one\ntwo\n").unwrap();
+        g(&dir, &["add", "-N", "new.txt"]);
+        assert!(revert_hunk(&dir, "new.txt", 1).unwrap_err().contains("new"));
+        assert!(stage_hunk(&dir, "new.txt", 1).is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join("new.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "one\ntwo\n"
+        );
+
+        // A staged insertion with an unstaged deletion next to it: the bar on the insertion must not
+        // act on the deletion.
+        fs::write(dir.join("o.txt"), "a\nb\nc\n").unwrap();
+        g(&dir, &["add", "o.txt"]);
+        g(&dir, &["commit", "-q", "-m", "o"]);
+        fs::write(dir.join("o.txt"), "a\nX\nb\nc\n").unwrap();
+        g(&dir, &["add", "o.txt"]);
+        fs::write(dir.join("o.txt"), "a\nX\n").unwrap();
+        let before = fs::read_to_string(dir.join("o.txt")).unwrap();
+        assert!(
+            revert_hunk(&dir, "o.txt", 2)
+                .unwrap_err()
+                .contains("overlaps")
+        );
+        assert!(stage_hunk(&dir, "o.txt", 2).is_err());
+        assert_eq!(fs::read_to_string(dir.join("o.txt")).unwrap(), before);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_reverted_change_in_a_file_that_is_not_utf8_comes_back_byte_for_byte() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        // Windows-1252 text: 0xE9 is an e-acute and is not valid UTF-8 on its own.
+        let original: Vec<u8> = b"keep\ncaf\xe9\nend\n".to_vec();
+        fs::write(dir.join("latin.txt"), &original).unwrap();
+        g(&dir, &["add", "."]);
+        g(&dir, &["commit", "-q", "-m", "latin"]);
+        fs::write(dir.join("latin.txt"), b"keep\nend\n").unwrap();
+        revert_hunk(&dir, "latin.txt", 1).unwrap();
+        assert_eq!(fs::read(dir.join("latin.txt")).unwrap(), original);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

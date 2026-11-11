@@ -11,6 +11,62 @@ pub struct Settings {
     /// Folders opened most recently, newest first.
     #[serde(default)]
     pub recent_folders: Vec<String>,
+    /// Size of the editor text relative to the default (1.0). Missing or odd values mean 1.0.
+    #[serde(default)]
+    pub editor_scale: Option<f32>,
+    /// Save file tabs automatically once their text stops changing.
+    #[serde(default)]
+    pub auto_save: Option<bool>,
+    /// Folders the user trusts: Git and project tools only run in these (or below them).
+    #[serde(default)]
+    pub trusted_folders: Vec<String>,
+}
+
+fn trust_key(path: &str) -> String {
+    path.replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+/// Whether `folder` is one of the trusted folders or inside one (compared the way Windows paths
+/// are: without regard to case or the direction of slashes).
+pub fn is_trusted(trusted: &[String], folder: &str) -> bool {
+    let folder = trust_key(folder);
+    trusted.iter().any(|known| {
+        let known = trust_key(known);
+        !known.is_empty() && (folder == known || folder.starts_with(&format!("{known}\\")))
+    })
+}
+
+/// Add `folder` to the trusted ones (once).
+pub fn trust(trusted: &mut Vec<String>, folder: &str) {
+    if !is_trusted(trusted, folder)
+        || !trusted
+            .iter()
+            .any(|known| trust_key(known) == trust_key(folder))
+    {
+        trusted.retain(|known| trust_key(known) != trust_key(folder));
+        trusted.push(folder.to_string());
+    }
+}
+
+/// Smallest and largest editor text scale.
+pub const MIN_SCALE: f32 = 0.6;
+pub const MAX_SCALE: f32 = 2.5;
+
+/// A scale from a settings file: anything that is not a sane number falls back to 1.0.
+pub fn clean_scale(value: Option<f32>) -> f32 {
+    match value {
+        Some(scale) if scale.is_finite() => scale.clamp(MIN_SCALE, MAX_SCALE),
+        _ => 1.0,
+    }
+}
+
+/// The scale one step (`delta`, in tenths of the default size) from `current`, rounded to a tenth
+/// and kept inside the allowed range.
+pub fn step_scale(current: f32, delta: i32) -> f32 {
+    let tenths = (current * 10.0).round() as i32 + delta;
+    (tenths as f32 / 10.0).clamp(MIN_SCALE, MAX_SCALE)
 }
 
 /// How many recent folders are kept.
@@ -92,6 +148,31 @@ mod tests {
     }
 
     #[test]
+    fn the_editor_scale_steps_by_tenths_inside_its_limits() {
+        assert_eq!(step_scale(1.0, 1), 1.1);
+        assert_eq!(step_scale(1.0, -1), 0.9);
+        assert_eq!(step_scale(1.0, 3), 1.3);
+        // Rounding: repeated float steps never drift.
+        let mut scale = 1.0;
+        for _ in 0..7 {
+            scale = step_scale(scale, 1);
+        }
+        assert_eq!(scale, 1.7);
+        // The ends hold.
+        assert_eq!(step_scale(MAX_SCALE, 1), MAX_SCALE);
+        assert_eq!(step_scale(MIN_SCALE, -1), MIN_SCALE);
+        // A settings file may hold anything.
+        assert_eq!(clean_scale(None), 1.0);
+        assert_eq!(clean_scale(Some(f32::NAN)), 1.0);
+        assert_eq!(clean_scale(Some(f32::INFINITY)), 1.0);
+        assert_eq!(clean_scale(Some(99.0)), MAX_SCALE);
+        assert_eq!(clean_scale(Some(-3.0)), MIN_SCALE);
+        assert_eq!(clean_scale(Some(1.4)), 1.4);
+        let parsed: Settings = serde_json::from_str(r#"{"editor_scale":1.5}"#).unwrap();
+        assert_eq!(parsed.editor_scale, Some(1.5));
+    }
+
+    #[test]
     fn recent_folders_are_newest_first_without_duplicates_and_capped() {
         let mut recent = Vec::new();
         remember_folder(&mut recent, r"C:\a");
@@ -105,5 +186,19 @@ mod tests {
         }
         assert_eq!(recent.len(), MAX_RECENT_FOLDERS);
         assert_eq!(recent[0], r"C:\folder29");
+    }
+
+    #[test]
+    fn a_trusted_folder_covers_what_is_inside_it_and_nothing_next_to_it() {
+        let mut trusted = Vec::new();
+        assert!(!is_trusted(&trusted, r"C:\work\app"));
+        trust(&mut trusted, r"C:\Work\App");
+        trust(&mut trusted, r"c:/work/app/");
+        assert_eq!(trusted.len(), 1);
+        assert!(is_trusted(&trusted, r"C:\work\app"));
+        assert!(is_trusted(&trusted, r"c:\WORK\app\sub\deeper"));
+        assert!(!is_trusted(&trusted, r"C:\work\application"));
+        assert!(!is_trusted(&trusted, r"C:\work"));
+        assert!(!is_trusted(&[String::new()], r"C:\work"));
     }
 }

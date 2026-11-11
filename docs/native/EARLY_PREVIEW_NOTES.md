@@ -6,15 +6,24 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 
 ## Since alpha.2 (source only, not in a release yet)
 
+- AI Assistant Ask can run the installed Codex CLI against the trusted open folder in read-only mode. The panel offers Codex/OpenAI, Ollama and LM Studio through Codex CLI and an optional model ID. Its sign-in button opens a new integrated terminal and runs `codex login`; Codex handles the browser login. This is a one-shot Ask path; Plan, Build, approval UI, streaming and provider-native account management are still to be built.
 - Files keep their line endings (LF, CRLF; mixed files are kept byte for byte), UTF-8 BOM and UTF-16 LE/BE encoding when saved, and the status bar shows the real encoding. Saves are atomic.
 - Editor typing: Enter keeps the indentation and opens bracket blocks, Tab and Shift+Tab indent and unindent, brackets and quotes are completed in pairs (not in prose files, and not a single quote in Rust), and Ctrl+/ comments lines, Alt+Up/Down moves them, Shift+Alt+Up/Down duplicates them, Ctrl+Shift+K deletes them.
-- Find and Search in Files: whole word and regular expressions; invalid patterns are reported.
+- Find and Search in Files: whole word and regular expressions; invalid patterns are reported. Search has a Replace with box and Replace All (literal text, with a confirmation): each file keeps its encoding and line endings, files open with unsaved changes are skipped and listed.
 - Quick Open and Search in Files follow `.gitignore` in a repository.
-- Explorer: rename files and folders. Tabs: Ctrl+Shift+T reopens the last closed tab; View: Close Saved Tabs. File > Open Recent.
-- Source Control: merge a branch, abort a merge, delete a branch; Changes and History pages; Git status is read on a worker thread.
+- File: Toggle Auto Save (off by default) saves file tabs once you stop typing for a moment; a file that changed on disk is left for the usual conflict prompt.
+- Explorer: Copy relative path and Reveal in File Explorer (also palette commands for the active file); rename files and folders; Delete… moves them to the Recycle Bin (fixed local drives only, never links, never the open folder; saved tabs close, tabs with unsaved changes stay). Tabs: Ctrl+Shift+T reopens the last closed tab; View: Close Saved Tabs. File > Open Recent.
+- Source Control: merge a branch, abort a merge, delete a branch, apply (and keep) or drop the latest stash, create and delete tags from the command palette; Changes and History pages; Git status is read on a worker thread.
 - Syntax colours for TypeScript, JSX, TOML, INI and dotenv files (borrowed from the closest bundled syntax).
+- Editing commands: Ctrl+D (select next occurrence), palette commands for upper/lower case, sorting and de-duplicating lines, trimming trailing whitespace and joining lines; Ctrl+= / Ctrl+- / Ctrl+0 for the editor font size (remembered); Ctrl+Shift+\ jumps to the matching bracket (and a palette command selects up to it), counting only the same kind of bracket and not skipping strings or comments.
+- Go to Symbol in File (Ctrl+Shift+Y, or @ in the palette): an outline from simple per-language line patterns for Rust, Python, JavaScript/TypeScript, Go, Java-family languages, Markdown, shell, TOML and INI. It is not a language server: it finds what is written at the start of a line.
+- Source Control: right-click a coloured change bar in the editor gutter to stage or revert just that change.
+- Starting the app with nothing to open reopens the last folder and the files that were open (the front tab stays in front); files and folders that are gone are skipped. Unsaved text is the job of crash recovery.
 - Crash recovery: unsaved text is written to a recovery folder every few seconds and restored as unsaved tabs after an abnormal exit; a normal exit clears it.
-- Terminal: Ctrl+click a `file:line:column` reference in the output to open it (network and device paths are never followed).
+- Problems: Rust: Check Project (or Run cargo check in the Problems tab) runs `cargo check` on a worker thread (the Cargo.toml in the folder, or a workspace one or two levels below) and lists the compiler errors and warnings; click one to open the file at that line. Not a language server: the list is as old as the last run.
+- Terminal keys and paste for coding agents: Shift+Enter or Alt+Enter insert a new line, Alt+letter, Ctrl+Arrow, Ctrl+Backspace and F1-F12 are sent the way xterm does, multi-line paste is bracketed when the program asks for it, and COLORTERM=truecolor is set. Quitting asks first when shells are still running.
+- Terminal: Terminal: Copy All Output copies the whole scrollback (6000 lines), the same number of fresh shells reopens when the app starts again, and terminals nobody is looking at no longer redraw the window for every chunk of output.
+- Terminal: more than one (Terminal: New Terminal, Ctrl+Shift+`, or the + in the panel; numbered chips switch between them and the cross ends the shown one). Ctrl+click a `file:line:column` reference in the output to open it (network and device paths are never followed).
 - Source Control: right-click a commit in the History graph to cherry-pick or revert it; merge, cherry-pick, revert and a rebase started elsewhere show a banner with an Abort button.
 
 ## Included
@@ -30,10 +39,10 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 
 ## Missing
 
-- Run/Debug, Extensions, Output, Problems, Debug Console and Ports are placeholders.
+- Run/Debug, Extensions, Debug Console and Ports are placeholders (Problems lists cargo check output only).
 - AI features (model-backed chat, editor actions), LSP and DAP, extensions, a task runner.
-- Rebase, line history, minimap, bracket matching, multi-cursor and split editors.
-- File create/rename/delete in the explorer.
+- Rebase, line history, minimap, multi-cursor and split editors.
+- Keyboard control of the Explorer tree (rows are mouse-only; F2 and Delete do not work yet).
 - Realtime room transport, invitations, encryption and reconnect.
 - Theme/profile import, accessibility and high-DPI acceptance.
 - A signed release.

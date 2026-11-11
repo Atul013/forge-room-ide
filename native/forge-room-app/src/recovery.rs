@@ -46,6 +46,16 @@ impl Store {
     /// A store for one running instance, identified by `instance` (the process id).
     pub fn new(root: PathBuf, instance: u32) -> Self {
         let mine = root.join(instance.to_string());
+        // Process ids are reused. Entries a dead process of the same number left here would be
+        // overwritten by this instance's tabs (they count from 1 again) and deleted on a normal
+        // exit, so they are moved aside first and restored with the other orphans.
+        if mine.is_dir() && !read_entries(&mine).is_empty() {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let _ = fs::rename(&mine, root.join(format!("{instance}-left-{stamp}")));
+        }
         let lock = Self::take_lock(&mine);
         Self { root, mine, lock }
     }
@@ -323,6 +333,27 @@ mod tests {
             !dir.join("5").exists(),
             "a normal exit removes this instance's folder"
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_dead_process_with_the_same_id_does_not_lose_its_text() {
+        let dir = root("pid-reuse");
+        // A process numbered 9 crashed and left tab 1 behind; a new process gets the number 9 too.
+        let old = dir.join("9");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(
+            old.join("tab-1.json"),
+            serde_json::to_vec(&entry(Some("old.rs"), "old work")).unwrap(),
+        )
+        .unwrap();
+        let mut store = Store::new(dir.clone(), 9);
+        store.save(1, &entry(Some("new.rs"), "new work")).unwrap();
+        // The new instance's tab 1 did not replace the old one, and a normal exit keeps the old text.
+        assert_eq!(store.own(), vec![entry(Some("new.rs"), "new work")]);
+        store.clear();
+        let next = Store::new(dir.clone(), 10);
+        assert_eq!(next.take_orphans(), vec![entry(Some("old.rs"), "old work")]);
         let _ = fs::remove_dir_all(dir);
     }
 }
