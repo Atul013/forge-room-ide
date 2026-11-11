@@ -23,6 +23,23 @@ pub struct Session {
     /// shells does, in the same folder.
     #[serde(default)]
     pub terminals: usize,
+    /// Which panels were open and how big they were.
+    #[serde(default)]
+    pub layout: Option<Layout>,
+}
+
+/// The shape of the window: panels shown, the bottom tab, and panel sizes in points.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Layout {
+    pub sidebar: bool,
+    pub right: bool,
+    pub terminal: bool,
+    pub preview: bool,
+    /// 0 terminal, 1 output, 2 problems.
+    pub bottom_tab: u8,
+    pub sidebar_width: u16,
+    pub right_width: u16,
+    pub terminal_height: u16,
 }
 
 /// At most this many terminals are reopened.
@@ -46,6 +63,13 @@ impl Session {
             files,
             active,
             terminals: self.terminals.min(MAX_TERMINALS),
+            layout: self.layout.map(|layout| Layout {
+                // A size outside what the panels allow would be clamped anyway; keep it sane.
+                sidebar_width: layout.sidebar_width.clamp(180, 560),
+                right_width: layout.right_width.clamp(280, 640),
+                terminal_height: layout.terminal_height.clamp(120, 720),
+                ..layout
+            }),
         }
     }
 }
@@ -96,6 +120,16 @@ mod tests {
             files: vec![gone.clone(), a.clone(), b.clone(), a.clone()],
             active: Some(2),
             terminals: 99,
+            layout: Some(Layout {
+                sidebar: false,
+                right: true,
+                terminal: true,
+                preview: false,
+                bottom_tab: 2,
+                sidebar_width: 10,
+                right_width: 364,
+                terminal_height: 9000,
+            }),
         };
         let file = dir.join("session.json");
         save_to(&file, &session).unwrap();
@@ -106,12 +140,16 @@ mod tests {
         assert_eq!(cleaned.files, vec![a.clone(), b.clone()]);
         assert_eq!(cleaned.active, Some(1));
         assert_eq!(cleaned.terminals, MAX_TERMINALS);
+        let layout = cleaned.layout.expect("the layout is kept");
+        assert_eq!((layout.sidebar_width, layout.terminal_height), (180, 720));
+        assert!(!layout.sidebar && layout.right && layout.bottom_tab == 2);
         // An active file that is gone leaves nothing active; a gone folder is dropped.
         let cleaned = Session {
             folder: Some(dir.join("nope").display().to_string()),
             files: vec![gone, a],
             active: Some(0),
             terminals: 0,
+            layout: None,
         }
         .clean();
         assert_eq!((cleaned.folder, cleaned.active), (None, None));

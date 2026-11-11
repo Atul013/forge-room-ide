@@ -211,6 +211,8 @@ struct ForgeRoomApp {
     checked_folders: std::collections::HashSet<PathBuf>,
     auto_checked: std::time::Instant,
     recovery_warned: bool,
+    /// Sidebar width, right dock width and terminal height as last drawn, in points.
+    panel_sizes: (u16, u16, u16),
     /// The user trusts the open folder: until then Git and project tools stay off.
     trusted: bool,
     /// The folder waiting for the answer to the trust question.
@@ -356,6 +358,7 @@ impl ForgeRoomApp {
             checked_folders: std::collections::HashSet::new(),
             auto_checked: std::time::Instant::now(),
             recovery_warned: false,
+            panel_sizes: (250, 364, 200),
             trusted: true,
             trust_prompt: None,
             git_top: None,
@@ -446,12 +449,28 @@ impl ForgeRoomApp {
             self.open_path(PathBuf::from(file));
         }
         self.focus_editor = !session.files.is_empty();
+        // The panels as they were.
+        if let Some(layout) = &session.layout {
+            self.show_sidebar = layout.sidebar;
+            self.show_right = layout.right;
+            self.show_terminal = layout.terminal;
+            self.show_preview = layout.preview;
+            self.bottom_tab = match layout.bottom_tab {
+                1 => BottomTab::Output,
+                2 => BottomTab::Problems,
+                _ => BottomTab::Terminal,
+            };
+            self.panel_sizes = (
+                layout.sidebar_width,
+                layout.right_width,
+                layout.terminal_height,
+            );
+        }
         // Fresh shells in place of the ones that were open.
         for _ in 0..session.terminals {
             self.spawn_terminal(true);
         }
         if session.terminals > 0 {
-            self.show_terminal = true;
             self.terminal_focus_request = false;
             self.active_terminal = 0;
         }
@@ -474,6 +493,20 @@ impl ForgeRoomApp {
             }
         }
         session::Session {
+            layout: Some(session::Layout {
+                sidebar: self.show_sidebar,
+                right: self.show_right,
+                terminal: self.show_terminal,
+                preview: self.show_preview,
+                bottom_tab: match self.bottom_tab {
+                    BottomTab::Terminal => 0,
+                    BottomTab::Output => 1,
+                    BottomTab::Problems => 2,
+                },
+                sidebar_width: self.panel_sizes.0,
+                right_width: self.panel_sizes.1,
+                terminal_height: self.panel_sizes.2,
+            }),
             terminals: self.terminals.len().min(session::MAX_TERMINALS),
             folder: self
                 .workspace
@@ -793,13 +826,35 @@ impl ForgeRoomApp {
     /// left alone and surface a conflict choice when saved.
     fn sync_external_changes(&mut self) {
         let mut reloaded = None;
+        let mut warned = None;
         for tab in &mut self.tabs.tabs {
-            if !tab.doc.is_dirty() && tab.doc.changed_on_disk() && tab.doc.reload().is_ok() {
+            if tab.readonly || tab.doc.path().is_none() {
+                continue;
+            }
+            let dirty = tab.doc.is_dirty();
+            if !dirty && tab.doc.changed_on_disk() && tab.doc.reload().is_ok() {
                 reloaded = Some(tab.title());
             }
+            // What the tab cannot show on its own: the file is gone, or it changed under unsaved
+            // edits (saving would then replace the other change, or bring a deleted file back).
+            let gone = tab.doc.path().is_some_and(|path| !path.exists());
+            let now = if gone {
+                Some("deleted on disk")
+            } else if dirty && tab.doc.changed_on_disk() {
+                Some("changed on disk")
+            } else {
+                None
+            };
+            if now.is_some() && now != tab.external {
+                warned = Some((tab.title(), now.unwrap_or_default()));
+            }
+            tab.external = now;
         }
         if let Some(title) = reloaded {
             self.status = format!("Reloaded {title}: it changed on disk");
+        }
+        if let Some((title, what)) = warned {
+            self.status = format!("{title} was {what}; look at the tab before saving");
         }
     }
 
@@ -3355,7 +3410,10 @@ impl ForgeRoomApp {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     for (index, tab) in self.tabs.tabs.iter().enumerate() {
                         let is_active = index == self.tabs.active;
-                        let title = tab.title();
+                        let mut title = tab.title();
+                        if tab.external.is_some() {
+                            title.push_str("  (!)");
+                        }
                         let galley = ui.painter().layout_no_wrap(
                             title,
                             egui::FontId::proportional(14.0),
@@ -3376,6 +3434,16 @@ impl ForgeRoomApp {
                             egui::Sense::click(),
                         );
                         let hovered = response.hovered() || close_response.hovered();
+                        if let Some(what) = tab.external {
+                            response.clone().on_hover_text(format!(
+                                "This file was {what}. Saving would {}.",
+                                if what == "deleted on disk" {
+                                    "create it again"
+                                } else {
+                                    "replace the other change"
+                                }
+                            ));
+                        }
 
                         let painter = ui.painter();
                         if hovered && !is_active {
@@ -4532,27 +4600,29 @@ impl eframe::App for ForgeRoomApp {
         }
 
         if self.show_sidebar && !self.show_lobby {
-            egui::Panel::left("sidebar")
-                .default_size(250.0)
+            let drawn = egui::Panel::left("sidebar")
+                .default_size(f32::from(self.panel_sizes.0))
                 .size_range(180.0..=560.0)
                 .resizable(true)
                 .frame(card(theme::bg_sidebar()))
                 .show(ui, |ui| self.sidebar(ui));
+            self.panel_sizes.0 = drawn.response.rect.width().round().clamp(180.0, 560.0) as u16;
         }
 
         if self.show_right && !self.show_lobby {
-            egui::Panel::right("right-dock")
-                .default_size(364.0)
+            let drawn = egui::Panel::right("right-dock")
+                .default_size(f32::from(self.panel_sizes.1))
                 .size_range(280.0..=640.0)
                 .resizable(true)
                 .frame(card(theme::bg_sidebar()))
                 .show(ui, |ui| self.right_dock(ui));
+            self.panel_sizes.1 = drawn.response.rect.width().round().clamp(280.0, 640.0) as u16;
         }
 
         if self.show_terminal && !self.show_lobby {
-            egui::Panel::bottom("terminal")
+            let drawn = egui::Panel::bottom("terminal")
                 .resizable(true)
-                .default_size(200.0)
+                .default_size(f32::from(self.panel_sizes.2))
                 .size_range(120.0..=720.0)
                 .frame(card(theme::bg_editor()).inner_margin(egui::Margin {
                     left: 0,
@@ -4561,6 +4631,7 @@ impl eframe::App for ForgeRoomApp {
                     bottom: 0,
                 }))
                 .show(ui, |ui| self.terminal_panel(ui));
+            self.panel_sizes.2 = drawn.response.rect.height().round().clamp(120.0, 720.0) as u16;
         }
 
         if self.show_preview && !self.show_lobby && ui.available_width() > 760.0 {

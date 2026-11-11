@@ -12,6 +12,9 @@ pub struct Tab {
     label: Option<String>,
     /// Syntax name used for highlighting when there is no file extension.
     pub syntax: Option<String>,
+    /// Something happened to the file outside the editor that this tab does not show yet: it
+    /// changed (the tab has unsaved edits, so it was not reloaded) or it was deleted.
+    pub external: Option<&'static str>,
 }
 
 impl Tab {
@@ -175,6 +178,7 @@ impl Tabs {
             readonly: false,
             label: None,
             syntax: None,
+            external: None,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -203,6 +207,7 @@ impl Tabs {
             readonly: false,
             label: None,
             syntax: None,
+            external: None,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -230,6 +235,7 @@ impl Tabs {
             readonly: true,
             label: Some(label),
             syntax: Some(syntax.to_string()),
+            external: None,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -285,6 +291,7 @@ impl Tabs {
                     readonly: false,
                     label: None,
                     syntax: None,
+                    external: None,
                 };
                 self.tabs.push(tab);
                 self.active = self.tabs.len() - 1;
