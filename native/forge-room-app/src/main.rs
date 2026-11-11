@@ -787,7 +787,13 @@ impl ForgeRoomApp {
             self.status = format!("No file {} to open", link.path);
             return;
         };
-        self.open_path(path);
+        self.open_path(path.clone());
+        // `open_path` reports a failure in the status bar and leaves the previous tab active: only
+        // place the caret when the file really is the active tab.
+        let opened = self.tabs.active_path() == Some(tabs::normalize(&path).as_path());
+        if !opened {
+            return;
+        }
         if let (Some(line), Some(tab)) = (link.line, self.tabs.tabs.get(self.tabs.active)) {
             let at = path_links::locate(tab.doc.text(), line, link.column.unwrap_or(1));
             self.pending_select = Some((at, at));

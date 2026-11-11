@@ -177,15 +177,10 @@ impl Terminal {
         self.parser.lock().unwrap().screen().contents()
     }
 
-    /// The file reference under a screen cell, read from that row's text.
+    /// The file reference under a screen cell (see [`reference_in`]).
     fn reference_at(&self, row: u16, column: u16, cols: u16) -> Option<crate::path_links::PathRef> {
-        let text = self
-            .parser
-            .lock()
-            .unwrap()
-            .screen()
-            .contents_between(row, 0, row, cols);
-        crate::path_links::ref_at(&text, usize::from(column))
+        let parser = self.parser.lock().unwrap();
+        reference_in(parser.screen(), row, column, cols)
     }
 
     /// The reference the user Ctrl+clicked since the last call, once.
@@ -490,6 +485,63 @@ impl Drop for Terminal {
 }
 
 /// Bytes a terminal expects for a key press that did not produce text.
+/// The file reference under a screen cell. The row is read cell by cell, so a double-width
+/// character (two cells, one character) or a combining mark does not shift the column, and a line
+/// that wrapped from the row before or onto the next row is read as one line.
+fn reference_in(
+    screen: &vt100::Screen,
+    row: u16,
+    column: u16,
+    cols: u16,
+) -> Option<crate::path_links::PathRef> {
+    let mut text = String::new();
+    // A reference may begin on the previous row when that row wrapped into this one.
+    if row > 0 && screen.row_wrapped(row - 1) {
+        for col in 0..cols {
+            push_cell(screen, row - 1, col, &mut text, &mut Vec::new());
+        }
+    }
+    let mut char_of_cell: Vec<usize> = Vec::new();
+    for col in 0..cols {
+        push_cell(screen, row, col, &mut text, &mut char_of_cell);
+    }
+    // The recorded indexes already count the text of the row before.
+    let index = *char_of_cell.get(usize::from(column))?;
+    // ... and may continue on the next row when this one wrapped.
+    if screen.row_wrapped(row) && row + 1 < screen.size().0 {
+        for col in 0..cols {
+            push_cell(screen, row + 1, col, &mut text, &mut Vec::new());
+        }
+    }
+    crate::path_links::ref_at(&text, index)
+}
+
+/// Append the text of one cell to `text` (a blank for an empty cell, nothing for the second half
+/// of a double-width character) and record which character the cell belongs to.
+fn push_cell(
+    screen: &vt100::Screen,
+    row: u16,
+    col: u16,
+    text: &mut String,
+    char_of_cell: &mut Vec<usize>,
+) {
+    let index = text.chars().count();
+    match screen.cell(row, col) {
+        Some(cell) if cell.is_wide_continuation() => {
+            // Belongs to the wide character just before it.
+            char_of_cell.push(index.saturating_sub(1));
+        }
+        Some(cell) if cell.has_contents() => {
+            char_of_cell.push(index);
+            text.push_str(cell.contents());
+        }
+        _ => {
+            char_of_cell.push(index);
+            text.push(' ');
+        }
+    }
+}
+
 pub fn key_bytes(key: Key, modifiers: Modifiers) -> Option<Vec<u8>> {
     let sequence: &[u8] = match key {
         Key::Enter => b"\r",
@@ -587,6 +639,42 @@ fn convert(color: vt100::Color, default: Color32, bold: bool) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn link_at(parser: &vt100::Parser, row: u16, column: u16) -> Option<(String, Option<usize>)> {
+        let (_, cols) = parser.screen().size();
+        reference_in(parser.screen(), row, column, cols).map(|r| (r.path, r.line))
+    }
+
+    #[test]
+    fn a_reference_after_double_width_characters_is_found_at_its_own_cells() {
+        let mut parser = vt100::Parser::new(2, 30, 0);
+        // Four double-width characters take cells 0-7, a space cell 8, the reference starts at 9.
+        parser.process("\u{65e5}\u{672c}\u{65e5}\u{672c} a.rs:3".as_bytes());
+        assert_eq!(link_at(&parser, 0, 9), Some(("a.rs".into(), Some(3))));
+        assert_eq!(link_at(&parser, 0, 14), Some(("a.rs".into(), Some(3))));
+        // The wide characters themselves, both of their cells, are not a reference.
+        for column in 0..8 {
+            assert_eq!(link_at(&parser, 0, column), None, "cell {column}");
+        }
+        // Past the text there is nothing.
+        assert_eq!(link_at(&parser, 0, 25), None);
+    }
+
+    #[test]
+    fn a_path_that_wrapped_onto_the_next_row_is_read_as_one() {
+        let mut parser = vt100::Parser::new(3, 10, 0);
+        // Twenty characters on a ten-column screen: the second row continues the first.
+        parser.process(b"error src/main.rs:12");
+        assert!(parser.screen().row_wrapped(0));
+        assert_eq!(
+            link_at(&parser, 1, 2),
+            Some(("src/main.rs".into(), Some(12)))
+        );
+        assert_eq!(
+            link_at(&parser, 0, 8),
+            Some(("src/main.rs".into(), Some(12)))
+        );
+    }
 
     #[test]
     fn special_keys_map_to_terminal_sequences() {

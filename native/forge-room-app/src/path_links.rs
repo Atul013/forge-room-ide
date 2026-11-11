@@ -88,15 +88,41 @@ fn looks_like_a_file(path: &str) -> bool {
             .any(|c| matches!(c, '*' | '?' | '"' | '<' | '>' | '|'))
 }
 
-/// The file a reference points at: an absolute path as it is, or a relative one inside `root`.
-/// `None` when no such file exists.
+/// Whether `path` is a network or device path (`\\server\share`, `//host/x`, `\\?\C:`, `\\.\COM1`).
+/// Checking such a path makes Windows contact the named machine, which can hand an attacker's
+/// server a login, so terminal output must never cause it.
+fn is_network_or_device_path(path: &str) -> bool {
+    path.starts_with(r"\\") || path.starts_with("//")
+}
+
+/// The file a reference points at: an absolute local path as it is, or a relative one inside
+/// `root`. `None` when there is no such file, when the path is a network or device path, or when a
+/// relative path climbs out of the project with `..`.
 pub fn resolve(reference: &PathRef, root: &Path) -> Option<PathBuf> {
+    if is_network_or_device_path(&reference.path) {
+        return None;
+    }
+    // A file name Windows would treat as a device (CON, NUL...) is not a file to open.
+    let name = Path::new(&reference.path).file_name()?.to_str()?;
+    crate::file_ops::valid_name(name).ok()?;
     let given = Path::new(&reference.path);
     let candidate = if given.is_absolute() {
         given.to_path_buf()
     } else {
+        if given
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return None;
+        }
         // `./src/x.rs` and `.\src\x.rs` are the same as `src/x.rs`.
-        root.join(given)
+        let joined = root.join(given);
+        // A link inside the project may still point out of it: the real location must be inside.
+        let (real, base) = (joined.canonicalize().ok()?, root.canonicalize().ok()?);
+        if !real.starts_with(&base) {
+            return None;
+        }
+        joined
     };
     candidate.is_file().then_some(candidate)
 }
@@ -231,6 +257,20 @@ mod tests {
         );
         // A folder is not a file to open.
         assert!(resolve(&reference("src"), &root).is_none());
+        // Network and device paths are never checked: that would contact the named machine.
+        for bad in [
+            r"\\evil\share\a.txt",
+            "//evil/share/a.txt",
+            r"\\?\C:\a.txt",
+            r"\\.\COM1",
+        ] {
+            assert!(resolve(&reference(bad), &root).is_none(), "{bad}");
+        }
+        // Leaving the project with `..` is refused, wherever the file is.
+        assert!(resolve(&reference("../a.rs"), &root.join("src")).is_none());
+        assert!(resolve(&reference("src/../src/a.rs"), &root).is_none());
+        // Device names are not files.
+        assert!(resolve(&reference("src/NUL.txt"), &root).is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 
