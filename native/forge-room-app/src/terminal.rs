@@ -80,7 +80,7 @@ impl Terminal {
             Arc::new(Mutex::new(pair.master.take_writer().map_err(|error| {
                 format!("could not write to the terminal: {error}")
             })?));
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(size.rows, size.cols, 2000)));
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(size.rows, size.cols, 6000)));
         let exited = Arc::new(AtomicBool::new(false));
         {
             let parser = parser.clone();

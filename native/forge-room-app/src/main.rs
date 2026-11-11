@@ -2843,7 +2843,13 @@ impl ForgeRoomApp {
                     Some(project_tools::Selected::Command(command)) => {
                         self.show_terminal = true;
                         self.bottom_tab = BottomTab::Terminal;
-                        self.ensure_terminal();
+                        // A shell that is already running may be busy with an agent or a server, and
+                        // the command would be typed into its prompt: it gets a terminal of its own.
+                        if self.terminals.iter().any(|t| !t.has_exited()) {
+                            self.spawn_terminal(true);
+                        } else {
+                            self.ensure_terminal();
+                        }
                         let active = self.active_terminal;
                         if let Some(terminal) = self.terminals.get_mut(active) {
                             terminal.send(format!("{command}\r").as_bytes());
