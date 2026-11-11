@@ -40,6 +40,8 @@ pub enum Command {
     SwitchBranch,
     MergeBranch,
     DeleteBranch,
+    CreateTag,
+    DeleteTag,
     AbortOperation,
     ToggleBlame,
     GitPull,
@@ -130,6 +132,8 @@ pub const ALL: &[(Command, &str, &str)] = &[
     (Command::SwitchBranch, "Git: Checkout to…", ""),
     (Command::MergeBranch, "Git: Merge Branch…", ""),
     (Command::DeleteBranch, "Git: Delete Branch…", ""),
+    (Command::CreateTag, "Git: Create Tag…", ""),
+    (Command::DeleteTag, "Git: Delete Tag…", ""),
     (
         Command::AbortOperation,
         "Git: Abort Merge, Cherry-pick or Revert",

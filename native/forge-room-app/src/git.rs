@@ -521,6 +521,37 @@ pub fn create_branch(root: &Path, name: &str) -> Result<(), String> {
     run(root, &["checkout", "-b", name]).map(|_| ())
 }
 
+/// Every tag, newest first.
+pub fn tags(root: &Path) -> Result<Vec<String>, String> {
+    run(root, &["tag", "--list", "--sort=-creatordate"]).map(|out| {
+        out.lines()
+            .map(str::to_string)
+            .filter(|t| !t.is_empty())
+            .collect()
+    })
+}
+
+fn check_tag_name(root: &Path, name: &str) -> Result<(), String> {
+    if name.is_empty() || name.starts_with('-') {
+        return Err(format!("\"{name}\" is not a valid tag name"));
+    }
+    run(root, &["check-ref-format", &format!("refs/tags/{name}")])
+        .map(|_| ())
+        .map_err(|_| format!("\"{name}\" is not a valid tag name"))
+}
+
+/// A lightweight tag on the current commit.
+pub fn create_tag(root: &Path, name: &str) -> Result<(), String> {
+    check_tag_name(root, name)?;
+    run(root, &["tag", name]).map(|_| ())
+}
+
+/// Delete a local tag. The message carries the commit it pointed at, so it can be made again.
+pub fn delete_tag(root: &Path, name: &str) -> Result<String, String> {
+    check_tag_name(root, name)?;
+    run(root, &["tag", "-d", name]).map(|out| first_line(&out, "Deleted tag"))
+}
+
 /// Refuses names Git itself would reject, and anything that could be read as an option
 /// (`--orphan`, `-D`), before the name reaches a command line.
 pub fn check_branch_name(root: &Path, name: &str) -> Result<(), String> {
@@ -1105,6 +1136,31 @@ mod tests {
         resolve_conflict(&dir, "gone.txt", Side::Incoming).unwrap();
         assert!(!dir.join("gone.txt").exists());
         assert!(!git(&["ls-files", "-u"]).unwrap().contains("gone.txt"));
+    }
+
+    #[test]
+    fn tags_can_be_made_listed_and_deleted_and_bad_names_are_refused() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        create_tag(&dir, "v1").unwrap();
+        create_tag(&dir, "v2").unwrap();
+        assert!(
+            create_tag(&dir, "v1").is_err(),
+            "an existing tag is not overwritten"
+        );
+        for bad in ["", "-d", "a b", "x..y", "--force"] {
+            assert!(create_tag(&dir, bad).is_err(), "{bad:?}");
+            assert!(delete_tag(&dir, bad).is_err(), "{bad:?}");
+        }
+        let mut found = tags(&dir).unwrap();
+        found.sort();
+        assert_eq!(found, vec!["v1", "v2"]);
+        assert!(delete_tag(&dir, "v1").unwrap().contains("v1"));
+        assert_eq!(tags(&dir).unwrap(), vec!["v2"]);
+        assert!(delete_tag(&dir, "v1").is_err());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

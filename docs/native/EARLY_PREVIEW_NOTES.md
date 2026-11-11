@@ -11,7 +11,7 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 - Find and Search in Files: whole word and regular expressions; invalid patterns are reported.
 - Quick Open and Search in Files follow `.gitignore` in a repository.
 - Explorer: rename files and folders; Delete… moves them to the Recycle Bin (fixed local drives only, never links, never the open folder; saved tabs close, tabs with unsaved changes stay). Tabs: Ctrl+Shift+T reopens the last closed tab; View: Close Saved Tabs. File > Open Recent.
-- Source Control: merge a branch, abort a merge, delete a branch, apply (and keep) or drop the latest stash; Changes and History pages; Git status is read on a worker thread.
+- Source Control: merge a branch, abort a merge, delete a branch, apply (and keep) or drop the latest stash, create and delete tags from the command palette; Changes and History pages; Git status is read on a worker thread.
 - Syntax colours for TypeScript, JSX, TOML, INI and dotenv files (borrowed from the closest bundled syntax).
 - Editing commands: Ctrl+D (select next occurrence), palette commands for upper/lower case, sorting and de-duplicating lines, trimming trailing whitespace and joining lines; Ctrl+= / Ctrl+- / Ctrl+0 for the editor font size (remembered).
 - Go to Symbol in File (Ctrl+Shift+Y, or @ in the palette): an outline from simple per-language line patterns for Rust, Python, JavaScript/TypeScript, Go, Java-family languages, Markdown, shell, TOML and INI. It is not a language server: it finds what is written at the start of a line.

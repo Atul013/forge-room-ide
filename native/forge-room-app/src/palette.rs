@@ -28,6 +28,9 @@ pub enum BranchPurpose {
     Checkout,
     Merge,
     Delete,
+    /// Name a new tag on the current commit (the list shows the existing tags).
+    TagCreate,
+    TagDelete,
 }
 
 pub enum Outcome {
@@ -35,6 +38,8 @@ pub enum Outcome {
     CreateBranch(String),
     Merge(String),
     DeleteBranch(String),
+    CreateTag(String),
+    DeleteTag(String),
     Run(Command),
     Open(PathBuf),
     GoToLine(usize),
@@ -143,8 +148,10 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
         let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
         let query = palette.query.trim();
         let mut rows = Vec::new();
-        if palette.purpose == BranchPurpose::Checkout
-            && !query.is_empty()
+        if matches!(
+            palette.purpose,
+            BranchPurpose::Checkout | BranchPurpose::TagCreate
+        ) && !query.is_empty()
             && !names.contains(&query)
         {
             rows.push(Row::NewBranch(query.to_string()));
@@ -260,7 +267,11 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                                 painter.text(
                                     egui::pos2(rect.left() + 10.0, y),
                                     Align2::LEFT_CENTER,
-                                    format!("Create new branch \"{name}\""),
+                                    if palette.purpose == BranchPurpose::TagCreate {
+                                        format!("Create tag \"{name}\" on the current commit")
+                                    } else {
+                                        format!("Create new branch \"{name}\"")
+                                    },
                                     egui::FontId::proportional(13.5),
                                     theme::accent(),
                                 );
@@ -382,7 +393,13 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
 
     if let Some(index) = clicked.or(enter.then_some(palette.selected)) {
         match rows.get(index) {
-            Some(Row::NewBranch(name)) => outcome = Some(Outcome::CreateBranch(name.clone())),
+            Some(Row::NewBranch(name)) => {
+                outcome = Some(if palette.purpose == BranchPurpose::TagCreate {
+                    Outcome::CreateTag(name.clone())
+                } else {
+                    Outcome::CreateBranch(name.clone())
+                })
+            }
             Some(Row::Branch(branch_index)) => {
                 if let Some(branch) = palette
                     .branches
@@ -390,14 +407,17 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                     .and_then(|list| list.get(*branch_index))
                     && !branch.current
                 {
-                    outcome = Some(match palette.purpose {
-                        BranchPurpose::Checkout => Outcome::Checkout {
+                    outcome = match palette.purpose {
+                        BranchPurpose::Checkout => Some(Outcome::Checkout {
                             name: branch.name.clone(),
                             remote: branch.remote,
-                        },
-                        BranchPurpose::Merge => Outcome::Merge(branch.name.clone()),
-                        BranchPurpose::Delete => Outcome::DeleteBranch(branch.name.clone()),
-                    });
+                        }),
+                        BranchPurpose::Merge => Some(Outcome::Merge(branch.name.clone())),
+                        BranchPurpose::Delete => Some(Outcome::DeleteBranch(branch.name.clone())),
+                        BranchPurpose::TagDelete => Some(Outcome::DeleteTag(branch.name.clone())),
+                        // The list only shows which tags exist; naming a new one is the first row.
+                        BranchPurpose::TagCreate => None,
+                    };
                 }
             }
             Some(Row::Command(command, _, _)) => outcome = Some(Outcome::Run(*command)),

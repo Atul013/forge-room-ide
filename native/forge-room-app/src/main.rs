@@ -738,6 +738,30 @@ impl ForgeRoomApp {
                     }
                 }
             }
+            Command::CreateTag | Command::DeleteTag => {
+                let purpose = if command == Command::CreateTag {
+                    palette::BranchPurpose::TagCreate
+                } else {
+                    palette::BranchPurpose::TagDelete
+                };
+                if let Some(root) = self.repo_root() {
+                    match git::tags(&root) {
+                        Ok(list) => {
+                            let tags = list
+                                .into_iter()
+                                .map(|name| git::Branch {
+                                    name,
+                                    current: false,
+                                    remote: false,
+                                    upstream: None,
+                                })
+                                .collect();
+                            self.palette.open_branches(tags, purpose);
+                        }
+                        Err(error) => self.status = format!("Git: {error}"),
+                    }
+                }
+            }
             Command::AbortOperation => self.git_action(source_control::Action::AbortOperation),
             Command::GitSync => self.git_action(source_control::Action::Sync),
             Command::GitPull => self.git_action(source_control::Action::Pull),
@@ -3864,6 +3888,24 @@ impl eframe::App for ForgeRoomApp {
                 if let Some(root) = self.repo_root() {
                     self.status = match git::delete_branch(&root, &name, false) {
                         Ok(()) => format!("Deleted branch {name}"),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                }
+            }
+            Some(palette::Outcome::CreateTag(name)) => {
+                if let Some(root) = self.repo_root() {
+                    self.status = match git::create_tag(&root, &name) {
+                        Ok(()) => format!("Tagged the current commit {name}"),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                }
+            }
+            Some(palette::Outcome::DeleteTag(name)) => {
+                if let Some(root) = self.repo_root() {
+                    self.status = match git::delete_tag(&root, &name) {
+                        Ok(text) => text,
                         Err(error) => format!("Git: {error}"),
                     };
                     self.refresh_git();
