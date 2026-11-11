@@ -36,6 +36,8 @@ pub struct View<'a> {
     pub history: &'a [git::CommitInfo],
     pub history_name: Option<&'a str>,
     pub stashes: usize,
+    /// A merge is waiting to be finished (conflicts) or aborted.
+    pub merging: bool,
     /// Set while a network operation is running (shown instead of the sync button).
     pub busy: Option<&'a str>,
 }
@@ -68,6 +70,7 @@ pub enum Action {
     Fetch,
     Stash,
     StashPop,
+    AbortMerge,
     ShowCommit(String),
 }
 
@@ -215,6 +218,36 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
         .filter(|c| !c.is_conflict() && c.is_unstaged())
         .collect();
 
+    if view.merging {
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(12, 0))
+            .show(ui, |ui| {
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(226, 160, 60, 30))
+                    .stroke(Stroke::new(
+                        1.0,
+                        Color32::from_rgba_unmultiplied(226, 160, 60, 120),
+                    ))
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(
+                            RichText::new(
+                                "Merge in progress. Resolve the conflicts, stage the files and \
+                                 commit to finish it.",
+                            )
+                            .size(12.5)
+                            .color(theme::text()),
+                        );
+                        ui.add_space(4.0);
+                        if ui.button("Abort merge").clicked() {
+                            action = Some(Action::AbortMerge);
+                        }
+                    });
+            });
+        ui.add_space(8.0);
+    }
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(12, 0))
         .show(ui, |ui| {

@@ -199,6 +199,7 @@ struct ForgeRoomApp {
     file_history: Vec<git::CommitInfo>,
     history_name: Option<String>,
     stash_count: usize,
+    merging: bool,
     blame: Vec<git::BlameLine>,
     blame_enabled: bool,
     git_job: Option<GitJob>,
@@ -300,6 +301,7 @@ impl ForgeRoomApp {
             file_history: Vec::new(),
             history_name: None,
             stash_count: 0,
+            merging: false,
             blame: Vec::new(),
             blame_enabled: true,
             git_job: None,
@@ -524,11 +526,27 @@ impl ForgeRoomApp {
             Command::SwitchBranch => {
                 if let Some(root) = self.repo_root() {
                     match git::branches(&root) {
-                        Ok(list) => self.palette.open_branches(list),
+                        Ok(list) => self
+                            .palette
+                            .open_branches(list, palette::BranchPurpose::Checkout),
                         Err(error) => self.status = format!("Git: {error}"),
                     }
                 }
             }
+            Command::MergeBranch | Command::DeleteBranch => {
+                let purpose = if command == Command::MergeBranch {
+                    palette::BranchPurpose::Merge
+                } else {
+                    palette::BranchPurpose::Delete
+                };
+                if let Some(root) = self.repo_root() {
+                    match git::branches(&root) {
+                        Ok(list) => self.palette.open_branches(list, purpose),
+                        Err(error) => self.status = format!("Git: {error}"),
+                    }
+                }
+            }
+            Command::AbortMerge => self.git_action(source_control::Action::AbortMerge),
             Command::GitSync => self.git_action(source_control::Action::Sync),
             Command::GitPull => self.git_action(source_control::Action::Pull),
             Command::GitPush => self.git_action(source_control::Action::Push),
@@ -1528,6 +1546,7 @@ impl ForgeRoomApp {
         self.last_git = std::time::Instant::now();
         let Some(root) = self.repo_root() else {
             self.git_status = None;
+            self.merging = false;
             self.is_repo = false;
             self.branch = None;
             self.hunks.clear();
@@ -1544,6 +1563,7 @@ impl ForgeRoomApp {
             self.hunks.clear();
             return;
         }
+        self.merging = git::is_merging(&root);
         let result = git::status(&root);
         self.branch = match &result {
             Ok(status) => status
@@ -1764,6 +1784,9 @@ impl ForgeRoomApp {
             }
             Action::Stash => git::stash_push(&root, ""),
             Action::StashPop => git::stash_pop(&root, 0),
+            Action::AbortMerge => {
+                git::merge_abort(&root).map(|()| "Merge aborted; the files are as they were".into())
+            }
             Action::ShowCommit(hash) => {
                 match git::show(&root, &hash) {
                     Ok(text) => {
@@ -1968,6 +1991,7 @@ impl ForgeRoomApp {
                     history: &self.file_history,
                     history_name: self.history_name.as_deref(),
                     stashes: self.stash_count,
+                    merging: self.merging,
                     busy: self.git_job.as_ref().map(|job| job.label.as_str()),
                 }),
                 Some(Err(error)) => source_control::Repo::Error(error),
@@ -3262,6 +3286,32 @@ impl eframe::App for ForgeRoomApp {
                 if let Some(root) = self.repo_root() {
                     self.status = match git::create_branch(&root, &name) {
                         Ok(()) => format!("Created and switched to {name}"),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                }
+            }
+            Some(palette::Outcome::Merge(name)) => {
+                if let Some(root) = self.repo_root() {
+                    self.status = match git::merge(&root, &name) {
+                        Ok(git::MergeOutcome::Merged(text)) => format!("Merged {name}: {text}"),
+                        Ok(git::MergeOutcome::UpToDate) => {
+                            format!("Already up to date with {name}")
+                        }
+                        Ok(git::MergeOutcome::Conflicts) => format!(
+                            "Merging {name} has conflicts. Resolve them in Source Control, \
+                             then commit, or run Git: Abort Merge"
+                        ),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                    self.reload_clean_tabs();
+                }
+            }
+            Some(palette::Outcome::DeleteBranch(name)) => {
+                if let Some(root) = self.repo_root() {
+                    self.status = match git::delete_branch(&root, &name, false) {
+                        Ok(()) => format!("Deleted branch {name}"),
                         Err(error) => format!("Git: {error}"),
                     };
                     self.refresh_git();

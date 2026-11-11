@@ -328,7 +328,64 @@ pub fn checkout(root: &Path, name: &str, remote: bool) -> Result<(), String> {
 }
 
 pub fn create_branch(root: &Path, name: &str) -> Result<(), String> {
+    check_branch_name(root, name)?;
     run(root, &["checkout", "-b", name]).map(|_| ())
+}
+
+/// Refuses names Git itself would reject, and anything that could be read as an option
+/// (`--orphan`, `-D`), before the name reaches a command line.
+pub fn check_branch_name(root: &Path, name: &str) -> Result<(), String> {
+    if name.is_empty() || name.starts_with('-') {
+        return Err(format!("\"{name}\" is not a valid branch name"));
+    }
+    run(root, &["check-ref-format", "--branch", name])
+        .map(|_| ())
+        .map_err(|_| format!("\"{name}\" is not a valid branch name"))
+}
+
+/// What a merge did.
+#[derive(Debug, Eq, PartialEq)]
+pub enum MergeOutcome {
+    /// Merged (or fast-forwarded); the text is Git's summary line.
+    Merged(String),
+    UpToDate,
+    /// The merge stopped on conflicts. The repository is mid-merge: resolve each file in Source
+    /// Control and commit, or abort with [`merge_abort`].
+    Conflicts,
+}
+
+/// True while a merge is waiting to be completed or aborted.
+pub fn is_merging(root: &Path) -> bool {
+    run(root, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok()
+}
+
+/// Merge `branch` into the current branch. Conflicts are an outcome, not an error.
+pub fn merge(root: &Path, branch: &str) -> Result<MergeOutcome, String> {
+    check_branch_name(root, branch)?;
+    if is_merging(root) {
+        return Err("A merge is already in progress. Commit or abort it first".into());
+    }
+    match run(root, &["merge", "--no-edit", branch]) {
+        Ok(output) if output.contains("Already up to date") => Ok(MergeOutcome::UpToDate),
+        Ok(output) => Ok(MergeOutcome::Merged(first_line(&output, "Merged"))),
+        Err(_) if is_merging(root) => Ok(MergeOutcome::Conflicts),
+        Err(error) => Err(error),
+    }
+}
+
+/// Give up a merge in progress and restore the state before it started.
+pub fn merge_abort(root: &Path) -> Result<(), String> {
+    if !is_merging(root) {
+        return Err("There is no merge in progress".into());
+    }
+    run(root, &["merge", "--abort"]).map(|_| ())
+}
+
+/// Delete a local branch. Without `force` Git refuses unmerged branches; the current branch can
+/// never be deleted.
+pub fn delete_branch(root: &Path, name: &str, force: bool) -> Result<(), String> {
+    check_branch_name(root, name)?;
+    run(root, &["branch", if force { "-D" } else { "-d" }, name]).map(|_| ())
 }
 
 // ---- Discard, stash, undo ---------------------------------------------------------------------
@@ -698,6 +755,108 @@ mod tests {
         resolve_conflict(&dir, "gone.txt", Side::Incoming).unwrap();
         assert!(!dir.join("gone.txt").exists());
         assert!(!git(&["ls-files", "-u"]).unwrap().contains("gone.txt"));
+    }
+
+    /// A repo with one commit on the default branch; returns the directory, a git runner and the
+    /// name of the default branch.
+    fn merge_fixture() -> (PathBuf, String) {
+        let dir = temp_repo();
+        let g = |args: &[&str]| {
+            let mut full = vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ];
+            full.extend_from_slice(args);
+            run(&dir, &full).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+        };
+        fs::write(dir.join("a.txt"), "base\n").unwrap();
+        g(&["add", "."]);
+        g(&["commit", "-q", "-m", "base"]);
+        let main = g(&["rev-parse", "--abbrev-ref", "HEAD"]).trim().to_string();
+        (dir, main)
+    }
+
+    fn g(dir: &Path, args: &[&str]) -> String {
+        let mut full = vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+        ];
+        full.extend_from_slice(args);
+        run(dir, &full).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+    }
+
+    #[test]
+    fn merging_clean_up_to_date_and_conflicting_branches() {
+        if !git_available() {
+            return;
+        }
+        let (dir, main) = merge_fixture();
+        g(&dir, &["checkout", "-q", "-b", "feature"]);
+        fs::write(dir.join("b.txt"), "feature\n").unwrap();
+        g(&dir, &["add", "."]);
+        g(&dir, &["commit", "-q", "-m", "feature"]);
+        g(&dir, &["checkout", "-q", &main]);
+
+        assert!(matches!(
+            merge(&dir, "feature"),
+            Ok(MergeOutcome::Merged(_))
+        ));
+        assert!(dir.join("b.txt").exists());
+        assert_eq!(merge(&dir, "feature"), Ok(MergeOutcome::UpToDate));
+
+        // A conflicting change on both sides stops mid-merge, and aborting restores the tree.
+        g(&dir, &["checkout", "-q", "-b", "other"]);
+        fs::write(dir.join("a.txt"), "other\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "other"]);
+        g(&dir, &["checkout", "-q", &main]);
+        fs::write(dir.join("a.txt"), "mine\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "mine"]);
+        assert_eq!(merge(&dir, "other"), Ok(MergeOutcome::Conflicts));
+        assert!(is_merging(&dir));
+        assert!(
+            merge(&dir, "feature").is_err(),
+            "no second merge while one is open"
+        );
+        merge_abort(&dir).unwrap();
+        assert!(!is_merging(&dir));
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "mine\n"
+        );
+        assert!(merge_abort(&dir).is_err(), "nothing left to abort");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn deleting_branches_and_refusing_bad_names() {
+        if !git_available() {
+            return;
+        }
+        let (dir, main) = merge_fixture();
+        create_branch(&dir, "topic").unwrap();
+        g(&dir, &["checkout", "-q", &main]);
+        assert!(
+            delete_branch(&dir, &main, true).is_err(),
+            "never the current branch"
+        );
+        delete_branch(&dir, "topic", false).unwrap();
+        assert!(branches(&dir).unwrap().iter().all(|b| b.name != "topic"));
+
+        for bad in ["", "-D", "--orphan", "a b", "x..y", "feature/", "ends.lock"] {
+            assert!(create_branch(&dir, bad).is_err(), "{bad:?} must be refused");
+            assert!(merge(&dir, bad).is_err());
+        }
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

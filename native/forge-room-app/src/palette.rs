@@ -16,11 +16,23 @@ pub struct Palette {
     focus: bool,
     /// When set, the box lists branches instead of files and commands.
     branches: Option<Vec<git::Branch>>,
+    purpose: BranchPurpose,
+}
+
+/// What picking a branch in the palette does.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BranchPurpose {
+    #[default]
+    Checkout,
+    Merge,
+    Delete,
 }
 
 pub enum Outcome {
     Checkout { name: String, remote: bool },
     CreateBranch(String),
+    Merge(String),
+    DeleteBranch(String),
     Run(Command),
     Open(PathBuf),
     GoToLine(usize),
@@ -53,7 +65,13 @@ impl Palette {
         }
     }
 
-    pub fn open_branches(&mut self, branches: Vec<git::Branch>) {
+    pub fn open_branches(&mut self, branches: Vec<git::Branch>, purpose: BranchPurpose) {
+        // Only local branches can be deleted; the current one can be neither merged nor deleted.
+        let branches = match purpose {
+            BranchPurpose::Delete => branches.into_iter().filter(|b| !b.remote).collect(),
+            _ => branches,
+        };
+        self.purpose = purpose;
         self.query.clear();
         self.selected = 0;
         self.open = true;
@@ -107,7 +125,10 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
         let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
         let query = palette.query.trim();
         let mut rows = Vec::new();
-        if !query.is_empty() && !names.contains(&query) {
+        if palette.purpose == BranchPurpose::Checkout
+            && !query.is_empty()
+            && !names.contains(&query)
+        {
             rows.push(Row::NewBranch(query.to_string()));
         }
         rows.extend(fuzzy::rank(query, &names, 14).into_iter().map(Row::Branch));
@@ -318,9 +339,13 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                     .and_then(|list| list.get(*branch_index))
                     && !branch.current
                 {
-                    outcome = Some(Outcome::Checkout {
-                        name: branch.name.clone(),
-                        remote: branch.remote,
+                    outcome = Some(match palette.purpose {
+                        BranchPurpose::Checkout => Outcome::Checkout {
+                            name: branch.name.clone(),
+                            remote: branch.remote,
+                        },
+                        BranchPurpose::Merge => Outcome::Merge(branch.name.clone()),
+                        BranchPurpose::Delete => Outcome::DeleteBranch(branch.name.clone()),
                     });
                 }
             }
@@ -340,6 +365,7 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
     if close {
         palette.open = false;
         palette.branches = None;
+        palette.purpose = BranchPurpose::Checkout;
     }
     outcome
 }
