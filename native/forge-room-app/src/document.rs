@@ -158,6 +158,56 @@ fn encode(text: &str, encoding: Encoding, ending: LineEnding) -> Vec<u8> {
     }
 }
 
+/// Replace `path` with `bytes` without ever leaving a half-written file. The data goes to a
+/// sibling temporary file, is flushed to disk, and is then renamed over the original, so a crash or
+/// power loss mid-save keeps either the old content or the new content. Symlinks, and files the
+/// rename cannot replace (for example one another program holds open), are written in place
+/// instead. The replacement inherits the folder's permissions, and hard links to the old file
+/// are not followed.
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let existing = fs::symlink_metadata(path).ok();
+    if existing
+        .as_ref()
+        .is_some_and(|m| m.file_type().is_symlink())
+    {
+        return fs::write(path, bytes);
+    }
+    let name = path.file_name().ok_or_else(|| invalid("not a file path"))?;
+    let temporary = path.with_file_name(format!(
+        ".{}.forge-save-{}",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let written = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        if let Some(existing) = &existing {
+            // Keeps a read-only mark, so the rename below fails like a direct write would.
+            fs::set_permissions(&temporary, existing.permissions())?;
+        }
+        Ok::<(), io::Error>(())
+    })();
+    if let Err(error) = written {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    match fs::rename(&temporary, path) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            // The original is locked or read-only: fall back to writing it directly, which also
+            // reports the right error (for example permission denied) when that fails too.
+            let _ = fs::remove_file(&temporary);
+            fs::write(path, bytes)
+        }
+    }
+}
+
 /// Cheap fingerprint of the file as last read or written by this session.
 type DiskStamp = (SystemTime, u64);
 
@@ -295,7 +345,7 @@ impl DocumentSession {
     /// Save without checking for outside changes (the user chose to overwrite them).
     pub fn overwrite(&mut self) -> Result<(), DocumentError> {
         let path = self.path.as_ref().ok_or(DocumentError::NoPath)?;
-        fs::write(path, encode(&self.text, self.encoding, self.line_ending))?;
+        write_atomic(path, &encode(&self.text, self.encoding, self.line_ending))?;
         self.disk_stamp = stamp(path);
         self.saved_text.clone_from(&self.text);
         Ok(())
@@ -312,7 +362,7 @@ impl DocumentSession {
     /// if the write fails.
     pub fn save_as(&mut self, path: impl Into<PathBuf>) -> Result<(), DocumentError> {
         let path = path.into();
-        fs::write(&path, encode(&self.text, self.encoding, self.line_ending))?;
+        write_atomic(&path, &encode(&self.text, self.encoding, self.line_ending))?;
         self.disk_stamp = stamp(&path);
         self.path = Some(path);
         self.saved_text.clone_from(&self.text);
@@ -469,6 +519,69 @@ mod tests {
         assert!(!document.changed_on_disk());
         fs::write(&path, "a\nB\n").unwrap();
         assert!(document.changed_on_disk());
+        fs::remove_file(path).unwrap();
+    }
+
+    fn leftovers(path: &Path) -> Vec<String> {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|file| file.starts_with(&format!(".{name}.forge-save")))
+            .collect()
+    }
+
+    #[test]
+    fn saving_replaces_the_file_and_leaves_no_temporary_behind() {
+        let path = test_path();
+        fs::write(&path, "old\n").unwrap();
+        write_atomic(&path, b"new content\n").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new content\n");
+        assert!(leftovers(&path).is_empty());
+        // A new file is created the same way.
+        fs::remove_file(&path).unwrap();
+        write_atomic(&path, b"fresh").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"fresh");
+        assert!(leftovers(&path).is_empty());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_read_only_file_is_not_replaced_and_keeps_its_content() {
+        let path = test_path();
+        fs::write(&path, "keep me\n").unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&path, permissions).unwrap();
+
+        assert!(write_atomic(&path, b"overwritten").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"keep me\n");
+        assert!(leftovers(&path).is_empty());
+
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(&path, permissions).unwrap();
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_another_program_holds_open_is_written_in_place() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let path = test_path();
+        fs::write(&path, "old\n").unwrap();
+        // Readers and writers allowed, but not rename or delete: the atomic rename must fail.
+        let _holder = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        write_atomic(&path, b"updated\n").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"updated\n");
+        assert!(leftovers(&path).is_empty());
+        drop(_holder);
         fs::remove_file(path).unwrap();
     }
 
