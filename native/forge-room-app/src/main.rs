@@ -211,6 +211,9 @@ struct ForgeRoomApp {
     checked_folders: std::collections::HashSet<PathBuf>,
     auto_checked: std::time::Instant,
     recovery_warned: bool,
+    /// The files git reported as changed at the last read; the Explorer refreshes when it differs.
+    change_paths: Vec<String>,
+    terminals_confirmed: bool,
     graph_commits: Vec<git::CommitInfo>,
     graph_rows: Vec<graph::Row>,
     file_history: Vec<git::CommitInfo>,
@@ -347,6 +350,8 @@ impl ForgeRoomApp {
             checked_folders: std::collections::HashSet::new(),
             auto_checked: std::time::Instant::now(),
             recovery_warned: false,
+            change_paths: Vec::new(),
+            terminals_confirmed: false,
             graph_commits: Vec::new(),
             graph_rows: Vec::new(),
             file_history: Vec::new(),
@@ -578,11 +583,14 @@ impl ForgeRoomApp {
                 continue;
             }
             live.push(tab.id);
-            let hash = recovery::text_hash(tab.doc.text());
+            let path = tab.doc.path();
+            // The path is part of the fingerprint, so a renamed file is written again.
+            let hash = recovery::text_hash(tab.doc.text())
+                ^ recovery::text_hash(&path.map(|p| p.display().to_string()).unwrap_or_default())
+                    .rotate_left(1);
             if self.recovery_written.get(&tab.id) == Some(&hash) {
                 continue;
             }
-            let path = tab.doc.path();
             let entry = recovery::Entry {
                 path: path.map(|path| path.display().to_string()),
                 text: tab.doc.text().to_string(),
@@ -2350,6 +2358,18 @@ impl ForgeRoomApp {
             self.is_repo = snapshot.is_repo;
             self.operation = snapshot.operation;
             self.branch = snapshot.branch;
+            // Files that appear or disappear (an agent creating or deleting them) change this list, and
+            // then the cached Explorer listing is stale.
+            let paths: Vec<String> = match &snapshot.status {
+                Ok(status) => status.changes.iter().map(|c| c.path.clone()).collect(),
+                Err(_) => Vec::new(),
+            };
+            if paths != self.change_paths {
+                self.change_paths = paths;
+                if let Some(workspace) = &mut self.workspace {
+                    workspace.refresh();
+                }
+            }
             self.git_status = Some(snapshot.status);
             if self.is_repo {
                 self.graph_commits = snapshot.commits;
@@ -2518,6 +2538,10 @@ impl ForgeRoomApp {
         };
         if matches!(action, Action::StashDrop) {
             self.confirm = Some(Confirm::DropStash);
+            return;
+        }
+        if matches!(action, Action::AbortOperation) {
+            self.confirm = Some(Confirm::AbortOperation);
             return;
         }
         let outcome: Result<String, String> = match action {
@@ -2926,6 +2950,27 @@ impl ForgeRoomApp {
                         "Drop stash",
                     )
                 }
+                Confirm::AbortOperation => (
+                    "Abort",
+                    format!(
+                        "Abort the {}? Everything done since it started is thrown away, including \
+                         conflicts you have already resolved and saved: the files go back to how \
+                         they were before.",
+                        self.operation
+                            .map(|operation| operation.label().to_lowercase())
+                            .unwrap_or_else(|| "operation".into())
+                    ),
+                    "Abort",
+                ),
+                Confirm::QuitWithTerminals => (
+                    "Quit",
+                    format!(
+                        "{} terminal(s) are still running. Quitting stops the programs in them \
+                         (coding agents, dev servers).",
+                        self.terminals.iter().filter(|t| !t.has_exited()).count()
+                    ),
+                    "Quit anyway",
+                ),
                 Confirm::RunCheck => {
                     let manifest = self
                         .repo_root()
@@ -2979,6 +3024,21 @@ impl ForgeRoomApp {
                         }
                     }
                     Confirm::EndTerminal => self.close_terminal(),
+                    Confirm::AbortOperation => {
+                        if let Some(root) = self.repo_root() {
+                            self.status = match git::abort_operation(&root) {
+                                Ok(operation) => format!("{} aborted", operation.label()),
+                                Err(error) => format!("Git: {error}"),
+                            };
+                            self.refresh_git();
+                            self.reload_clean_tabs();
+                        }
+                    }
+                    Confirm::QuitWithTerminals => {
+                        self.terminals_confirmed = true;
+                        self.egui_ctx
+                            .send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                     Confirm::RunCheck => {
                         if let Some(root) = self.repo_root() {
                             self.checked_folders.insert(root);
@@ -4048,7 +4108,9 @@ impl ForgeRoomApp {
             1 => match tab.doc.reload() {
                 Ok(()) => {
                     self.status = format!("Reloaded {name} from disk; your edits were discarded");
-                    true
+                    // Not "settled": a close or quit that led here is asked again, so discarding
+                    // work never ends with the window closing by itself.
+                    false
                 }
                 Err(error) => {
                     self.status = format!("Cannot reload {name}: {error}");
@@ -4261,6 +4323,16 @@ impl eframe::App for ForgeRoomApp {
         {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(Pending::Quit);
+        }
+        // Shells that are still running are stopped by quitting: ask once.
+        if context.input(|input| input.viewport().close_requested())
+            && !self.allow_close
+            && !self.terminals_confirmed
+            && self.pending.is_none()
+            && self.terminals.iter().any(|t| !t.has_exited())
+        {
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm = Some(Confirm::QuitWithTerminals);
         }
         // Closing with lobby edits that cannot be saved asks once before losing them.
         if context.input(|input| input.viewport().close_requested())
@@ -4650,6 +4722,10 @@ enum Confirm {
     EndTerminal,
     /// `cargo check` runs the folder's build scripts and macros.
     RunCheck,
+    /// Abort the merge, cherry-pick, revert or rebase in progress.
+    AbortOperation,
+    /// Quit while shells are still running.
+    QuitWithTerminals,
 }
 
 /// What to tell the user after Replace All.

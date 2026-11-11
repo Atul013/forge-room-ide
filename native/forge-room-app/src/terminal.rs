@@ -63,6 +63,9 @@ impl Terminal {
             command.cwd(cwd);
         }
         command.env("TERM", "xterm-256color");
+        // Coding agents and other TUIs look at these to decide whether to use 24-bit colour.
+        command.env("COLORTERM", "truecolor");
+        command.env("TERM_PROGRAM", "forge-room");
         let child = pair
             .slave
             .spawn_command(command)
@@ -303,9 +306,19 @@ impl Terminal {
             let events = ui.input(|input| input.events.clone());
             for event in events {
                 match event {
-                    Event::Text(text) | Event::Paste(text) => {
+                    Event::Text(text) => {
                         self.follow_output();
                         self.send(text.as_bytes());
+                    }
+                    Event::Paste(text) => {
+                        self.follow_output();
+                        let bracketed = self
+                            .parser
+                            .lock()
+                            .map(|parser| parser.screen().bracketed_paste())
+                            .unwrap_or(false);
+                        let bytes = paste_bytes(&text, bracketed);
+                        self.send(&bytes);
                     }
                     // egui turns Ctrl+C into Copy and Ctrl+X into Cut, so a terminal must
                     // translate them back: copy a selection, otherwise interrupt the program.
@@ -543,44 +556,102 @@ fn push_cell(
 }
 
 pub fn key_bytes(key: Key, modifiers: Modifiers) -> Option<Vec<u8>> {
-    let sequence: &[u8] = match key {
-        Key::Enter => b"\r",
-        Key::Backspace => b"\x7f",
-        Key::Tab => {
-            if modifiers.shift {
-                b"\x1b[Z"
-            } else {
-                b"\t"
-            }
-        }
-        Key::Escape => b"\x1b",
-        Key::ArrowUp => b"\x1b[A",
-        Key::ArrowDown => b"\x1b[B",
-        Key::ArrowRight => b"\x1b[C",
-        Key::ArrowLeft => b"\x1b[D",
-        Key::Home => b"\x1b[H",
-        Key::End => b"\x1b[F",
-        Key::Delete => b"\x1b[3~",
-        Key::PageUp => b"\x1b[5~",
-        Key::PageDown => b"\x1b[6~",
-        Key::Insert => b"\x1b[2~",
-        _ => {
-            // Ctrl+letter sends the matching control character (Ctrl+C is 0x03).
-            if modifiers.ctrl
-                && !modifiers.alt
-                && let Some(name) = key
-                    .name()
-                    .chars()
-                    .next()
-                    .filter(|c| c.is_ascii_alphabetic())
-                && key.name().len() == 1
-            {
-                return Some(vec![(name.to_ascii_uppercase() as u8) - b'@']);
-            }
-            return None;
+    // xterm's number for held modifiers: 1, plus 1 for Shift, 2 for Alt and 4 for Ctrl.
+    let param =
+        1 + u8::from(modifiers.shift) + 2 * u8::from(modifiers.alt) + 4 * u8::from(modifiers.ctrl);
+    let modified = param > 1;
+    // Arrows, Home and End: `ESC [ A`, or `ESC [ 1 ; 5 A` with Ctrl held.
+    let cursor = |letter: char| -> Vec<u8> {
+        if modified {
+            format!("\x1b[1;{param}{letter}").into_bytes()
+        } else {
+            format!("\x1b[{letter}").into_bytes()
         }
     };
-    Some(sequence.to_vec())
+    // Delete, Insert, Page keys and F5 and up: `ESC [ 3 ~`, or `ESC [ 3 ; 5 ~`.
+    let tilde = |number: u8| -> Vec<u8> {
+        if modified {
+            format!("\x1b[{number};{param}~").into_bytes()
+        } else {
+            format!("\x1b[{number}~").into_bytes()
+        }
+    };
+    // F1 to F4: `ESC O P`, or `ESC [ 1 ; 2 P` with a modifier.
+    let function = |letter: char| -> Vec<u8> {
+        if modified {
+            format!("\x1b[1;{param}{letter}").into_bytes()
+        } else {
+            format!("\x1bO{letter}").into_bytes()
+        }
+    };
+    Some(match key {
+        // Shift or Alt with Enter is "a new line, not a submit" for coding agents (ESC then CR).
+        Key::Enter if modifiers.shift || modifiers.alt => b"\x1b\r".to_vec(),
+        Key::Enter => b"\r".to_vec(),
+        Key::Backspace if modifiers.ctrl => vec![0x17],
+        Key::Backspace if modifiers.alt => b"\x1b\x7f".to_vec(),
+        Key::Backspace => b"\x7f".to_vec(),
+        Key::Tab if modifiers.shift => b"\x1b[Z".to_vec(),
+        Key::Tab => b"\t".to_vec(),
+        Key::Escape => b"\x1b".to_vec(),
+        Key::ArrowUp => cursor('A'),
+        Key::ArrowDown => cursor('B'),
+        Key::ArrowRight => cursor('C'),
+        Key::ArrowLeft => cursor('D'),
+        Key::Home => cursor('H'),
+        Key::End => cursor('F'),
+        Key::Insert => tilde(2),
+        Key::Delete => tilde(3),
+        Key::PageUp => tilde(5),
+        Key::PageDown => tilde(6),
+        Key::F1 => function('P'),
+        Key::F2 => function('Q'),
+        Key::F3 => function('R'),
+        Key::F4 => function('S'),
+        Key::F5 => tilde(15),
+        Key::F6 => tilde(17),
+        Key::F7 => tilde(18),
+        Key::F8 => tilde(19),
+        Key::F9 => tilde(20),
+        Key::F10 => tilde(21),
+        Key::F11 => tilde(23),
+        Key::F12 => tilde(24),
+        _ => {
+            let letter = (key.name().len() == 1)
+                .then(|| key.name().chars().next())
+                .flatten()
+                .filter(|c| c.is_ascii_alphabetic())?;
+            if modifiers.ctrl && !modifiers.alt {
+                // Ctrl+letter sends the matching control character (Ctrl+C is 0x03).
+                vec![(letter.to_ascii_uppercase() as u8) - b'@']
+            } else if modifiers.alt && !modifiers.ctrl {
+                // Alt+letter is ESC and then the letter (word movement, agent shortcuts).
+                let letter = if modifiers.shift {
+                    letter.to_ascii_uppercase()
+                } else {
+                    letter.to_ascii_lowercase()
+                };
+                vec![0x1b, letter as u8]
+            } else {
+                return None;
+            }
+        }
+    })
+}
+
+/// What a paste sends. A program that asked for bracketed paste (coding agents do) gets the text
+/// between `ESC [ 200 ~` and `ESC [ 201 ~`, so a pasted newline is text and not Enter; for any other
+/// program the line breaks become carriage returns, which is what Enter sends.
+pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
+    let text = text.replace("\r\n", "\n");
+    if bracketed {
+        let mut bytes = b"\x1b[200~".to_vec();
+        bytes.extend_from_slice(text.as_bytes());
+        bytes.extend_from_slice(b"\x1b[201~");
+        bytes
+    } else {
+        text.replace('\n', "\r").into_bytes()
+    }
 }
 
 /// Standard xterm colors; the first sixteen are softened to sit well on a dark or light editor.
@@ -691,7 +762,46 @@ mod tests {
             key_bytes(Key::Delete, Modifiers::NONE),
             Some(b"\x1b[3~".to_vec())
         );
-        assert_eq!(key_bytes(Key::F5, Modifiers::NONE), None);
+        assert_eq!(
+            key_bytes(Key::F5, Modifiers::NONE),
+            Some(b"\x1b[15~".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::F1, Modifiers::NONE),
+            Some(b"\x1bOP".to_vec())
+        );
+        assert_eq!(key_bytes(Key::A, Modifiers::NONE), None);
+        // Modified keys: the xterm forms that shells and agents understand.
+        assert_eq!(
+            key_bytes(Key::ArrowRight, Modifiers::CTRL),
+            Some(b"\x1b[1;5C".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::ArrowLeft, Modifiers::ALT),
+            Some(b"\x1b[1;3D".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::Delete, Modifiers::SHIFT),
+            Some(b"\x1b[3;2~".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::Enter, Modifiers::SHIFT),
+            Some(b"\x1b\r".to_vec())
+        );
+        assert_eq!(
+            key_bytes(Key::Enter, Modifiers::ALT),
+            Some(b"\x1b\r".to_vec())
+        );
+        assert_eq!(key_bytes(Key::Backspace, Modifiers::CTRL), Some(vec![0x17]));
+        assert_eq!(key_bytes(Key::P, Modifiers::ALT), Some(b"\x1bp".to_vec()));
+        // AltGr (Ctrl and Alt together) is a way to type a character, not a shortcut.
+        assert_eq!(key_bytes(Key::Q, Modifiers::CTRL | Modifiers::ALT), None);
+        // A paste is wrapped when the program asked for that, and otherwise typed with Enter.
+        assert_eq!(
+            paste_bytes("a\nb", true),
+            b"\x1b[200~a\nb\x1b[201~".to_vec()
+        );
+        assert_eq!(paste_bytes("a\r\nb\nc", false), b"a\rb\rc".to_vec());
     }
 
     #[test]

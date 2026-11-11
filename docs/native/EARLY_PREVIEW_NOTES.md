@@ -20,6 +20,7 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 - Starting the app with nothing to open reopens the last folder and the files that were open (the front tab stays in front); files and folders that are gone are skipped. Unsaved text is the job of crash recovery.
 - Crash recovery: unsaved text is written to a recovery folder every few seconds and restored as unsaved tabs after an abnormal exit; a normal exit clears it.
 - Problems: Rust: Check Project (or Run cargo check in the Problems tab) runs `cargo check` on a worker thread (the Cargo.toml in the folder, or a workspace one or two levels below) and lists the compiler errors and warnings; click one to open the file at that line. Not a language server: the list is as old as the last run.
+- Terminal keys and paste for coding agents: Shift+Enter or Alt+Enter insert a new line, Alt+letter, Ctrl+Arrow, Ctrl+Backspace and F1-F12 are sent the way xterm does, multi-line paste is bracketed when the program asks for it, and COLORTERM=truecolor is set. Quitting asks first when shells are still running.
 - Terminal: more than one (Terminal: New Terminal, Ctrl+Shift+`, or the + in the panel; numbered chips switch between them and the cross ends the shown one). Ctrl+click a `file:line:column` reference in the output to open it (network and device paths are never followed).
 - Source Control: right-click a commit in the History graph to cherry-pick or revert it; merge, cherry-pick, revert and a rebase started elsewhere show a banner with an Abort button.
 
