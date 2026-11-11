@@ -971,6 +971,11 @@ mod tests {
             full.extend_from_slice(args);
             run(&dir, &full).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
         };
+        // The functions under test run plain `git` with no -c options, and a CI runner has no
+        // global identity: the repository gets its own, so merges and picks can make commits.
+        g(&["config", "user.name", "Test"]);
+        g(&["config", "user.email", "test@example.com"]);
+        g(&["config", "commit.gpgsign", "false"]);
         fs::write(dir.join("a.txt"), "base\n").unwrap();
         g(&["add", "."]);
         g(&["commit", "-q", "-m", "base"]);
