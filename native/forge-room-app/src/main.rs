@@ -31,6 +31,7 @@ mod search;
 mod search_view;
 mod settings;
 mod source_control;
+mod symbols;
 mod syntax;
 mod tabs;
 mod terminal;
@@ -627,6 +628,26 @@ impl ForgeRoomApp {
                 });
                 self.focus_editor = true;
             }
+            Command::GoToSymbol => {
+                let outline =
+                    self.tabs
+                        .tabs
+                        .get(self.tabs.active)
+                        .map(|tab| {
+                            let extension =
+                                tab.syntax
+                                    .clone()
+                                    .or_else(|| {
+                                        tab.doc.path().and_then(|path| path.extension()).map(
+                                            |extension| extension.to_string_lossy().into_owned(),
+                                        )
+                                    })
+                                    .unwrap_or_default();
+                            symbols::outline(tab.doc.text(), &extension)
+                        })
+                        .unwrap_or_default();
+                self.palette.open_symbols(outline);
+            }
             Command::ReopenClosedTab => match self.tabs.reopen_closed() {
                 Ok(Some(path)) => {
                     self.status = format!("Reopened {}", path.display());
@@ -1069,6 +1090,8 @@ impl ForgeRoomApp {
             self.switch_view(SidebarView::Room);
         } else if shortcut(ui, command_shift, Key::O) {
             self.open_folder_dialog();
+        } else if shortcut(ui, command_shift, Key::Y) {
+            self.run_command(Command::GoToSymbol, false);
         } else if shortcut(ui, command_shift, Key::T) {
             self.run_command(Command::ReopenClosedTab, false);
         } else if shortcut(ui, command, Key::P) {

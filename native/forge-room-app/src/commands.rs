@@ -9,6 +9,7 @@ pub enum Command {
     SaveAs,
     CloseTab,
     ReopenClosedTab,
+    GoToSymbol,
     SelectNextOccurrence,
     TransformUppercase,
     TransformLowercase,
@@ -59,6 +60,7 @@ pub const ALL: &[(Command, &str, &str)] = &[
         "Ctrl+Shift+T",
     ),
     (Command::CloseSavedTabs, "View: Close Saved Tabs", ""),
+    (Command::GoToSymbol, "Go to Symbol in File…", "Ctrl+Shift+Y"),
     (
         Command::SelectNextOccurrence,
         "Selection: Select Next Occurrence",

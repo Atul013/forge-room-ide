@@ -17,6 +17,8 @@ pub struct Palette {
     /// When set, the box lists branches instead of files and commands.
     branches: Option<Vec<git::Branch>>,
     purpose: BranchPurpose,
+    /// The outline of the open file, for the `@` mode (Go to Symbol in File).
+    symbols: Vec<crate::symbols::Symbol>,
 }
 
 /// What picking a branch in the palette does.
@@ -79,6 +81,15 @@ impl Palette {
         self.branches = Some(branches);
     }
 
+    /// Open the box in its symbol mode with the outline of the open file.
+    pub fn open_symbols(&mut self, symbols: Vec<crate::symbols::Symbol>) {
+        self.symbols = symbols;
+        self.query = "@".into();
+        self.selected = 0;
+        self.open = true;
+        self.focus = true;
+    }
+
     pub fn open_goto(&mut self) {
         self.query = ":".into();
         self.selected = 0;
@@ -93,6 +104,7 @@ enum Kind<'a> {
     Commands(&'a str),
     Files(&'a str),
     Line(&'a str),
+    Symbols(&'a str),
 }
 
 fn kind(query: &str) -> Kind<'_> {
@@ -100,6 +112,8 @@ fn kind(query: &str) -> Kind<'_> {
         Kind::Commands(rest.trim_start())
     } else if let Some(rest) = query.strip_prefix(':') {
         Kind::Line(rest.trim())
+    } else if let Some(rest) = query.strip_prefix('@') {
+        Kind::Symbols(rest.trim_start())
     } else {
         Kind::Files(query)
     }
@@ -119,6 +133,7 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
         Command(Command, &'static str, &'static str),
         File(usize),
         Line(usize),
+        Symbol(usize),
         Hint(&'static str),
     }
     let rows: Vec<Row> = if let Some(branches) = &palette.branches {
@@ -152,6 +167,21 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                     fuzzy::rank(text, &palette.files, 14)
                         .into_iter()
                         .map(Row::File)
+                        .collect()
+                }
+            }
+            Kind::Symbols(text) => {
+                if palette.symbols.is_empty() {
+                    vec![Row::Hint("No symbols found in this file")]
+                } else {
+                    let names: Vec<&str> = palette
+                        .symbols
+                        .iter()
+                        .map(|symbol| symbol.name.as_str())
+                        .collect();
+                    fuzzy::rank(text, &names, 80)
+                        .into_iter()
+                        .map(Row::Symbol)
                         .collect()
                 }
             }
@@ -300,6 +330,24 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                                     theme::text_dim(),
                                 );
                             }
+                            Row::Symbol(index) => {
+                                if let Some(symbol) = palette.symbols.get(*index) {
+                                    painter.text(
+                                        egui::pos2(rect.left() + 10.0, y),
+                                        Align2::LEFT_CENTER,
+                                        &symbol.name,
+                                        egui::FontId::proportional(13.5),
+                                        theme::text(),
+                                    );
+                                    painter.text(
+                                        egui::pos2(rect.right() - 10.0, y),
+                                        Align2::RIGHT_CENTER,
+                                        format!("{}  :{}", symbol.kind, symbol.line),
+                                        egui::FontId::proportional(12.0),
+                                        theme::text_dim(),
+                                    );
+                                }
+                            }
                             Row::Line(line) => {
                                 painter.text(
                                     egui::pos2(rect.left() + 10.0, y),
@@ -356,6 +404,11 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                 }
             }
             Some(Row::Line(line)) => outcome = Some(Outcome::GoToLine(*line)),
+            Some(Row::Symbol(index)) => {
+                if let Some(symbol) = palette.symbols.get(*index) {
+                    outcome = Some(Outcome::GoToLine(symbol.line));
+                }
+            }
             _ => {}
         }
         if outcome.is_some() {
