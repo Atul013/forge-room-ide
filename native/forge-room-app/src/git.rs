@@ -78,11 +78,90 @@ impl Hunk {
     }
 }
 
+/// How long a Git process may run: reads are quick, so a read that is still going after half a
+/// minute is stuck (a stalled share, a hung helper); changes and network work get far longer.
+fn time_limit(args: &[&str]) -> std::time::Duration {
+    const READS: &[&str] = &[
+        "status",
+        "diff",
+        "log",
+        "blame",
+        "show",
+        "branch",
+        "stash",
+        "rev-parse",
+        "ls-files",
+        "for-each-ref",
+        "tag",
+        "check-ref-format",
+        "rev-list",
+        "cat-file",
+    ];
+    let seconds = match args.first() {
+        Some(name) if READS.contains(name) => 30,
+        _ => 15 * 60,
+    };
+    std::time::Duration::from_secs(seconds)
+}
+
+/// `command.output()` with a deadline: a process that outlives it is killed and reported.
+fn output_within(
+    command: &mut Command,
+    limit: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut out_pipe = child.stdout.take();
+    let mut err_pipe = child.stderr.take();
+    let out = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(pipe) = &mut out_pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let err = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(pipe) = &mut err_pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "git took too long and was stopped",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15));
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    })
+}
+
 pub fn run(root: &Path, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new("git");
     // Credentials come from a helper (e.g. Git Credential Manager); never block on a console prompt.
+    // `core.fsmonitor` is switched off because a repository's own config could name a program there
+    // that Git would then run on every `status`.
     command
         .current_dir(root)
+        .args(["-c", "core.fsmonitor=false"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         // Reads such as `git status` otherwise refresh the index and take its lock, which could
@@ -93,7 +172,7 @@ pub fn run(root: &Path, args: &[&str]) -> Result<String, String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flash from a GUI app
     }
-    let output = command.output().map_err(|error| {
+    let output = output_within(&mut command, time_limit(args)).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             "Git is not installed or not on PATH".to_string()
         } else {
@@ -252,7 +331,7 @@ pub fn commit(root: &Path, message: &str) -> Result<String, String> {
 
 /// Unified diff of one file, staged (`--cached`) or working tree.
 pub fn diff(root: &Path, path: &str, staged: bool) -> Result<String, String> {
-    let mut args = vec!["diff", "--no-color"];
+    let mut args = vec!["diff", "--no-color", "--no-ext-diff", "--no-textconv"];
     if staged {
         args.push("--cached");
     }
@@ -269,6 +348,7 @@ fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<String, St
     let mut command = Command::new("git");
     command
         .current_dir(root)
+        .args(["-c", "core.fsmonitor=false"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -308,6 +388,7 @@ fn run_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let mut command = Command::new("git");
     command
         .current_dir(root)
+        .args(["-c", "core.fsmonitor=false"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0");
@@ -316,8 +397,7 @@ fn run_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    let output = command
-        .output()
+    let output = output_within(&mut command, time_limit(args))
         .map_err(|error| format!("could not run git: {error}"))?;
     if output.status.success() {
         Ok(output.stdout)
@@ -334,7 +414,18 @@ fn run_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 /// whole (reverting would delete it for good), and a change that overlaps something already staged
 /// (the gutter draws staged and unstaged changes together, so the bar might mean another change).
 pub fn unstaged_hunk_patch(root: &Path, path: &str, line: usize) -> Result<Vec<u8>, String> {
-    let diff = run_bytes(root, &["diff", "--no-color", "-U0", "--", path])?;
+    let diff = run_bytes(
+        root,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-U0",
+            "--",
+            path,
+        ],
+    )?;
     let mut header: Vec<u8> = Vec::new();
     let mut chosen: Option<(Vec<u8>, Hunk)> = None;
     let mut current: Option<(Vec<u8>, Option<Hunk>)> = None;
@@ -403,9 +494,21 @@ pub fn revert_hunk(root: &Path, path: &str, line: usize) -> Result<(), String> {
 }
 
 pub fn file_hunks(root: &Path, path: &str) -> Vec<Hunk> {
-    run(root, &["diff", "HEAD", "--no-color", "-U0", "--", path])
-        .map(|output| parse_hunks(&output))
-        .unwrap_or_default()
+    run(
+        root,
+        &[
+            "diff",
+            "HEAD",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "-U0",
+            "--",
+            path,
+        ],
+    )
+    .map(|output| parse_hunks(&output))
+    .unwrap_or_default()
 }
 
 pub fn parse_hunks(diff: &str) -> Vec<Hunk> {
@@ -954,7 +1057,18 @@ pub fn file_log(root: &Path, path: &str, limit: usize) -> Result<Vec<CommitInfo>
 
 /// Full details of one commit: message, files changed and the patch.
 pub fn show(root: &Path, hash: &str) -> Result<String, String> {
-    run(root, &["show", "--no-color", "--stat", "--patch", hash])
+    run(
+        root,
+        &[
+            "show",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--stat",
+            "--patch",
+            hash,
+        ],
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -99,6 +99,11 @@ fn git_files(root: &Path, cancel: &AtomicBool) -> Option<Vec<PathBuf>> {
         .filter(|path| !path.is_empty())
         .map(|path| root.join(path))
     {
+        // A link is not followed: its target may be outside the folder (or on a network share that
+        // answering `is_file` would contact).
+        if is_link(&path) {
+            continue;
+        }
         if path.is_file() {
             files.push(path);
         } else if path.is_dir() {
@@ -111,6 +116,21 @@ fn git_files(root: &Path, cancel: &AtomicBool) -> Option<Vec<PathBuf>> {
     files.dedup();
     files.truncate(MAX_LISTED_FILES);
     Some(files)
+}
+
+/// Whether `path` itself is a symbolic link or a junction.
+fn is_link(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
 }
 
 /// Every project file: from Git's own view when the folder is a repository, otherwise by walking
@@ -223,10 +243,24 @@ pub fn replace_in_files(
             return report;
         }
     };
-    for path in collect(root, cancel) {
+    let files = collect(root, cancel);
+    if files.len() >= MAX_LISTED_FILES {
+        // The list stops there, so a replace would quietly cover only part of the project.
+        report.error = Some(format!(
+            "This folder has {MAX_LISTED_FILES} files or more, more than Replace All covers; \
+             nothing was changed"
+        ));
+        return report;
+    }
+    let root_canonical = crate::tabs::normalize(root);
+    for path in files {
         if cancel.load(Ordering::Relaxed) {
             report.cancelled = true;
             return report;
+        }
+        // A file reached through a link in one of its folders may live outside this one.
+        if !crate::tabs::normalize(&path).starts_with(&root_canonical) {
+            continue;
         }
         if fs::metadata(&path)
             .map(|m| m.len() > MAX_FILE_BYTES)

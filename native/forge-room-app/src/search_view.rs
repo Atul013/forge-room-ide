@@ -147,14 +147,30 @@ impl SearchView {
 
     /// Pick up a finished search. True while work is still pending (caller should repaint soon).
     pub fn poll(&mut self) -> bool {
-        if let Some(receiver) = &self.receiver
-            && let Ok(results) = receiver.try_recv()
-        {
-            if !results.cancelled {
-                self.results = Some(results);
+        if let Some(receiver) = &self.receiver {
+            match receiver.try_recv() {
+                Ok(results) => {
+                    if !results.cancelled {
+                        self.results = Some(results);
+                    }
+                    self.running = false;
+                    self.receiver = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    // The search thread died: stop showing a spinner for it.
+                    self.running = false;
+                    self.receiver = None;
+                }
             }
-            self.running = false;
-            self.receiver = None;
+        }
+        // A pending search only needs frames while the sidebar can start it; when the sidebar is not
+        // shown the wish is kept (see `show`) and no repaint loop is run for it.
+        if self
+            .dirty_since
+            .is_some_and(|since| since.elapsed() > DEBOUNCE * 4)
+        {
+            self.dirty_since = None;
         }
         self.running || self.replacing.is_some() || self.dirty_since.is_some()
     }
@@ -187,6 +203,14 @@ impl SearchView {
             return action;
         };
 
+        // Text typed while the sidebar was away (or a search that never started) is searched now.
+        if self.dirty_since.is_none()
+            && !self.running
+            && self.query != self.searched_query
+            && self.receiver.is_none()
+        {
+            self.dirty_since = Some(Instant::now() - DEBOUNCE);
+        }
         if std::mem::take(&mut self.replace_requested) {
             self.start_replace(root, protected.to_vec());
         }

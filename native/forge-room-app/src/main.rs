@@ -205,6 +205,12 @@ struct ForgeRoomApp {
     last_git: std::time::Instant,
     hunks: Vec<git::Hunk>,
     hunks_tab: Option<u64>,
+    /// The file's history, blame and changes are read on a worker thread.
+    hunks_job: background::Latest<FileGit>,
+    /// Folders in which the user agreed to run cargo check during this run.
+    checked_folders: std::collections::HashSet<PathBuf>,
+    auto_checked: std::time::Instant,
+    recovery_warned: bool,
     graph_commits: Vec<git::CommitInfo>,
     graph_rows: Vec<graph::Row>,
     file_history: Vec<git::CommitInfo>,
@@ -337,6 +343,10 @@ impl ForgeRoomApp {
             last_git: std::time::Instant::now(),
             hunks: Vec::new(),
             hunks_tab: None,
+            hunks_job: background::Latest::default(),
+            checked_folders: std::collections::HashSet::new(),
+            auto_checked: std::time::Instant::now(),
+            recovery_warned: false,
             graph_commits: Vec::new(),
             graph_rows: Vec::new(),
             file_history: Vec::new(),
@@ -509,6 +519,13 @@ impl ForgeRoomApp {
         if !self.auto_save || self.pending.is_some() {
             return;
         }
+        // Looking at every dirty text each frame is wasted work: twice a second is plenty.
+        let wait = std::time::Duration::from_millis(500);
+        if self.auto_checked.elapsed() < wait {
+            self.egui_ctx.request_repaint_after(wait);
+            return;
+        }
+        self.auto_checked = std::time::Instant::now();
         let now = std::time::Instant::now();
         let mut live = Vec::new();
         let mut saved = None;
@@ -571,8 +588,16 @@ impl ForgeRoomApp {
                 text: tab.doc.text().to_string(),
                 disk_hash: path.map(|_| recovery::text_hash(tab.doc.saved_text())),
             };
-            if self.recovery.save(tab.id, &entry).is_ok() {
-                self.recovery_written.insert(tab.id, hash);
+            match self.recovery.save(tab.id, &entry) {
+                Ok(()) => {
+                    self.recovery_written.insert(tab.id, hash);
+                }
+                Err(error) if !self.recovery_warned => {
+                    // The safety net is not working: say so once instead of retrying in silence.
+                    self.recovery_warned = true;
+                    self.status = format!("Crash recovery cannot write its files: {error}");
+                }
+                Err(_) => {}
             }
         }
         let gone: Vec<u64> = self
@@ -1020,6 +1045,10 @@ impl ForgeRoomApp {
             self.status = "Open a folder to check it".into();
             return;
         };
+        if !self.checked_folders.contains(&root) {
+            self.confirm = Some(Confirm::RunCheck);
+            return;
+        }
         let context = self.egui_ctx.clone();
         if self
             .checking
@@ -2370,41 +2399,61 @@ impl ForgeRoomApp {
     }
 
     fn refresh_hunks(&mut self) {
-        self.hunks_tab = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.id);
-        self.hunks.clear();
-        let (Some(root), Some(path)) = (self.repo_root(), self.tabs.active_path()) else {
+        let active = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.id);
+        if self.hunks_tab != active {
+            // Another file: what is shown belongs to the previous one.
+            self.hunks.clear();
+            self.blame.clear();
+            self.file_history.clear();
+            self.history_name = None;
+        }
+        self.hunks_tab = active;
+        let (Some(root), Some(path), Some(tab)) = (
+            self.repo_root(),
+            self.tabs.active_path().map(std::path::Path::to_path_buf),
+            active,
+        ) else {
             return;
         };
         let Ok(relative) = path.strip_prefix(&root) else {
             self.file_history.clear();
             self.history_name = None;
             self.blame.clear();
+            self.hunks.clear();
             return;
         };
         let relative = relative.to_string_lossy().replace('\\', "/");
-        self.file_history = git::file_log(&root, &relative, 30).unwrap_or_default();
-        self.history_name = relative.rsplit('/').next().map(String::from);
         let untracked = matches!(&self.git_status, Some(Ok(status))
             if status.changes.iter().any(|c| c.path == relative && c.is_untracked()));
-        self.blame = if untracked {
-            Vec::new()
-        } else {
-            git::blame(&root, &relative)
+        let lines = self
+            .tabs
+            .tabs
+            .get(self.tabs.active)
+            .map(|tab| gutter::line_count(tab.doc.text()))
+            .unwrap_or(0);
+        let context = self.egui_ctx.clone();
+        // Busy: the request is remembered and runs when this one finishes.
+        self.hunks_job.request(&context, move || {
+            FileGit::read(tab, &root, &relative, untracked, lines)
+        });
+    }
+
+    /// Apply a finished read of the active file's history, blame and changes.
+    fn poll_hunks(&mut self) {
+        let Some(read) = self.hunks_job.poll() else {
+            if self.hunks_job.take_failed() {
+                self.hunks_job = background::Latest::default();
+            }
+            return;
         };
-        if untracked {
-            let lines = self
-                .tabs
-                .tabs
-                .get(self.tabs.active)
-                .map(|tab| gutter::line_count(tab.doc.text()))
-                .unwrap_or(0);
-            self.hunks.push(git::Hunk {
-                kind: git::HunkKind::Added,
-                start: 1,
-                len: lines,
-            });
-        } else {
-            self.hunks = git::file_hunks(&root, &relative);
+        if Some(read.tab) == self.hunks_tab {
+            self.file_history = read.history;
+            self.history_name = read.name;
+            self.blame = read.blame;
+            self.hunks = read.hunks;
+        }
+        if self.hunks_job.take_again() || Some(read.tab) != self.hunks_tab {
+            self.refresh_hunks();
         }
     }
 
@@ -2877,6 +2926,21 @@ impl ForgeRoomApp {
                         "Drop stash",
                     )
                 }
+                Confirm::RunCheck => {
+                    let manifest = self
+                        .repo_root()
+                        .and_then(|root| diagnostics::find_manifest(&root))
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default();
+                    (
+                        "Run cargo check",
+                        format!(
+                            "cargo check runs the build scripts and macros of this project \
+                             ({manifest}) with your rights. Only do that for code you trust."
+                        ),
+                        "Run cargo check",
+                    )
+                }
                 Confirm::EndTerminal => (
                     "End terminal",
                     format!(
@@ -2915,6 +2979,12 @@ impl ForgeRoomApp {
                         }
                     }
                     Confirm::EndTerminal => self.close_terminal(),
+                    Confirm::RunCheck => {
+                        if let Some(root) = self.repo_root() {
+                            self.checked_folders.insert(root);
+                        }
+                        self.start_check();
+                    }
                 }
             } else if !no {
                 self.confirm = Some(question);
@@ -4424,6 +4494,7 @@ impl eframe::App for ForgeRoomApp {
 
         self.poll_git_job(&context);
         self.poll_git_refresh();
+        self.poll_hunks();
         self.poll_recycling();
         self.discard_dialog(&context);
         self.pending_dialog(&context);
@@ -4529,11 +4600,56 @@ fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
 }
 
 /// Display name of the language for a file name, judged from its extension.
+/// What is read about the active file from Git, on a worker thread.
+struct FileGit {
+    tab: u64,
+    history: Vec<git::CommitInfo>,
+    name: Option<String>,
+    blame: Vec<git::BlameLine>,
+    hunks: Vec<git::Hunk>,
+}
+
+impl FileGit {
+    fn read(
+        tab: u64,
+        root: &std::path::Path,
+        relative: &str,
+        untracked: bool,
+        lines: usize,
+    ) -> Self {
+        let history = git::file_log(root, relative, 30).unwrap_or_default();
+        let name = relative.rsplit('/').next().map(String::from);
+        let blame = if untracked {
+            Vec::new()
+        } else {
+            git::blame(root, relative)
+        };
+        let hunks = if untracked {
+            vec![git::Hunk {
+                kind: git::HunkKind::Added,
+                start: 1,
+                len: lines,
+            }]
+        } else {
+            git::file_hunks(root, relative)
+        };
+        FileGit {
+            tab,
+            history,
+            name,
+            blame,
+            hunks,
+        }
+    }
+}
+
 /// A question the user must answer before something that cannot be undone happens.
 #[derive(Clone, Copy)]
 enum Confirm {
     DropStash,
     EndTerminal,
+    /// `cargo check` runs the folder's build scripts and macros.
+    RunCheck,
 }
 
 /// What to tell the user after Replace All.

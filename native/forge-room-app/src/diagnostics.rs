@@ -143,7 +143,7 @@ pub fn check(root: &Path) -> Report {
         .arg(&manifest)
         .current_dir(&base)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .stdin(Stdio::null());
     #[cfg(windows)]
     {
@@ -153,7 +153,13 @@ pub fn check(root: &Path) -> Report {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            report.failure = Some(format!("Could not run cargo: {error}"));
+            report.failure = Some(if error.kind() == std::io::ErrorKind::NotFound {
+                "cargo was not found. Install Rust, or start Forge from a terminal where cargo \
+                 works (its .cargo bin folder must be on PATH)"
+                    .to_string()
+            } else {
+                format!("Could not run cargo: {error}")
+            });
             return report;
         }
     };
@@ -163,6 +169,14 @@ pub fn check(root: &Path) -> Report {
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         if let Some(pipe) = &mut pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let mut error_pipe = child.stderr.take();
+    let error_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(pipe) = &mut error_pipe {
             let _ = pipe.read_to_end(&mut bytes);
         }
         bytes
@@ -202,7 +216,17 @@ pub fn check(root: &Path) -> Report {
         && report.problems.is_empty()
         && report.failure.is_none()
     {
-        report.failure = Some("cargo check failed before it could report problems".into());
+        let errors = String::from_utf8_lossy(&error_reader.join().unwrap_or_default()).to_string();
+        let reason = errors
+            .lines()
+            .find(|line| line.trim_start().starts_with("error"))
+            .or_else(|| errors.lines().find(|line| !line.trim().is_empty()))
+            .unwrap_or("");
+        report.failure = Some(if reason.is_empty() {
+            "cargo check failed before it could report problems".to_string()
+        } else {
+            format!("cargo check failed: {}", reason.trim())
+        });
     }
     report
 }
