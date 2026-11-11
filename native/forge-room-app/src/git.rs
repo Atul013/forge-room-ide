@@ -262,6 +262,92 @@ pub fn diff(root: &Path, path: &str, staged: bool) -> Result<String, String> {
 }
 
 /// Changed regions of a tracked file compared to HEAD (staged and unstaged together).
+/// Like [`run`], with `input` written to the command's standard input.
+fn run_with_input(root: &Path, args: &[&str], input: &str) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut command = Command::new("git");
+    command
+        .current_dir(root)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("could not run git: {error}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // A write error shows up as git's own complaint about the patch below.
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("could not run git: {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if message.is_empty() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            message
+        })
+    }
+}
+
+/// The change of `path` that is not staged yet (working tree against the index) which covers
+/// `line` (1-based, in the file as it is now), as a patch that applies on its own. A deleted
+/// block is covered by the line just above it, the line the gutter marks it on.
+pub fn unstaged_hunk_patch(root: &Path, path: &str, line: usize) -> Result<String, String> {
+    let diff = run(root, &["diff", "--no-color", "-U0", "--", path])?;
+    let mut header = String::new();
+    let mut chosen: Option<String> = None;
+    let mut current: Option<(bool, String)> = None;
+    let finish = |current: &mut Option<(bool, String)>, chosen: &mut Option<String>| {
+        if let Some((covers, text)) = current.take()
+            && covers
+            && chosen.is_none()
+        {
+            *chosen = Some(text);
+        }
+    };
+    for text in diff.split_inclusive('\n') {
+        if text.starts_with("@@ ") {
+            finish(&mut current, &mut chosen);
+            let hunks = parse_hunks(text);
+            let covers = hunks.first().is_some_and(|hunk| hunk.covers(line));
+            current = Some((covers, text.to_string()));
+        } else if let Some((_, body)) = &mut current {
+            body.push_str(text);
+        } else {
+            header.push_str(text);
+        }
+    }
+    finish(&mut current, &mut chosen);
+    chosen
+        .map(|hunk| format!("{header}{hunk}"))
+        .ok_or_else(|| "There is no unstaged change at this line".to_string())
+}
+
+/// Stage the single change at `line` of `path`, leaving the rest of the file unstaged.
+pub fn stage_hunk(root: &Path, path: &str, line: usize) -> Result<(), String> {
+    let patch = unstaged_hunk_patch(root, path, line)?;
+    run_with_input(root, &["apply", "--cached", "--unidiff-zero", "-"], &patch).map(|_| ())
+}
+
+/// Throw away the single unstaged change at `line` of `path` in the working tree.
+pub fn revert_hunk(root: &Path, path: &str, line: usize) -> Result<(), String> {
+    let patch = unstaged_hunk_patch(root, path, line)?;
+    run_with_input(root, &["apply", "--reverse", "--unidiff-zero", "-"], &patch).map(|_| ())
+}
+
 pub fn file_hunks(root: &Path, path: &str) -> Vec<Hunk> {
     run(root, &["diff", "HEAD", "--no-color", "-U0", "--", path])
         .map(|output| parse_hunks(&output))
@@ -994,6 +1080,53 @@ mod tests {
         ];
         full.extend_from_slice(args);
         run(dir, &full).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+    }
+
+    #[test]
+    fn single_changes_can_be_staged_or_reverted_leaving_the_rest() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        let lines: Vec<String> = (1..=12).map(|n| format!("line {n}")).collect();
+        fs::write(dir.join("f.txt"), lines.join("\n") + "\n").unwrap();
+        g(&dir, &["add", "."]);
+        g(&dir, &["commit", "-q", "-m", "twelve lines"]);
+        // Three separate changes: modify line 2, delete line 6, add a line after line 10.
+        let mut edited = lines.clone();
+        edited[1] = "line 2 changed".into();
+        edited.remove(5);
+        edited.insert(9, "inserted".into());
+        fs::write(dir.join("f.txt"), edited.join("\n") + "\n").unwrap();
+
+        // Stage only the first change: the index holds it, the other two are still unstaged.
+        stage_hunk(&dir, "f.txt", 2).unwrap();
+        let staged = g(&dir, &["diff", "--cached", "-U0", "--", "f.txt"]);
+        assert!(staged.contains("+line 2 changed") && !staged.contains("inserted"));
+        assert!(!staged.contains("-line 6"));
+        let unstaged = g(&dir, &["diff", "-U0", "--", "f.txt"]);
+        assert!(!unstaged.contains("line 2 changed") && unstaged.contains("+inserted"));
+        // Nothing is left to stage there now.
+        assert!(
+            stage_hunk(&dir, "f.txt", 2)
+                .unwrap_err()
+                .contains("no unstaged change")
+        );
+
+        // Revert the inserted line: it leaves the file, the others stay.
+        revert_hunk(&dir, "f.txt", 10).unwrap();
+        let text = fs::read_to_string(dir.join("f.txt"))
+            .unwrap()
+            .replace("\r\n", "\n");
+        assert!(!text.contains("inserted"));
+        assert!(text.contains("line 2 changed"));
+        assert!(!text.contains("line 6"), "the deletion is still there");
+
+        // A deleted block is covered by the line just above it, as the gutter marks it.
+        stage_hunk(&dir, "f.txt", 5).unwrap();
+        assert!(g(&dir, &["diff", "--cached", "-U0", "--", "f.txt"]).contains("-line 6"));
+        assert!(unstaged_hunk_patch(&dir, "f.txt", 1).is_err());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

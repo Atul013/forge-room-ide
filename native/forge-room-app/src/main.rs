@@ -1869,6 +1869,38 @@ impl ForgeRoomApp {
         }
     }
 
+    /// Stage or revert the single change at `line` of the active file (from the gutter menu).
+    fn change_at_line(&mut self, stage: bool, line: usize) {
+        let (Some(root), Some(tab)) = (self.repo_root(), self.tabs.tabs.get(self.tabs.active))
+        else {
+            return;
+        };
+        let Some(path) = tab.doc.path() else { return };
+        let Ok(relative) = path.strip_prefix(&root) else {
+            return;
+        };
+        // The change positions come from the file on disk: unsaved edits would not line up.
+        if tab.doc.is_dirty() {
+            self.status = "Save the file first, then stage or revert a change".into();
+            return;
+        }
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let result = if stage {
+            git::stage_hunk(&root, &relative, line).map(|()| "Staged the change")
+        } else {
+            git::revert_hunk(&root, &relative, line).map(|()| "Reverted the change")
+        };
+        self.status = match result {
+            Ok(message) => message.to_string(),
+            Err(error) => format!("Git: {error}"),
+        };
+        self.refresh_git();
+        if !stage {
+            // The file changed on disk: the open (saved) tab shows the reverted text.
+            self.reload_clean_tabs();
+        }
+    }
+
     fn refresh_hunks(&mut self) {
         self.hunks_tab = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.id);
         self.hunks.clear();
@@ -2546,6 +2578,8 @@ impl ForgeRoomApp {
             None
         };
         let mut blame_click: Option<String> = None;
+        // A change menu choice in the gutter: (stage it, line).
+        let mut hunk_choice: Option<(bool, usize)> = None;
         let select = self.pending_select.take();
         let transform = self.pending_edit.take();
         let find_matches = if self.find.open {
@@ -2794,6 +2828,27 @@ impl ForgeRoomApp {
                                 ),
                             };
                             painter.rect_filled(bar, 1.0, color);
+                            // Right-click the coloured bar to stage or revert just this change.
+                            let strip = egui::Rect::from_min_size(
+                                egui::pos2(gutter.right() - 12.0, top),
+                                egui::vec2(14.0, height),
+                            );
+                            ui.interact(
+                                strip,
+                                ui.scope_id().with(("hunk-bar", line)),
+                                egui::Sense::click(),
+                            )
+                            .on_hover_text("Right-click: stage or revert this change")
+                            .context_menu(|ui| {
+                                if ui.button("Stage this change").clicked() {
+                                    hunk_choice = Some((true, line + 1));
+                                    ui.close();
+                                }
+                                if ui.button("Revert this change").clicked() {
+                                    hunk_choice = Some((false, line + 1));
+                                    ui.close();
+                                }
+                            });
                         }
                         if current {
                             painter.set(
@@ -2825,6 +2880,9 @@ impl ForgeRoomApp {
             });
         if let Some(hash) = blame_click {
             self.git_action(source_control::Action::ShowCommit(hash));
+        }
+        if let Some((stage, line)) = hunk_choice {
+            self.change_at_line(stage, line);
         }
         if let (Some(index), Some(tab)) = (cursor_index, self.tabs.tabs.get(self.tabs.active)) {
             self.cursor = position::line_col(tab.doc.text(), index);
