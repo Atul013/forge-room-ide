@@ -93,7 +93,7 @@ fn last_agent_message(events: &str) -> Option<String> {
                 .as_str()
                 .map(|text| truncate(text, 20_000))
         })
-        .last()
+        .next_back()
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {
