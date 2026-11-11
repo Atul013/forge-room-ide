@@ -280,15 +280,74 @@ fn can_open_before(after: Option<char>) -> bool {
     after.is_none_or(|c| c.is_whitespace() || matches!(c, ')' | ']' | '}' | ',' | ';' | '.' | ':'))
 }
 
+/// Which quote characters are completed for a file type. Prose has apostrophes and stray quotes
+/// everywhere, and in Rust a single quote usually starts a lifetime, so those are left alone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PairStyle {
+    pub quotes: bool,
+    pub single_quote: bool,
+}
+
+impl PairStyle {
+    pub const ALL: PairStyle = PairStyle {
+        quotes: true,
+        single_quote: true,
+    };
+
+    pub fn for_extension(extension: &str) -> PairStyle {
+        match extension.to_ascii_lowercase().as_str() {
+            "md" | "markdown" | "txt" | "text" | "" => PairStyle {
+                quotes: false,
+                single_quote: false,
+            },
+            "rs" => PairStyle {
+                quotes: true,
+                single_quote: false,
+            },
+            _ => PairStyle::ALL,
+        }
+    }
+}
+
+/// Whether the caret is inside a string opened with `quote` on its line: an odd number of
+/// unescaped `quote` characters come before it.
+fn inside_string(line_prefix: &str, quote: char) -> bool {
+    let mut open = false;
+    let mut escaped = false;
+    for c in line_prefix.chars() {
+        if escaped {
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == quote {
+            open = !open;
+        }
+    }
+    open
+}
+
 /// What typing `typed` does to the selection `start..end` (byte offsets): complete a pair,
 /// surround the selection, or step over a closing character that is already there. `None` leaves
 /// the character to the text edit.
-pub fn typed_char(text: &str, start: usize, end: usize, typed: char) -> Option<Edit> {
+pub fn typed_char(
+    text: &str,
+    start: usize,
+    end: usize,
+    typed: char,
+    style: PairStyle,
+) -> Option<Edit> {
     let (start, end) = (boundary(text, start), boundary(text, end));
     let (start, end) = (start.min(end), start.max(end));
     let after = text[end..].chars().next();
     let before = text[..start].chars().next_back();
     let closer = pair_of(typed);
+    let line_prefix = text[..start].rsplit('\n').next().unwrap_or("");
+    if is_quote(typed) {
+        // Prose and lifetimes get no quote pairs, and a quote after a backslash is an escape.
+        if !style.quotes || (typed == '\'' && !style.single_quote) || before == Some('\\') {
+            return None;
+        }
+    }
 
     if start != end {
         // Typing an opening character over a selection wraps it, and keeps it selected.
@@ -307,7 +366,14 @@ pub fn typed_char(text: &str, start: usize, end: usize, typed: char) -> Option<E
     }
 
     // Typing the closing character that is already next to the caret steps over it.
-    if after == Some(typed) && (matches!(typed, ')' | ']' | '}') || is_quote(typed)) {
+    // A quote is only stepped over when it closes a string that is open before the caret; in
+    // front of an opening quote it is typed as usual.
+    let closes = if is_quote(typed) {
+        inside_string(line_prefix, typed)
+    } else {
+        matches!(typed, ')' | ']' | '}')
+    };
+    if after == Some(typed) && closes {
         let at = end + typed.len_utf8();
         return Some(Edit {
             replace: end..end,
@@ -323,10 +389,7 @@ pub fn typed_char(text: &str, start: usize, end: usize, typed: char) -> Option<E
     if is_quote(typed) {
         // No pair inside a word (an apostrophe in "don't") or after another quote, and none after
         // `&` or `<` where a single quote starts a Rust lifetime.
-        let prefix = text[..start].rsplit('\n').next().unwrap_or("");
-        if before.is_some_and(|c| is_word(c) || is_quote(c))
-            || (typed == '\'' && prefix.ends_with(['&', '<']))
-        {
+        if before.is_some_and(|c| is_word(c) || is_quote(c)) || inside_string(line_prefix, typed) {
             return None;
         }
     }
@@ -354,10 +417,12 @@ pub fn backspace_in_pair(text: &str, caret: usize) -> Option<Edit> {
     })
 }
 
-/// Handles typed characters and Backspace for pairs in the text edit `id`. Typed characters are
-/// taken from the start of this frame's events only as long as each is handled, so the order of
-/// everything else is kept. Returns true when the text changed.
-pub fn smart_pairs(ui: &egui::Ui, id: egui::Id, text: &mut String) -> bool {
+/// Handles typed characters and Backspace for pairs in the text edit `id`. Plain letter keys
+/// between typed characters are stepped over; any other key (Enter, arrows, Backspace outside a
+/// pair...) ends the handling for the frame, so the order of everything is kept. Returns true when
+/// the text changed.
+pub fn smart_pairs(ui: &egui::Ui, id: egui::Id, text: &mut String, extension: &str) -> bool {
+    let style = PairStyle::for_extension(extension);
     if !ui.memory(|memory| memory.has_focus(id)) {
         return false;
     }
@@ -374,14 +439,14 @@ pub fn smart_pairs(ui: &egui::Ui, id: egui::Id, text: &mut String) -> bool {
         return false;
     };
     let mut changed = false;
-    let mut handled = 0;
+    let mut handled: Vec<usize> = Vec::new();
     let events = ui.input(|input| input.events.clone());
-    for event in &events {
+    for (index, event) in events.iter().enumerate() {
         let edit = match event {
             egui::Event::Text(typed) => {
                 let mut chars = typed.chars();
                 match (chars.next(), chars.next()) {
-                    (Some(c), None) => typed_char(text, start, end, c),
+                    (Some(c), None) => typed_char(text, start, end, c, style),
                     _ => None,
                 }
             }
@@ -393,23 +458,34 @@ pub fn smart_pairs(ui: &egui::Ui, id: egui::Id, text: &mut String) -> bool {
             } if *modifiers == egui::Modifiers::NONE && start == end => {
                 backspace_in_pair(text, start)
             }
+            // The key press that produced a typed character (or its release): not ours to take,
+            // and it does not change what the next typed character means.
+            egui::Event::Key { key, .. } if is_character_key(*key) => continue,
             _ => None,
         };
         let Some(edit) = edit else { break };
         text.replace_range(edit.replace.clone(), &edit.replacement);
         (start, end) = edit.selection;
         changed = true;
-        handled += 1;
+        handled.push(index);
     }
-    if handled == 0 {
+    if handled.is_empty() {
         return false;
     }
     // Those events are taken: egui must not type them a second time.
     ui.input_mut(|input| {
-        input.events.drain(..handled);
+        for index in handled.into_iter().rev() {
+            input.events.remove(index);
+        }
     });
     place_caret(ui, id, text, start, end);
     changed
+}
+
+/// Keys that only produce a typed character: letters, digits and punctuation, whose names are a
+/// single character (Enter, Tab, arrows and the like have longer names).
+fn is_character_key(key: egui::Key) -> bool {
+    key.name().chars().count() == 1
 }
 
 /// Handles Tab (indent) and Shift+Tab (outdent) for the text edit `id`. With a selection spanning
@@ -569,7 +645,7 @@ mod tests {
     }
 
     fn typed(text: &str, start: usize, end: usize, c: char) -> Option<(String, (usize, usize))> {
-        typed_char(text, start, end, c).map(|edit| apply(text, &edit))
+        typed_char(text, start, end, c, PairStyle::ALL).map(|edit| apply(text, &edit))
     }
 
     #[test]
@@ -591,9 +667,6 @@ mod tests {
         assert_eq!(typed("\"a\"", 3, 3, '"'), None);
         // A quote right after another quote does not nest a third.
         assert_eq!(typed("\"", 1, 1, '"'), None);
-        // Rust lifetimes.
-        assert_eq!(typed("fn f<", 5, 5, '\''), None);
-        assert_eq!(typed("&", 1, 1, '\''), None);
         assert_eq!(typed("x = ", 4, 4, '\''), Some(("x = ''".into(), (5, 5))));
         // Other characters are not ours.
         assert_eq!(typed("", 0, 0, 'a'), None);
@@ -634,6 +707,77 @@ mod tests {
         assert_eq!(go("é()", 3), Some(("é".into(), (2, 2))));
     }
 
+    #[test]
+    fn quotes_are_stepped_over_only_when_they_close_a_string() {
+        // At the start of an existing string the quote is typed, not swallowed.
+        assert_eq!(typed("\"ab\"", 0, 0, '"'), None);
+        assert_eq!(typed("'a'", 0, 0, '\''), None);
+        // After the content, with a space before the closing quote.
+        assert_eq!(
+            typed("\"hello \"", 7, 7, '"'),
+            Some(("\"hello \"".into(), (8, 8)))
+        );
+        // An escaped quote earlier on the line does not count.
+        assert_eq!(
+            typed("\"a\\\"b\"", 5, 5, '"'),
+            Some(("\"a\\\"b\"".into(), (6, 6)))
+        );
+    }
+
+    #[test]
+    fn a_quote_after_a_backslash_is_an_escape() {
+        assert_eq!(typed("\"hello\\ world\"", 7, 7, '"'), None);
+        assert_eq!(typed("x = \\", 5, 5, '"'), None);
+    }
+
+    #[test]
+    fn rust_and_prose_files_complete_fewer_quotes() {
+        let go = |extension: &str, text: &str, c: char| {
+            typed_char(
+                text,
+                text.len(),
+                text.len(),
+                c,
+                PairStyle::for_extension(extension),
+            )
+            .map(|edit| apply(text, &edit).0)
+        };
+        // Rust: no single-quote pair (lifetimes), but double quotes and brackets still pair.
+        assert_eq!(go("rs", "fn f<", '\''), None);
+        assert_eq!(go("rs", "Box<dyn Fn() + ", '\''), None);
+        assert_eq!(go("rs", "where T: ", '\''), None);
+        assert_eq!(go("rs", "x = ", '"'), Some("x = \"\"".into()));
+        assert_eq!(go("rs", "f", '('), Some("f()".into()));
+        // Other code keeps single quotes.
+        assert_eq!(go("py", "x = ", '\''), Some("x = ''".into()));
+        // Prose: brackets only.
+        assert_eq!(go("md", "He said ", '"'), None);
+        assert_eq!(go("txt", "a ", '`'), None);
+        assert_eq!(go("md", "see ", '('), Some("see ()".into()));
+    }
+
+    #[test]
+    fn letter_keys_between_typed_characters_do_not_block_pairing() {
+        let key_a = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let text = |s: &str| egui::Event::Text(s.to_string());
+        // `(` still pairs when a letter key press came first; the letter is typed by egui.
+        let (typed, changed) = type_text("", 0, 0, vec![key_a.clone(), text("a"), text("(")]);
+        assert!(
+            !changed,
+            "the text event for `a` is egui's, so handling stops there"
+        );
+        assert_eq!(typed, "a(");
+        let (typed, changed) = type_text("", 0, 0, vec![key_a, text("(")]);
+        assert!(changed);
+        assert_eq!(typed, "()");
+    }
+
     fn type_text(text: &str, from: usize, to: usize, events: Vec<egui::Event>) -> (String, bool) {
         let context = egui::Context::default();
         let id = egui::Id::unique("editor");
@@ -655,7 +799,7 @@ mod tests {
         };
         let mut changed = false;
         let mut output = context.run_ui(raw, |ui| {
-            changed = smart_pairs(ui, id, &mut text);
+            changed = smart_pairs(ui, id, &mut text, "js");
             // egui must see whatever was not taken.
             egui::TextEdit::multiline(&mut text).id(id).show(ui);
         });
@@ -695,7 +839,12 @@ mod tests {
         assert_eq!(typed, "x(");
         // An input method in progress is never interfered with.
         let ime = egui::Event::Ime(egui::ImeEvent::Commit("あ".into()));
-        assert!(!type_text("f", 1, 1, vec![ime, text("(")]).1);
+        let (after_ime, changed) = type_text("f", 1, 1, vec![ime, text("(")]);
+        assert!(!changed);
+        assert!(
+            !after_ime.contains("()"),
+            "no pair while an input method is active: {after_ime}"
+        );
     }
 
     #[test]

@@ -2268,7 +2268,7 @@ impl ForgeRoomApp {
                             editing::smart_enter(ui, id, tab.doc.text_mut());
                         }
                         // Brackets and quotes are completed, stepped over and deleted in pairs.
-                        editing::smart_pairs(ui, id, tab.doc.text_mut());
+                        editing::smart_pairs(ui, id, tab.doc.text_mut(), &extension);
                         // Ctrl+/ comments lines; Alt+Up/Down move them, Shift+Alt+Up/Down
                         // duplicate them and Ctrl+Shift+K deletes them.
                         line_ops::handle(ui, id, tab.doc.text_mut(), &extension);

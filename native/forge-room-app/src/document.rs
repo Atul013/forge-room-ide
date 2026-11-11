@@ -526,7 +526,8 @@ mod tests {
         // The same text with different line endings is not an outside change.
         fs::write(&path, "a\nb\n").unwrap();
         assert!(!document.changed_on_disk());
-        fs::write(&path, "a\nB\n").unwrap();
+        // A different size, so the check does not depend on the clock's resolution.
+        fs::write(&path, "a\nBB\n").unwrap();
         assert!(document.changed_on_disk());
         fs::remove_file(path).unwrap();
     }
