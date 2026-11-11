@@ -46,6 +46,7 @@ pub enum Command {
     GitPush,
     GitFetch,
     GitStash,
+    GitStashApply,
     ToggleTerminal,
 }
 
@@ -140,6 +141,7 @@ pub const ALL: &[(Command, &str, &str)] = &[
     (Command::GitPush, "Git: Push", ""),
     (Command::GitFetch, "Git: Fetch", ""),
     (Command::GitStash, "Git: Stash Changes", ""),
+    (Command::GitStashApply, "Git: Apply Latest Stash", ""),
 ];
 
 #[cfg(test)]

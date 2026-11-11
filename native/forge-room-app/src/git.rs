@@ -810,6 +810,18 @@ pub fn stash_pop(root: &Path, index: usize) -> Result<String, String> {
     run(root, &["stash", "pop", &reference]).map(|out| first_line(&out, "Applied stash"))
 }
 
+/// Apply a stash and keep it in the list (unlike a pop, a conflict cannot lose it).
+pub fn stash_apply(root: &Path, index: usize) -> Result<String, String> {
+    let reference = format!("stash@{{{index}}}");
+    run(root, &["stash", "apply", &reference]).map(|out| first_line(&out, "Applied stash"))
+}
+
+/// Drop a stash. The message names the commit that held it, which `git stash store` can bring back.
+pub fn stash_drop(root: &Path, index: usize) -> Result<String, String> {
+    let reference = format!("stash@{{{index}}}");
+    run(root, &["stash", "drop", &reference]).map(|out| first_line(&out, "Dropped stash"))
+}
+
 /// Undo the last commit but keep its changes staged.
 pub fn undo_last_commit(root: &Path) -> Result<(), String> {
     run(root, &["reset", "--soft", "HEAD~1"]).map(|_| ())
@@ -1093,6 +1105,38 @@ mod tests {
         resolve_conflict(&dir, "gone.txt", Side::Incoming).unwrap();
         assert!(!dir.join("gone.txt").exists());
         assert!(!git(&["ls-files", "-u"]).unwrap().contains("gone.txt"));
+    }
+
+    #[test]
+    fn a_stash_can_be_applied_and_kept_or_dropped() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        fs::write(
+            dir.join("a.txt"),
+            "changed
+",
+        )
+        .unwrap();
+        stash_push(&dir, "work").unwrap();
+        assert_eq!(stash_list(&dir).len(), 1);
+        stash_apply(&dir, 0).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt")).unwrap().replace(
+                "
+", "
+"
+            ),
+            "changed
+"
+        );
+        // Applied, not popped: still in the list.
+        assert_eq!(stash_list(&dir).len(), 1);
+        stash_drop(&dir, 0).unwrap();
+        assert!(stash_list(&dir).is_empty());
+        assert!(stash_drop(&dir, 0).is_err());
+        let _ = fs::remove_dir_all(dir);
     }
 
     /// A repo with one commit on the default branch; returns the directory, a git runner and the

@@ -744,6 +744,7 @@ impl ForgeRoomApp {
             Command::GitPush => self.git_action(source_control::Action::Push),
             Command::GitFetch => self.git_action(source_control::Action::Fetch),
             Command::GitStash => self.git_action(source_control::Action::Stash),
+            Command::GitStashApply => self.git_action(source_control::Action::StashApply),
             Command::Find => self.find.show_bar(false),
             Command::Replace => self.find.show_bar(true),
             Command::QuickOpen => {
@@ -2152,6 +2153,8 @@ impl ForgeRoomApp {
             }
             Action::Stash => git::stash_push(&root, ""),
             Action::StashPop => git::stash_pop(&root, 0),
+            Action::StashApply => git::stash_apply(&root, 0),
+            Action::StashDrop => git::stash_drop(&root, 0),
             Action::AbortOperation => git::abort_operation(&root)
                 .map(|operation| format!("{} aborted", operation.label())),
             Action::CherryPick(hash) => {
