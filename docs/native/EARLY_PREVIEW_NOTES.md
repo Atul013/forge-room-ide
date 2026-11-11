@@ -13,6 +13,9 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 - Explorer: rename files and folders. Tabs: Ctrl+Shift+T reopens the last closed tab; View: Close Saved Tabs. File > Open Recent.
 - Source Control: merge a branch, abort a merge, delete a branch; Changes and History pages; Git status is read on a worker thread.
 - Syntax colours for TypeScript, JSX, TOML, INI and dotenv files (borrowed from the closest bundled syntax).
+- Crash recovery: unsaved text is written to a recovery folder every few seconds and restored as unsaved tabs after an abnormal exit; a normal exit clears it.
+- Terminal: Ctrl+click a `file:line:column` reference in the output to open it (network and device paths are never followed).
+- Source Control: right-click a commit in the History graph to cherry-pick or revert it; merge, cherry-pick, revert and a rebase started elsewhere show a banner with an Abort button.
 
 ## Included
 
