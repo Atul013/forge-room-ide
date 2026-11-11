@@ -238,7 +238,13 @@ pub fn unstage(root: &Path, paths: &[String]) -> Result<(), String> {
 }
 
 pub fn commit(root: &Path, message: &str) -> Result<String, String> {
-    run(root, &["commit", "-m", message])?;
+    // Finishing a merge, cherry-pick or revert: with no message typed, use the one Git prepared
+    // (the picked commit's own message, the revert text, the merge message).
+    if message.trim().is_empty() && in_progress(root).is_some() {
+        run(root, &["commit", "--no-edit"])?;
+    } else {
+        run(root, &["commit", "-m", message])?;
+    }
     Ok(run(root, &["rev-parse", "--short", "HEAD"])?
         .trim()
         .to_string())
@@ -447,6 +453,8 @@ pub enum Operation {
     Merge,
     CherryPick,
     Revert,
+    /// A rebase started elsewhere (for example in the terminal) that stopped.
+    Rebase,
 }
 
 impl Operation {
@@ -455,6 +463,7 @@ impl Operation {
             Self::Merge => "Merge",
             Self::CherryPick => "Cherry-pick",
             Self::Revert => "Revert",
+            Self::Rebase => "Rebase",
         }
     }
 
@@ -463,12 +472,23 @@ impl Operation {
             Self::Merge => ["merge", "--abort"],
             Self::CherryPick => ["cherry-pick", "--abort"],
             Self::Revert => ["revert", "--abort"],
+            Self::Rebase => ["rebase", "--abort"],
         }
     }
 }
 
 /// The operation waiting to be finished or aborted, if any.
 pub fn in_progress(root: &Path) -> Option<Operation> {
+    // A rebase keeps its state in a folder, the others in a head file; the rebase is looked for
+    // first because it runs cherry-picks internally and leaves their head files around.
+    let in_git_dir = |name: &str| {
+        run(root, &["rev-parse", "--git-path", name])
+            .map(|path| root.join(path.trim()).exists())
+            .unwrap_or(false)
+    };
+    if in_git_dir("rebase-merge") || in_git_dir("rebase-apply") {
+        return Some(Operation::Rebase);
+    }
     [
         ("MERGE_HEAD", Operation::Merge),
         ("CHERRY_PICK_HEAD", Operation::CherryPick),
@@ -532,7 +552,20 @@ fn pick(root: &Path, command: &str, hash: &str) -> Result<PickOutcome, String> {
         Err(_) if in_progress(root).is_some() && has_unmerged_paths(root) => {
             Ok(PickOutcome::Conflicts)
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            // Git can stop without a conflict: the change is already in this branch (an empty
+            // pick), or a hook or signing step failed after a clean apply. Leaving that half-done
+            // would show a banner about conflicts that do not exist, so it is cancelled.
+            if in_progress(root).is_some() {
+                let _ = abort_operation(root);
+                return Err(if error.to_lowercase().contains("empty") {
+                    "Those changes are already in this branch".to_string()
+                } else {
+                    format!("{error} (the operation was cancelled)")
+                });
+            }
+            Err(error)
+        }
     }
 }
 
@@ -1087,6 +1120,32 @@ mod tests {
             "main change\n"
         );
 
+        // Cherry-picking what is already there is refused cleanly, with nothing left half-done.
+        assert!(matches!(
+            cherry_pick(&dir, &add_b),
+            Ok(PickOutcome::Done(_))
+        ));
+        assert!(
+            cherry_pick(&dir, &add_b)
+                .unwrap_err()
+                .contains("already in this branch")
+        );
+        assert_eq!(in_progress(&dir), None);
+
+        // A conflict can be finished by committing with the message Git prepared.
+        g(&dir, &["checkout", "-q", "-B", "work", &main]);
+        assert_eq!(cherry_pick(&dir, &change_a), Ok(PickOutcome::Conflicts));
+        fs::write(dir.join("a.txt"), "resolved\n").unwrap();
+        g(&dir, &["add", "a.txt"]);
+        g(&dir, &["config", "user.name", "Test"]);
+        g(&dir, &["config", "user.email", "test@example.com"]);
+        g(&dir, &["config", "commit.gpgsign", "false"]);
+        assert!(commit(&dir, "").is_ok(), "the prepared message is used");
+        assert_eq!(in_progress(&dir), None);
+        let subject = g(&dir, &["log", "-1", "--format=%s"]);
+        assert_eq!(subject.trim(), "change a on side");
+        g(&dir, &["checkout", "-q", &main]);
+
         // Refused: not a hash, unknown hash, uncommitted changes.
         for bad in [
             "",
@@ -1105,6 +1164,57 @@ mod tests {
                 .unwrap_err()
                 .contains("Commit or stash")
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_conflicting_revert_stops_and_aborts_like_a_pick() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _main) = merge_fixture();
+        fs::write(dir.join("a.txt"), "second\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "second"]);
+        let second = g(&dir, &["rev-parse", "HEAD"]).trim().to_string();
+        fs::write(dir.join("a.txt"), "third\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "third"]);
+        // Undoing "second" now collides with "third".
+        assert_eq!(revert(&dir, &second), Ok(PickOutcome::Conflicts));
+        assert_eq!(in_progress(&dir), Some(Operation::Revert));
+        assert_eq!(abort_operation(&dir), Ok(Operation::Revert));
+        assert_eq!(in_progress(&dir), None);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_running_rebase_is_detected_refused_around_and_abortable() {
+        if !git_available() {
+            return;
+        }
+        let (dir, main) = merge_fixture();
+        g(&dir, &["checkout", "-q", "-b", "topic"]);
+        fs::write(dir.join("a.txt"), "topic\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "topic"]);
+        g(&dir, &["checkout", "-q", &main]);
+        fs::write(dir.join("a.txt"), "main\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "main"]);
+        g(&dir, &["checkout", "-q", "topic"]);
+        // The rebase stops on the conflict (a non-zero exit, so run it without the unwrap helper).
+        let _ = run(
+            &dir,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@e.com",
+                "rebase",
+                &main,
+            ],
+        );
+        assert_eq!(in_progress(&dir), Some(Operation::Rebase));
+        assert!(merge(&dir, &main).unwrap_err().contains("rebase"));
+        assert_eq!(abort_operation(&dir), Ok(Operation::Rebase));
+        assert_eq!(in_progress(&dir), None);
         let _ = fs::remove_dir_all(dir);
     }
 

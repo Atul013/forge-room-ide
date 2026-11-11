@@ -241,11 +241,18 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.label(
-                            RichText::new(format!(
-                                "{} in progress. Resolve the conflicts, stage the files and \
-                                 commit to finish it.",
-                                operation.label()
-                            ))
+                            RichText::new(match operation {
+                                git::Operation::Rebase => {
+                                    "Rebase in progress. Finish it in the terminal \
+                                     (git rebase --continue) or abort it here."
+                                        .to_string()
+                                }
+                                _ => format!(
+                                    "{} in progress. Resolve the conflicts, stage the files \
+                                     and commit to finish it (the message is prepared).",
+                                    operation.label()
+                                ),
+                            })
                             .size(12.5)
                             .color(theme::text()),
                         );
@@ -276,8 +283,10 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                 .desired_width(f32::INFINITY)
                 .margin(egui::Margin::symmetric(10, 8));
             let response = ui.add(editor);
-            let can_commit =
-                !staged.is_empty() && conflicts.is_empty() && !state.message.trim().is_empty();
+            // Finishing a merge, cherry-pick or revert needs no typed message: Git prepared one.
+            let can_commit = !staged.is_empty()
+                && conflicts.is_empty()
+                && (!state.message.trim().is_empty() || view.operation.is_some());
             let submit = response.has_focus()
                 && ui.input(|input| input.modifiers.command && input.key_pressed(egui::Key::Enter));
             ui.add_space(6.0);
