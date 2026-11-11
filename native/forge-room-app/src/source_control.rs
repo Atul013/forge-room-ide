@@ -39,8 +39,8 @@ pub struct View<'a> {
     pub history: &'a [git::CommitInfo],
     pub history_name: Option<&'a str>,
     pub stashes: usize,
-    /// A merge is waiting to be finished (conflicts) or aborted.
-    pub merging: bool,
+    /// A merge, cherry-pick or revert waiting to be finished (conflicts) or aborted.
+    pub operation: Option<git::Operation>,
     /// Set while a network operation is running (shown instead of the sync button).
     pub busy: Option<&'a str>,
 }
@@ -75,7 +75,9 @@ pub enum Action {
     Fetch,
     Stash,
     StashPop,
-    AbortMerge,
+    AbortOperation,
+    CherryPick(String),
+    Revert(String),
     ShowCommit(String),
 }
 
@@ -224,7 +226,7 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
         .filter(|c| !c.is_conflict() && c.is_unstaged())
         .collect();
 
-    if view.merging {
+    if let Some(operation) = view.operation {
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(12, 0))
             .show(ui, |ui| {
@@ -239,23 +241,24 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.label(
-                            RichText::new(
-                                "Merge in progress. Resolve the conflicts, stage the files and \
+                            RichText::new(format!(
+                                "{} in progress. Resolve the conflicts, stage the files and \
                                  commit to finish it.",
-                            )
+                                operation.label()
+                            ))
                             .size(12.5)
                             .color(theme::text()),
                         );
                         ui.add_space(4.0);
                         let label = if state.abort_armed {
-                            "Click again: discard the merge and my resolutions"
+                            "Click again: discard it and my resolutions"
                         } else {
-                            "Abort merge"
+                            "Abort"
                         };
                         if ui.button(label).clicked() {
                             if state.abort_armed {
                                 state.abort_armed = false;
-                                action = Some(Action::AbortMerge);
+                                action = Some(Action::AbortOperation);
                             } else {
                                 state.abort_armed = true;
                             }
@@ -413,9 +416,33 @@ fn history_page(ui: &mut egui::Ui, state: &mut State, view: &View, action: &mut 
     if state.graph_open {
         let width = view.rows.iter().map(|row| row.width).max().unwrap_or(1);
         for (commit, row) in view.commits.iter().zip(view.rows) {
-            if graph_row(ui, commit, row, width, status.branch.as_deref()).clicked() {
+            let response = graph_row(ui, commit, row, width, status.branch.as_deref());
+            if response.clicked() {
                 *action = Some(Action::ShowCommit(commit.hash.clone()));
             }
+            response.context_menu(|ui| {
+                // A merge commit has two sides: picking or reverting it needs a mainline chosen.
+                let single = commit.parents.len() <= 1;
+                if ui
+                    .add_enabled(single, egui::Button::new("Cherry-pick onto this branch"))
+                    .clicked()
+                {
+                    *action = Some(Action::CherryPick(commit.hash.clone()));
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(single, egui::Button::new("Revert this commit"))
+                    .clicked()
+                {
+                    *action = Some(Action::Revert(commit.hash.clone()));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Copy commit hash").clicked() {
+                    ui.ctx().copy_text(commit.hash.clone());
+                    ui.close();
+                }
+            });
         }
         if view.commits.is_empty() {
             empty_state(ui, "No commits yet", "Your first commit will appear here.");

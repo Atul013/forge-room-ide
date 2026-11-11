@@ -206,7 +206,7 @@ struct ForgeRoomApp {
     stash_count: usize,
     /// The repository snapshot being read on a worker thread.
     git_refresh: background::Latest<git::Snapshot>,
-    merging: bool,
+    operation: Option<git::Operation>,
     blame: Vec<git::BlameLine>,
     blame_enabled: bool,
     git_job: Option<GitJob>,
@@ -311,7 +311,7 @@ impl ForgeRoomApp {
             history_name: None,
             stash_count: 0,
             git_refresh: background::Latest::default(),
-            merging: false,
+            operation: None,
             blame: Vec::new(),
             blame_enabled: true,
             git_job: None,
@@ -586,7 +586,7 @@ impl ForgeRoomApp {
                     }
                 }
             }
-            Command::AbortMerge => self.git_action(source_control::Action::AbortMerge),
+            Command::AbortOperation => self.git_action(source_control::Action::AbortOperation),
             Command::GitSync => self.git_action(source_control::Action::Sync),
             Command::GitPull => self.git_action(source_control::Action::Pull),
             Command::GitPush => self.git_action(source_control::Action::Push),
@@ -1649,7 +1649,7 @@ impl ForgeRoomApp {
     /// Forget everything shown about the repository (a different folder was opened).
     fn clear_git_state(&mut self) {
         self.git_status = None;
-        self.merging = false;
+        self.operation = None;
         self.is_repo = false;
         self.branch = None;
         self.hunks.clear();
@@ -1691,7 +1691,7 @@ impl ForgeRoomApp {
         // The result of a read for a folder that is no longer open is dropped.
         if self.repo_root().as_deref() == Some(snapshot.root.as_path()) {
             self.is_repo = snapshot.is_repo;
-            self.merging = snapshot.merging;
+            self.operation = snapshot.operation;
             self.branch = snapshot.branch;
             self.git_status = Some(snapshot.status);
             if self.is_repo {
@@ -1914,7 +1914,24 @@ impl ForgeRoomApp {
             }
             Action::Stash => git::stash_push(&root, ""),
             Action::StashPop => git::stash_pop(&root, 0),
-            Action::AbortMerge => git::merge_abort(&root).map(|()| "Merge aborted".into()),
+            Action::AbortOperation => git::abort_operation(&root)
+                .map(|operation| format!("{} aborted", operation.label())),
+            Action::CherryPick(hash) => {
+                git::cherry_pick(&root, &hash).map(|outcome| match outcome {
+                    git::PickOutcome::Done(text) => format!("Cherry-picked: {text}"),
+                    git::PickOutcome::Conflicts => {
+                        "The cherry-pick has conflicts. Resolve them in \
+                     Source Control, then commit, or abort it"
+                            .into()
+                    }
+                })
+            }
+            Action::Revert(hash) => git::revert(&root, &hash).map(|outcome| match outcome {
+                git::PickOutcome::Done(text) => format!("Reverted: {text}"),
+                git::PickOutcome::Conflicts => "The revert has conflicts. Resolve them in \
+                     Source Control, then commit, or abort it"
+                    .into(),
+            }),
             Action::ShowCommit(hash) => {
                 match git::show(&root, &hash) {
                     Ok(text) => {
@@ -2121,7 +2138,7 @@ impl ForgeRoomApp {
                     history: &self.file_history,
                     history_name: self.history_name.as_deref(),
                     stashes: self.stash_count,
-                    merging: self.merging,
+                    operation: self.operation,
                     busy: self.git_job.as_ref().map(|job| job.label.as_str()),
                 }),
                 Some(Err(error)) => source_control::Repo::Error(error),

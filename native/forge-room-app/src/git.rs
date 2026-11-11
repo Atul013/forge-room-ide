@@ -123,7 +123,8 @@ pub fn is_repo(root: &Path) -> bool {
 pub struct Snapshot {
     pub root: std::path::PathBuf,
     pub is_repo: bool,
-    pub merging: bool,
+    /// A merge, cherry-pick or revert waiting to be finished or aborted.
+    pub operation: Option<Operation>,
     pub status: Result<Status, String>,
     pub branch: Option<String>,
     pub commits: Vec<CommitInfo>,
@@ -134,7 +135,7 @@ pub fn snapshot(root: &Path) -> Snapshot {
     let mut snapshot = Snapshot {
         root: root.to_path_buf(),
         is_repo: is_repo(root),
-        merging: false,
+        operation: None,
         status: Err("not a repository".into()),
         branch: None,
         commits: Vec::new(),
@@ -143,7 +144,7 @@ pub fn snapshot(root: &Path) -> Snapshot {
     if !snapshot.is_repo {
         return snapshot;
     }
-    snapshot.merging = is_merging(root);
+    snapshot.operation = in_progress(root);
     snapshot.status = status(root);
     snapshot.branch = match &snapshot.status {
         Ok(status) => status
@@ -410,8 +411,11 @@ fn has_tracked_changes(root: &Path) -> Result<bool, String> {
 /// Merge `branch` into the current branch. Conflicts are an outcome, not an error.
 pub fn merge(root: &Path, branch: &str) -> Result<MergeOutcome, String> {
     check_branch_name(root, branch)?;
-    if is_merging(root) {
-        return Err("A merge is already in progress. Commit or abort it first".into());
+    if let Some(operation) = in_progress(root) {
+        return Err(format!(
+            "A {} is in progress. Commit or abort it first",
+            operation.label().to_lowercase()
+        ));
     }
     if has_tracked_changes(root)? {
         return Err("Commit or stash your changes before merging".into());
@@ -437,12 +441,109 @@ fn has_unmerged_paths(root: &Path) -> bool {
     run(root, &["ls-files", "-u"]).is_ok_and(|out| !out.trim().is_empty())
 }
 
-/// Give up a merge in progress and restore the state before it started.
-pub fn merge_abort(root: &Path) -> Result<(), String> {
-    if !is_merging(root) {
-        return Err("There is no merge in progress".into());
+/// A multi-step Git operation that stopped for the user: resolve the conflicts and commit, or abort.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Operation {
+    Merge,
+    CherryPick,
+    Revert,
+}
+
+impl Operation {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Merge => "Merge",
+            Self::CherryPick => "Cherry-pick",
+            Self::Revert => "Revert",
+        }
     }
-    run(root, &["merge", "--abort"]).map(|_| ())
+
+    fn abort_args(self) -> [&'static str; 2] {
+        match self {
+            Self::Merge => ["merge", "--abort"],
+            Self::CherryPick => ["cherry-pick", "--abort"],
+            Self::Revert => ["revert", "--abort"],
+        }
+    }
+}
+
+/// The operation waiting to be finished or aborted, if any.
+pub fn in_progress(root: &Path) -> Option<Operation> {
+    [
+        ("MERGE_HEAD", Operation::Merge),
+        ("CHERRY_PICK_HEAD", Operation::CherryPick),
+        ("REVERT_HEAD", Operation::Revert),
+    ]
+    .into_iter()
+    .find(|(head, _)| run(root, &["rev-parse", "-q", "--verify", head]).is_ok())
+    .map(|(_, operation)| operation)
+}
+
+/// Give up the merge, cherry-pick or revert in progress and restore the state before it started.
+pub fn abort_operation(root: &Path) -> Result<Operation, String> {
+    let Some(operation) = in_progress(root) else {
+        return Err("There is nothing in progress to abort".into());
+    };
+    run(root, &operation.abort_args()).map(|_| operation)
+}
+
+/// What cherry-picking or reverting a commit did.
+#[derive(Debug, Eq, PartialEq)]
+pub enum PickOutcome {
+    /// A new commit was made; the text is Git's summary line.
+    Done(String),
+    /// It stopped on conflicts; resolve them and commit, or abort.
+    Conflicts,
+}
+
+/// A commit hash as written by Git: 7 to 40 hexadecimal digits. Anything else (a branch name, an
+/// option, a range) is refused before it reaches a command line.
+fn check_hash(root: &Path, hash: &str) -> Result<(), String> {
+    if !(7..=40).contains(&hash.len()) || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("\"{hash}\" is not a commit hash"));
+    }
+    let parents = run(root, &["rev-list", "--parents", "-n", "1", hash])
+        .map_err(|_| format!("There is no commit {hash}"))?;
+    // "<hash> <parent> <parent>": a merge commit needs a mainline chosen, which is not offered.
+    if parents.split_whitespace().count() > 2 {
+        return Err("That is a merge commit; choose its changes from the branches instead".into());
+    }
+    Ok(())
+}
+
+fn pick(root: &Path, command: &str, hash: &str) -> Result<PickOutcome, String> {
+    check_hash(root, hash)?;
+    if let Some(operation) = in_progress(root) {
+        return Err(format!(
+            "A {} is in progress. Commit or abort it first",
+            operation.label().to_lowercase()
+        ));
+    }
+    if has_tracked_changes(root)? {
+        return Err("Commit or stash your changes first".into());
+    }
+    let mut args = vec![command];
+    if command == "revert" {
+        args.push("--no-edit");
+    }
+    args.push(hash);
+    match run(root, &args) {
+        Ok(output) => Ok(PickOutcome::Done(first_line(&output, "Done"))),
+        Err(_) if in_progress(root).is_some() && has_unmerged_paths(root) => {
+            Ok(PickOutcome::Conflicts)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Apply one commit's changes on top of the current branch.
+pub fn cherry_pick(root: &Path, hash: &str) -> Result<PickOutcome, String> {
+    pick(root, "cherry-pick", hash)
+}
+
+/// Make a new commit that undoes one commit.
+pub fn revert(root: &Path, hash: &str) -> Result<PickOutcome, String> {
+    pick(root, "revert", hash)
 }
 
 /// Delete a local branch. Without `force` Git refuses unmerged branches; the current branch can
@@ -867,7 +968,7 @@ mod tests {
         g(&dir, &["stash", "push", "--include-untracked", "-q"]);
         fs::write(dir.join("a.txt"), "edited\n").unwrap();
         let shot = snapshot(&dir);
-        assert!(shot.is_repo && !shot.merging);
+        assert!(shot.is_repo && shot.operation.is_none());
         assert_eq!(shot.branch.as_deref(), Some(main.as_str()));
         // `log_all` walks every ref, so the stash commits are in the list as well.
         assert!(shot.commits.iter().any(|commit| commit.subject == "base"));
@@ -917,7 +1018,7 @@ mod tests {
             merge(&dir, "feature").is_err(),
             "no second merge while one is open"
         );
-        merge_abort(&dir).unwrap();
+        assert_eq!(abort_operation(&dir), Ok(Operation::Merge));
         assert!(!is_merging(&dir));
         assert_eq!(
             fs::read_to_string(dir.join("a.txt"))
@@ -925,7 +1026,7 @@ mod tests {
                 .replace("\r\n", "\n"),
             "mine\n"
         );
-        assert!(merge_abort(&dir).is_err(), "nothing left to abort");
+        assert!(abort_operation(&dir).is_err(), "nothing left to abort");
 
         // Uncommitted changes to tracked files: the merge is refused before it starts.
         fs::write(dir.join("a.txt"), "dirty\n").unwrap();
@@ -933,6 +1034,108 @@ mod tests {
             merge(&dir, "feature")
                 .unwrap_err()
                 .contains("Commit or stash")
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn cherry_picks_and_reverts_with_conflicts_aborts_and_refused_hashes() {
+        if !git_available() {
+            return;
+        }
+        let (dir, main) = merge_fixture();
+        g(&dir, &["checkout", "-q", "-b", "side"]);
+        fs::write(dir.join("b.txt"), "side\n").unwrap();
+        g(&dir, &["add", "."]);
+        g(&dir, &["commit", "-q", "-m", "add b"]);
+        let add_b = g(&dir, &["rev-parse", "HEAD"]).trim().to_string();
+        fs::write(dir.join("a.txt"), "side change\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "change a on side"]);
+        let change_a = g(&dir, &["rev-parse", "HEAD"]).trim().to_string();
+        g(&dir, &["checkout", "-q", &main]);
+
+        // A clean cherry-pick makes a new commit with the same change.
+        assert!(matches!(
+            cherry_pick(&dir, &add_b),
+            Ok(PickOutcome::Done(_))
+        ));
+        assert!(dir.join("b.txt").exists());
+        assert_eq!(in_progress(&dir), None);
+        // ... and a revert undoes it again.
+        assert!(matches!(
+            revert(&dir, g(&dir, &["rev-parse", "HEAD"]).trim()),
+            Ok(PickOutcome::Done(_))
+        ));
+        assert!(!dir.join("b.txt").exists());
+
+        // A conflicting cherry-pick stops mid-way; aborting restores the tree.
+        fs::write(dir.join("a.txt"), "main change\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "change a on main"]);
+        assert_eq!(cherry_pick(&dir, &change_a), Ok(PickOutcome::Conflicts));
+        assert_eq!(in_progress(&dir), Some(Operation::CherryPick));
+        assert!(
+            merge(&dir, "side").is_err(),
+            "no merge while a cherry-pick is open"
+        );
+        assert!(revert(&dir, &add_b).is_err());
+        assert_eq!(abort_operation(&dir), Ok(Operation::CherryPick));
+        assert_eq!(in_progress(&dir), None);
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "main change\n"
+        );
+
+        // Refused: not a hash, unknown hash, uncommitted changes.
+        for bad in [
+            "",
+            "abc",
+            "--abort",
+            "HEAD",
+            "main",
+            "zzzzzzzz",
+            "0000000000",
+        ] {
+            assert!(cherry_pick(&dir, bad).is_err(), "{bad:?}");
+        }
+        fs::write(dir.join("a.txt"), "dirty\n").unwrap();
+        assert!(
+            cherry_pick(&dir, &add_b)
+                .unwrap_err()
+                .contains("Commit or stash")
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_merge_commit_cannot_be_picked_or_reverted() {
+        if !git_available() {
+            return;
+        }
+        let (dir, main) = merge_fixture();
+        g(&dir, &["checkout", "-q", "-b", "side"]);
+        fs::write(dir.join("b.txt"), "b\n").unwrap();
+        g(&dir, &["add", "."]);
+        g(&dir, &["commit", "-q", "-m", "side"]);
+        g(&dir, &["checkout", "-q", &main]);
+        fs::write(dir.join("c.txt"), "c\n").unwrap();
+        g(&dir, &["add", "."]);
+        g(&dir, &["commit", "-q", "-m", "main"]);
+        g(
+            &dir,
+            &["merge", "--no-ff", "-q", "-m", "merge side", "side"],
+        );
+        let merge_commit = g(&dir, &["rev-parse", "HEAD"]).trim().to_string();
+        assert!(
+            revert(&dir, &merge_commit)
+                .unwrap_err()
+                .contains("merge commit")
+        );
+        assert!(
+            cherry_pick(&dir, &merge_commit)
+                .unwrap_err()
+                .contains("merge commit")
         );
         let _ = fs::remove_dir_all(dir);
     }
