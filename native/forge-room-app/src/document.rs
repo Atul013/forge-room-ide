@@ -270,8 +270,14 @@ impl DocumentSession {
     pub fn moved(&mut self, from: &Path, to: &Path) {
         let Some(current) = &self.path else { return };
         if let Ok(rest) = current.strip_prefix(from) {
-            let new = to.join(rest);
-            self.disk_stamp = stamp(&new);
+            // The file itself leaves an empty remainder: joining it would add a trailing separator.
+            let new = if rest.as_os_str().is_empty() {
+                to.to_path_buf()
+            } else {
+                to.join(rest)
+            };
+            // A rename keeps the modification time and size, so the fingerprint stays valid and an
+            // outside change made just before it is still noticed.
             self.path = Some(new);
         }
     }
@@ -679,6 +685,19 @@ mod tests {
             fs::read_to_string(dir.join("renamed").join("a.txt")).unwrap(),
             "one\ntwo\n"
         );
+        // The file itself (not inside a folder) moves to exactly the new path, with no separator
+        // appended.
+        let exact_old = dir.join("renamed").join("a.txt");
+        let exact_new = dir.join("renamed").join("b.txt");
+        fs::rename(&exact_old, &exact_new).unwrap();
+        document.moved(&exact_old, &exact_new);
+        assert_eq!(document.path(), Some(exact_new.as_path()));
+        assert!(
+            !document.changed_on_disk(),
+            "the moved file is the same content"
+        );
+        document.text_mut().push_str("three\n");
+        document.save().unwrap();
         // A path elsewhere is not touched.
         let before = document.path().map(Path::to_path_buf);
         document.moved(&dir.join("other"), &dir.join("x"));

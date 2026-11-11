@@ -36,6 +36,15 @@ pub fn valid_name(name: &str) -> Result<&str, String> {
     {
         return Err(format!("\"{stem}\" is a reserved name on Windows"));
     }
+    // COM1-3 and LPT1-3 also exist as superscript digits, which Windows reserves as well.
+    let upper = stem.to_uppercase();
+    if let Some(digit) = upper
+        .strip_prefix("COM")
+        .or_else(|| upper.strip_prefix("LPT"))
+        && matches!(digit, "\u{b9}" | "\u{b2}" | "\u{b3}")
+    {
+        return Err(format!("\"{stem}\" is a reserved name on Windows"));
+    }
     Ok(name)
 }
 
@@ -51,18 +60,29 @@ pub fn rename(from: &Path, new_name: &str) -> Result<PathBuf, String> {
     if target == from {
         return Ok(target);
     }
-    if target.exists() && !is_same_entry(from, &target) {
+    // `symlink_metadata`, so even a dangling symbolic link counts as something that is there.
+    if fs::symlink_metadata(&target).is_ok() && !is_same_entry(from, &target) {
         return Err(format!("\"{name}\" already exists here"));
     }
     fs::rename(from, &target).map_err(|error| format!("Could not rename: {error}"))?;
     Ok(target)
 }
 
-/// Whether two paths are the same file or folder (a rename that only changes case on a
-/// case-insensitive file system names the same entry).
-fn is_same_entry(a: &Path, b: &Path) -> bool {
-    match (fs::canonicalize(a), fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => a == b,
+/// Whether `target` is `from` under a name that differs only in case: the same folder and the
+/// same letters. Links are deliberately not followed (a link renamed onto the file it points at is
+/// a clash, not a case change).
+fn is_same_entry(from: &Path, target: &Path) -> bool {
+    let (Some(a), Some(b)) = (from.file_name(), target.file_name()) else {
+        return false;
+    };
+    if a.to_string_lossy().to_lowercase() != b.to_string_lossy().to_lowercase() {
+        return false;
+    }
+    match (
+        from.parent().map(fs::canonicalize),
+        target.parent().map(fs::canonicalize),
+    ) {
+        (Some(Ok(a)), Some(Ok(b))) => a == b,
         _ => false,
     }
 }
@@ -126,6 +146,14 @@ mod tests {
             assert!(valid_name(bad).is_err(), "{bad:?} must be refused");
         }
         assert!(valid_name("a:b").unwrap_err().contains("':'"));
+    }
+
+    #[test]
+    fn the_superscript_device_names_are_reserved_too() {
+        for bad in ["COM\u{b9}", "com\u{b2}.txt", "LPT\u{b3}"] {
+            assert!(valid_name(bad).is_err(), "{bad:?}");
+        }
+        assert!(valid_name("COM\u{b4}").is_ok());
     }
 
     #[test]
