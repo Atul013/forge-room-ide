@@ -36,6 +36,7 @@ mod tabs;
 mod terminal;
 mod theme;
 mod theme_gallery;
+mod transforms;
 mod workspace;
 
 use commands::Command;
@@ -237,6 +238,8 @@ struct ForgeRoomApp {
     find: find_bar::FindState,
     /// Character range to select (and scroll to) in the active editor on the next frame.
     pending_select: Option<(usize, usize)>,
+    /// A palette text transformation waiting for the editor to apply it to its selection.
+    pending_edit: Option<transforms::Kind>,
     last_find_query: String,
     reselect_find: bool,
     new_folder_parent: Option<PathBuf>,
@@ -347,6 +350,7 @@ impl ForgeRoomApp {
             rename: None,
             find: find_bar::FindState::default(),
             pending_select: None,
+            pending_edit: None,
             last_find_query: String::new(),
             reselect_find: false,
         };
@@ -601,6 +605,27 @@ impl ForgeRoomApp {
                 if !self.tabs.tabs.is_empty() {
                     self.request_close(self.tabs.active);
                 }
+            }
+            Command::SelectNextOccurrence
+            | Command::TransformUppercase
+            | Command::TransformLowercase
+            | Command::SortLinesAscending
+            | Command::SortLinesDescending
+            | Command::RemoveDuplicateLines
+            | Command::TrimTrailingWhitespace
+            | Command::JoinLines => {
+                use transforms::Kind;
+                self.pending_edit = Some(match command {
+                    Command::SelectNextOccurrence => Kind::SelectNextOccurrence,
+                    Command::TransformUppercase => Kind::Uppercase,
+                    Command::TransformLowercase => Kind::Lowercase,
+                    Command::SortLinesAscending => Kind::SortAscending,
+                    Command::SortLinesDescending => Kind::SortDescending,
+                    Command::RemoveDuplicateLines => Kind::RemoveDuplicateLines,
+                    Command::TrimTrailingWhitespace => Kind::TrimTrailingWhitespace,
+                    _ => Kind::JoinLines,
+                });
+                self.focus_editor = true;
             }
             Command::ReopenClosedTab => match self.tabs.reopen_closed() {
                 Ok(Some(path)) => {
@@ -2476,6 +2501,7 @@ impl ForgeRoomApp {
         };
         let mut blame_click: Option<String> = None;
         let select = self.pending_select.take();
+        let transform = self.pending_edit.take();
         let find_matches = if self.find.open {
             self.find.matches.clone()
         } else {
@@ -2557,6 +2583,10 @@ impl ForgeRoomApp {
                         // indent and unindent the line or the selected lines.
                         if !editing::smart_tab(ui, id, tab.doc.text_mut()) {
                             editing::smart_enter(ui, id, tab.doc.text_mut());
+                        }
+                        // A transformation chosen in the command palette works on the selection.
+                        if let Some(kind) = transform {
+                            transforms::run(ui, id, tab.doc.text_mut(), kind);
                         }
                         // Brackets and quotes are completed, stepped over and deleted in pairs.
                         editing::smart_pairs(ui, id, tab.doc.text_mut(), &extension);
