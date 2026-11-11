@@ -179,6 +179,40 @@ impl Tabs {
         }
     }
 
+    /// Bring back a tab from the recovery folder: the file with the recovered text in it (so it
+    /// shows as unsaved and saving goes through the usual outside-change check), or, when the file
+    /// is gone or cannot be read, an untitled tab holding the text.
+    pub fn open_recovered(&mut self, path: Option<&Path>, text: String) {
+        let opened = path.filter(|path| path.is_file()).and_then(|path| {
+            let path = normalize(path);
+            let mut doc = DocumentSession::default();
+            doc.open(&path).ok()?;
+            Some(doc)
+        });
+        match opened {
+            Some(mut doc) => {
+                *doc.text_mut() = text;
+                let tab = Tab {
+                    id: self.take_id(),
+                    doc,
+                    untitled: None,
+                    fresh: true,
+                    readonly: false,
+                    label: None,
+                    syntax: None,
+                };
+                self.tabs.push(tab);
+                self.active = self.tabs.len() - 1;
+            }
+            None => {
+                self.new_untitled();
+                if let Some(tab) = self.active_tab() {
+                    *tab.doc.text_mut() = text;
+                }
+            }
+        }
+    }
+
     /// Reopen the most recently closed file that still exists. `Ok(None)` when there is nothing to
     /// reopen; files that were deleted or renamed meanwhile are skipped.
     pub fn reopen_closed(&mut self) -> Result<Option<PathBuf>, DocumentError> {
@@ -264,6 +298,35 @@ mod tests {
         tabs.open_file(&new).unwrap();
         assert_eq!(tabs.tabs.len(), 1);
         fs::remove_file(new).unwrap();
+    }
+
+    #[test]
+    fn recovered_text_comes_back_unsaved_in_its_file_or_as_an_untitled_tab() {
+        let path = temp_file("recovered.txt");
+        let mut tabs = Tabs::default();
+        tabs.open_recovered(Some(&path), "typed but never saved".into());
+        assert_eq!(tabs.tabs.len(), 1);
+        assert_eq!(
+            tabs.tabs[0].title(),
+            path.file_name().unwrap().to_string_lossy()
+        );
+        assert_eq!(tabs.tabs[0].doc.text(), "typed but never saved");
+        assert!(tabs.any_dirty(), "the recovered text is unsaved");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "hello",
+            "the file itself is untouched"
+        );
+
+        // A file that no longer exists, or no path at all, gives an untitled tab with the text.
+        fs::remove_file(&path).unwrap();
+        tabs.open_recovered(Some(&path), "from a deleted file".into());
+        tabs.open_recovered(None, "was untitled".into());
+        assert_eq!(tabs.tabs.len(), 3);
+        assert!(tabs.tabs[1].title().starts_with("Untitled-"));
+        assert_eq!(tabs.tabs[1].doc.text(), "from a deleted file");
+        assert_eq!(tabs.tabs[2].doc.text(), "was untitled");
+        assert!(tabs.tabs[1].doc.is_dirty() && tabs.tabs[2].doc.is_dirty());
     }
 
     #[test]

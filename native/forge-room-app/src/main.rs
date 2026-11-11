@@ -24,6 +24,7 @@ mod path_links;
 mod position;
 mod preview;
 mod project_tools;
+mod recovery;
 mod room_state;
 mod rooms;
 mod search;
@@ -204,6 +205,11 @@ struct ForgeRoomApp {
     file_history: Vec<git::CommitInfo>,
     history_name: Option<String>,
     stash_count: usize,
+    /// Unsaved text kept on disk so a crash does not lose it.
+    recovery: recovery::Store,
+    last_recovery: std::time::Instant,
+    /// Hash of the text last written to the recovery folder, per tab id.
+    recovery_written: std::collections::HashMap<u64, u64>,
     /// The repository snapshot being read on a worker thread.
     git_refresh: background::Latest<git::Snapshot>,
     operation: Option<git::Operation>,
@@ -310,6 +316,9 @@ impl ForgeRoomApp {
             file_history: Vec::new(),
             history_name: None,
             stash_count: 0,
+            recovery: recovery::Store::default_location(),
+            last_recovery: std::time::Instant::now(),
+            recovery_written: std::collections::HashMap::new(),
             git_refresh: background::Latest::default(),
             operation: None,
             blame: Vec::new(),
@@ -341,10 +350,69 @@ impl ForgeRoomApp {
             last_find_query: String::new(),
             reselect_find: false,
         };
+        app.restore_recovered();
         if let Some(path) = initial_path {
             app.open_path(path);
         }
         app
+    }
+
+    /// Bring back the unsaved tabs a previous run left in the recovery folder (it ended without
+    /// a normal exit). They come back as unsaved tabs; the next autosave rewrites their entries.
+    fn restore_recovered(&mut self) {
+        let entries = self.recovery.load_all();
+        if entries.is_empty() {
+            return;
+        }
+        for entry in &entries {
+            self.tabs.open_recovered(
+                entry.path.as_deref().map(std::path::Path::new),
+                entry.text.clone(),
+            );
+        }
+        self.recovery.clear();
+        self.status = format!(
+            "Recovered {} unsaved tab{} from the last session",
+            entries.len(),
+            if entries.len() == 1 { "" } else { "s" }
+        );
+    }
+
+    /// Every few seconds write the text of tabs with unsaved changes to the recovery folder, and
+    /// forget the entries of tabs that were saved or closed. Only changed text is rewritten.
+    fn autosave_recovery(&mut self) {
+        if self.last_recovery.elapsed() < std::time::Duration::from_secs(3) {
+            return;
+        }
+        self.last_recovery = std::time::Instant::now();
+        let mut live = Vec::new();
+        for tab in &self.tabs.tabs {
+            if tab.readonly || !tab.doc.is_dirty() {
+                continue;
+            }
+            live.push(tab.id);
+            let hash = text_hash(tab.doc.text());
+            if self.recovery_written.get(&tab.id) == Some(&hash) {
+                continue;
+            }
+            let entry = recovery::Entry {
+                path: tab.doc.path().map(|path| path.display().to_string()),
+                text: tab.doc.text().to_string(),
+            };
+            if self.recovery.save(tab.id, &entry).is_ok() {
+                self.recovery_written.insert(tab.id, hash);
+            }
+        }
+        let gone: Vec<u64> = self
+            .recovery_written
+            .keys()
+            .copied()
+            .filter(|id| !live.contains(id))
+            .collect();
+        for id in gone {
+            self.recovery.remove(id);
+            self.recovery_written.remove(&id);
+        }
     }
 
     // ---- File operations ---------------------------------------------------------------
@@ -3341,11 +3409,14 @@ impl eframe::App for ForgeRoomApp {
 
     fn on_exit(&mut self) {
         let _ = self.lobby.finish();
+        // A normal exit already asked about every unsaved tab: nothing is left to recover.
+        self.recovery.clear();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
+        self.autosave_recovery();
         if context.input(|input| input.viewport().close_requested())
             && self.tabs.any_dirty()
             && !self.allow_close
@@ -3660,6 +3731,14 @@ fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
 }
 
 /// Display name of the language for a file name, judged from its extension.
+/// A cheap fingerprint of a text, to notice that it changed.
+fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Whether Escape was pressed this frame (and takes it, so nothing else reacts).
 fn ui_escape(context: &egui::Context) -> bool {
     context.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))

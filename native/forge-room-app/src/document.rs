@@ -165,7 +165,7 @@ fn encode(text: &str, encoding: Encoding, ending: LineEnding) -> Vec<u8> {
 /// file another program holds open) falls back to writing the file directly, as before; that also
 /// reports the right error when it fails too. The replacement keeps the hidden and system marks
 /// but not alternate data streams or custom permissions, and hard links are not followed.
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
     let existing = fs::symlink_metadata(path).ok();
     if existing
