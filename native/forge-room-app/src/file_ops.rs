@@ -78,32 +78,70 @@ pub fn recycle(path: &Path) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
+        use std::io::Read;
+        use std::os::windows::fs::MetadataExt;
         use std::os::windows::process::CommandExt;
+        // A folder that is a link (a junction or symbolic link) is not recycled from here: the
+        // call could treat the folder it points to as the thing to delete.
+        let attributes = fs::symlink_metadata(path)
+            .map_err(|error| format!("Could not read it: {error}"))?
+            .file_attributes();
+        const DIRECTORY: u32 = 0x10;
+        const REPARSE_POINT: u32 = 0x400;
+        if attributes & DIRECTORY != 0 && attributes & REPARSE_POINT != 0 {
+            return Err("That folder is a link: remove the link itself in File Explorer".into());
+        }
         let method = if path.is_dir() {
             "DeleteDirectory"
         } else {
             "DeleteFile"
         };
+        // On a drive without a Recycle Bin (a network share, a USB stick) Windows deletes for good
+        // when asked to recycle, so only fixed local drives are accepted.
         let script = format!(
-            "Add-Type -AssemblyName Microsoft.VisualBasic; \
+            "$drive = New-Object System.IO.DriveInfo([System.IO.Path]::GetPathRoot($env:FORGE_RECYCLE)); \
+             if ($drive.DriveType -ne 'Fixed') {{ [Console]::Error.WriteLine('The Recycle Bin is only \
+             used for files on a fixed local drive; nothing was deleted'); exit 3 }}; \
+             Add-Type -AssemblyName Microsoft.VisualBasic; \
              [Microsoft.VisualBasic.FileIO.FileSystem]::{method}($env:FORGE_RECYCLE, \
              'OnlyErrorDialogs', 'SendToRecycleBin')"
         );
-        let output = std::process::Command::new("powershell.exe")
+        let mut child = std::process::Command::new("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .env("FORGE_RECYCLE", path)
             .creation_flags(0x0800_0000)
-            .output()
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|error| format!("Could not run PowerShell: {error}"))?;
-        if output.status.success() && !path.exists() {
+        // A dialog nobody can see (the window is hidden) must not keep this waiting for ever.
+        let started = std::time::Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if started.elapsed() > std::time::Duration::from_secs(60) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("The Recycle Bin did not answer in time; it was cancelled".into());
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(40)),
+                Err(error) => return Err(format!("Could not wait for PowerShell: {error}")),
+            }
+        };
+        let mut text = String::new();
+        if let Some(mut stderr) = child.stderr.take() {
+            let _ = stderr.read_to_string(&mut text);
+        }
+        if status.success() && !path.exists() {
             Ok(())
+        } else if text.trim().is_empty() {
+            Err("Could not move it to the Recycle Bin".into())
         } else {
-            let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            Err(if text.is_empty() {
-                "Could not move it to the Recycle Bin".into()
-            } else {
-                text.lines().next().unwrap_or("").to_string()
-            })
+            Err(text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("")
+                .to_string())
         }
     }
     #[cfg(not(windows))]
@@ -192,21 +230,48 @@ mod tests {
         assert!(valid_name("a:b").unwrap_err().contains("':'"));
     }
 
+    /// Whether the Recycle Bin holds an item whose name contains `needle`; with `purge` the item is
+    /// removed from the bin again, so the test leaves nothing behind.
+    #[cfg(windows)]
+    fn in_recycle_bin(needle: &str, purge: bool) -> bool {
+        let script = "$bin = (New-Object -ComObject Shell.Application).NameSpace(0xA); \
+             $found = $false; \
+             foreach ($item in $bin.Items()) { if ($item.Name -like ('*' + $env:NEEDLE + '*')) { \
+             $found = $true; if ($env:PURGE -eq '1') { \
+             Remove-Item -LiteralPath $item.Path -Recurse -Force -ErrorAction SilentlyContinue } } }; \
+             if ($found) { exit 0 } else { exit 1 }";
+        std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .env("NEEDLE", needle)
+            .env("PURGE", if purge { "1" } else { "0" })
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
     #[cfg(windows)]
     #[test]
     fn files_and_folders_go_to_the_recycle_bin_and_odd_names_are_safe() {
         let dir = folder("recycle");
+        let stamp = format!("zz{}", std::process::id());
         // A name with characters that would break a command line if it were pasted into one.
-        let file = dir.join("it's $(odd) `name` & more.txt");
+        let file = dir.join(format!("it's $(odd) `name` & {stamp}.txt"));
         fs::write(&file, "x").unwrap();
         recycle(&file).unwrap();
         assert!(!file.exists());
+        assert!(
+            in_recycle_bin(&stamp, false),
+            "the file really is in the Recycle Bin"
+        );
+        in_recycle_bin(&stamp, true);
 
-        let sub = dir.join("sub folder");
+        let sub = dir.join(format!("sub folder {stamp}b"));
         fs::create_dir_all(sub.join("inner")).unwrap();
         fs::write(sub.join("inner").join("a.txt"), "y").unwrap();
         recycle(&sub).unwrap();
         assert!(!sub.exists());
+        assert!(in_recycle_bin(&format!("{stamp}b"), false));
+        in_recycle_bin(&format!("{stamp}b"), true);
 
         // Something that is not there is an error, and nothing else is touched.
         fs::write(dir.join("keep.txt"), "k").unwrap();

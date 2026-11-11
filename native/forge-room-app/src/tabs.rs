@@ -117,6 +117,20 @@ impl Tabs {
         closed
     }
 
+    /// How many tabs of a file (or of files inside a folder) hold unsaved changes.
+    pub fn dirty_under(&self, path: &Path) -> usize {
+        self.tabs
+            .iter()
+            .filter(|tab| {
+                tab.doc.is_dirty()
+                    && tab
+                        .doc
+                        .path()
+                        .is_some_and(|tab_path| tab_path.starts_with(path))
+            })
+            .count()
+    }
+
     pub fn any_dirty(&self) -> bool {
         self.tabs.iter().any(|tab| tab.doc.is_dirty())
     }
@@ -422,6 +436,7 @@ mod tests {
         }
         tabs.tabs[1].doc.text_mut().push('x');
         let canonical = normalize(&dir.join("gone"));
+        assert_eq!(tabs.dirty_under(&canonical), 1);
         assert_eq!(tabs.close_clean_under(&canonical), 1);
         let names: Vec<String> = tabs.tabs.iter().map(|tab| tab.title()).collect();
         assert_eq!(

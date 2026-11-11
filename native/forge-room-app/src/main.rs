@@ -251,6 +251,8 @@ struct ForgeRoomApp {
     rename: Option<(PathBuf, String)>,
     /// The file or folder the user is being asked to move to the Recycle Bin.
     delete: Option<PathBuf>,
+    /// A move to the Recycle Bin running on a worker thread.
+    recycling: background::Latest<Recycled>,
 }
 
 /// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
@@ -355,6 +357,7 @@ impl ForgeRoomApp {
             new_folder_name: String::new(),
             rename: None,
             delete: None,
+            recycling: background::Latest::default(),
             find: find_bar::FindState::default(),
             pending_select: None,
             pending_edit: None,
@@ -1840,6 +1843,46 @@ impl ForgeRoomApp {
             .request(&context, move || git::snapshot(&root));
     }
 
+    /// Apply a finished move to the Recycle Bin: close the saved tabs of what is gone, refresh the
+    /// tree and say what happened, including tabs with unsaved changes that were kept.
+    fn poll_recycling(&mut self) {
+        let Some(done) = self.recycling.poll() else {
+            if self.recycling.take_failed() {
+                self.status = "Moving to the Recycle Bin failed unexpectedly".into();
+            }
+            return;
+        };
+        // What matters is whether it is gone, even when the helper then reported a problem.
+        let gone = !done.path.exists();
+        let (mut closed, mut kept) = (0, 0);
+        if gone {
+            kept = self.tabs.dirty_under(&done.canonical);
+            closed = self.tabs.close_clean_under(&done.canonical);
+            if let Some(workspace) = &mut self.workspace {
+                workspace.refresh();
+            }
+            self.refresh_git();
+        }
+        let mut text = match (&done.result, gone) {
+            (Ok(()), _) => format!("Moved {} to the Recycle Bin", done.name),
+            (Err(error), true) => format!("{} is gone, but: {error}", done.name),
+            (Err(error), false) => error.clone(),
+        };
+        if closed > 0 {
+            text.push_str(&format!(
+                "; closed {closed} saved tab{}",
+                if closed == 1 { "" } else { "s" }
+            ));
+        }
+        if kept > 0 {
+            text.push_str(&format!(
+                "; {kept} tab{} with unsaved changes stay open (saving would create the file again)",
+                if kept == 1 { "" } else { "s" }
+            ));
+        }
+        self.status = text;
+    }
+
     /// Take a finished repository read, if any, and start another when one was asked for meanwhile.
     fn poll_git_refresh(&mut self) {
         let Some(snapshot) = self.git_refresh.poll() else {
@@ -2401,30 +2444,29 @@ impl ForgeRoomApp {
             if ui_escape(&self.egui_ctx) {
                 cancel = true;
             }
-            if confirm {
+            // The open folder itself, or a folder that holds it, is not something to delete from here.
+            let holds_the_project = self.workspace.as_ref().is_some_and(|workspace| {
+                let (target, root) = (tabs::normalize(&path), tabs::normalize(&workspace.root));
+                root.starts_with(&target)
+            });
+            if confirm && holds_the_project {
+                self.status =
+                    "The open folder (or a folder that holds it) cannot be deleted here".into();
+            } else if confirm {
                 // The tabs hold canonical paths, and this one can only be made canonical while the
                 // file still exists.
                 let canonical = tabs::normalize(&path);
-                match file_ops::recycle(&path) {
-                    Ok(()) => {
-                        let closed = self.tabs.close_clean_under(&canonical);
-                        if let Some(workspace) = &mut self.workspace {
-                            workspace.refresh();
-                        }
-                        self.refresh_git();
-                        self.status = format!(
-                            "Moved {name} to the Recycle Bin{}",
-                            if closed > 0 {
-                                format!(
-                                    " and closed {closed} saved tab{}",
-                                    if closed == 1 { "" } else { "s" }
-                                )
-                            } else {
-                                String::new()
-                            }
-                        );
-                    }
-                    Err(message) => self.status = message,
+                let context = self.egui_ctx.clone();
+                let (moved, label) = (path.clone(), name.clone());
+                if self.recycling.request(&context, move || Recycled {
+                    result: file_ops::recycle(&moved),
+                    path: moved,
+                    canonical,
+                    name: label,
+                }) {
+                    self.status = format!("Moving {name} to the Recycle Bin…");
+                } else {
+                    self.status = "Another delete is still running".into();
                 }
             } else if !cancel {
                 self.delete = Some(path);
@@ -3843,6 +3885,7 @@ impl eframe::App for ForgeRoomApp {
 
         self.poll_git_job(&context);
         self.poll_git_refresh();
+        self.poll_recycling();
         self.discard_dialog(&context);
         self.pending_dialog(&context);
         self.update_title(&context);
@@ -3947,6 +3990,14 @@ fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
 }
 
 /// Display name of the language for a file name, judged from its extension.
+/// The outcome of moving a file or folder to the Recycle Bin on a worker thread.
+struct Recycled {
+    path: PathBuf,
+    canonical: PathBuf,
+    name: String,
+    result: Result<(), String>,
+}
+
 /// Whether Escape was pressed this frame (and takes it, so nothing else reacts).
 fn ui_escape(context: &egui::Context) -> bool {
     context.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
