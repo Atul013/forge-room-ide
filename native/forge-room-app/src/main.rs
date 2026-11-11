@@ -2713,8 +2713,8 @@ impl ForgeRoomApp {
                 ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()));
                 ui.add_space(6.0);
                 if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
-                    ui.label(dim(position::line_ending(tab.doc.text()).to_string()));
-                    ui.label(dim("UTF-8".to_string()));
+                    ui.label(dim(tab.doc.line_ending().label().to_string()));
+                    ui.label(dim(tab.doc.encoding().label().to_string()));
                     if let Some(name) = tab.doc.file_name()
                         && let Some(language) = language_name(&name)
                     {

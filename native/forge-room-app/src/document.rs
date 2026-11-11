@@ -28,7 +28,7 @@ impl fmt::Display for DocumentError {
                 MAX_FILE_BYTES / 1_048_576
             ),
             Self::Io(error) if error.kind() == io::ErrorKind::InvalidData => {
-                write!(formatter, "not a UTF-8 text file")
+                write!(formatter, "not a UTF-8 or UTF-16 text file")
             }
             Self::Io(error) => write!(formatter, "file operation failed: {error}"),
         }
@@ -40,6 +40,114 @@ impl std::error::Error for DocumentError {}
 impl From<io::Error> for DocumentError {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
+    }
+}
+
+/// How a file's bytes map to text. The buffer is always plain `\n` text; the encoding and line
+/// ending the file came with are remembered and restored on save, so editing a CRLF or UTF-16 file
+/// does not silently convert it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Encoding {
+    #[default]
+    Utf8,
+    Utf8Bom,
+    Utf16Le,
+    Utf16Be,
+}
+
+impl Encoding {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Utf8 => "UTF-8",
+            Self::Utf8Bom => "UTF-8 with BOM",
+            Self::Utf16Le => "UTF-16 LE",
+            Self::Utf16Be => "UTF-16 BE",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LineEnding {
+    #[default]
+    Lf,
+    CrLf,
+}
+
+impl LineEnding {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Lf => "LF",
+            Self::CrLf => "CRLF",
+        }
+    }
+}
+
+fn invalid(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.to_string())
+}
+
+/// Text, encoding and dominant line ending of a file's bytes. Fails with `InvalidData` for bytes
+/// that are not valid UTF-8 or well-formed UTF-16 (other legacy encodings are not guessed).
+fn decode(bytes: &[u8]) -> io::Result<(String, Encoding, LineEnding)> {
+    let (raw, encoding) = if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        (
+            String::from_utf8(rest.to_vec()).map_err(|_| invalid("not UTF-8"))?,
+            Encoding::Utf8Bom,
+        )
+    } else if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        (utf16(rest, u16::from_le_bytes)?, Encoding::Utf16Le)
+    } else if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        (utf16(rest, u16::from_be_bytes)?, Encoding::Utf16Be)
+    } else {
+        (
+            String::from_utf8(bytes.to_vec()).map_err(|_| invalid("not UTF-8"))?,
+            Encoding::Utf8,
+        )
+    };
+    let crlf = raw.matches("\r\n").count();
+    let lf = raw.matches('\n').count();
+    // CRLF wins only when most line breaks are CRLF; a tie stays LF.
+    let ending = if crlf > lf - crlf {
+        LineEnding::CrLf
+    } else {
+        LineEnding::Lf
+    };
+    Ok((raw.replace("\r\n", "\n"), encoding, ending))
+}
+
+fn utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> io::Result<String> {
+    if !bytes.len().is_multiple_of(2) {
+        return Err(invalid("truncated UTF-16"));
+    }
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let units: Vec<u16> = pairs.iter().map(|c| unit(*c)).collect();
+    String::from_utf16(&units).map_err(|_| invalid("invalid UTF-16"))
+}
+
+/// The bytes to write for `text` in the file's own encoding and line ending.
+fn encode(text: &str, encoding: Encoding, ending: LineEnding) -> Vec<u8> {
+    let unified = text.replace("\r\n", "\n");
+    let text = match ending {
+        LineEnding::Lf => unified,
+        LineEnding::CrLf => unified.replace('\n', "\r\n"),
+    };
+    match encoding {
+        Encoding::Utf8 => text.into_bytes(),
+        Encoding::Utf8Bom => {
+            let mut out = vec![0xEF, 0xBB, 0xBF];
+            out.extend_from_slice(text.as_bytes());
+            out
+        }
+        Encoding::Utf16Le => {
+            let mut out = vec![0xFF, 0xFE];
+            out.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+            out
+        }
+        Encoding::Utf16Be => {
+            let mut out = vec![0xFE, 0xFF];
+            out.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+            out
+        }
     }
 }
 
@@ -57,6 +165,8 @@ pub struct DocumentSession {
     text: String,
     saved_text: String,
     disk_stamp: Option<DiskStamp>,
+    encoding: Encoding,
+    line_ending: LineEnding,
 }
 
 impl DocumentSession {
@@ -67,7 +177,22 @@ impl DocumentSession {
             saved_text: text.clone(),
             text,
             disk_stamp: None,
+            encoding: Encoding::Utf8,
+            line_ending: LineEnding::Lf,
         }
+    }
+
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
+    }
+
+    pub fn line_ending(&self) -> LineEnding {
+        self.line_ending
+    }
+
+    /// The file's current text as this session would read it, or why it cannot be read.
+    fn read_disk(path: &Path) -> io::Result<String> {
+        decode(&fs::read(path)?).map(|(text, _, _)| text)
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -102,7 +227,9 @@ impl DocumentSession {
         // Fingerprint first: a change landing between the stamp and the read is then noticed
         // later, instead of being hidden by a stamp that already includes it.
         let fingerprint = stamp(&path);
-        let text = fs::read_to_string(&path)?;
+        let (text, encoding, line_ending) = decode(&fs::read(&path)?)?;
+        self.encoding = encoding;
+        self.line_ending = line_ending;
         self.disk_stamp = fingerprint;
         self.path = Some(path);
         self.saved_text.clone_from(&text);
@@ -124,7 +251,7 @@ impl DocumentSession {
         if Some(current) == self.disk_stamp {
             return false;
         }
-        match fs::read_to_string(path) {
+        match Self::read_disk(path) {
             Ok(text) if text == self.saved_text => {
                 self.disk_stamp = Some(current);
                 false
@@ -139,7 +266,7 @@ impl DocumentSession {
         let Some(path) = &self.path else {
             return Ok(false);
         };
-        match fs::read_to_string(path) {
+        match Self::read_disk(path) {
             Ok(text) => Ok(text != self.saved_text),
             // Gone: saving recreates it. Not UTF-8 is a change. Any other failure (for example a
             // file another program holds open without read sharing) means the current bytes
@@ -161,7 +288,7 @@ impl DocumentSession {
     /// Save without checking for outside changes (the user chose to overwrite them).
     pub fn overwrite(&mut self) -> Result<(), DocumentError> {
         let path = self.path.as_ref().ok_or(DocumentError::NoPath)?;
-        fs::write(path, self.text.as_bytes())?;
+        fs::write(path, encode(&self.text, self.encoding, self.line_ending))?;
         self.disk_stamp = stamp(path);
         self.saved_text.clone_from(&self.text);
         Ok(())
@@ -178,7 +305,7 @@ impl DocumentSession {
     /// if the write fails.
     pub fn save_as(&mut self, path: impl Into<PathBuf>) -> Result<(), DocumentError> {
         let path = path.into();
-        fs::write(&path, self.text.as_bytes())?;
+        fs::write(&path, encode(&self.text, self.encoding, self.line_ending))?;
         self.disk_stamp = stamp(&path);
         self.path = Some(path);
         self.saved_text.clone_from(&self.text);
@@ -200,6 +327,102 @@ mod tests {
             "forge-room-document-{}-{stamp}.txt",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn crlf_files_stay_crlf_and_the_buffer_is_plain_lf() {
+        let path = test_path();
+        fs::write(&path, "one\r\ntwo\r\n").unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&path).unwrap();
+        assert_eq!(document.text(), "one\ntwo\n");
+        assert_eq!(document.line_ending(), LineEnding::CrLf);
+        assert!(!document.is_dirty());
+
+        // Typing Enter in the editor inserts a bare `\n`; the file must not end up mixed.
+        document.text_mut().push_str("three\n");
+        document.save().unwrap();
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            b"one\r\ntwo\r\nthree\r\n".to_vec()
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_mostly_lf_file_with_one_crlf_stays_lf() {
+        let (text, _, ending) = decode(b"a\nb\r\nc\nd\n").unwrap();
+        assert_eq!(ending, LineEnding::Lf);
+        assert_eq!(text, "a\nb\nc\nd\n");
+        assert_eq!(decode(b"no newline").unwrap().2, LineEnding::Lf);
+        assert_eq!(decode(b"").unwrap().0, "");
+    }
+
+    #[test]
+    fn bom_and_utf16_files_round_trip_in_their_own_encoding() {
+        for (bytes, encoding) in [
+            (b"\xEF\xBB\xBFhello\n".to_vec(), Encoding::Utf8Bom),
+            (
+                [
+                    &[0xFF, 0xFE][..],
+                    &"hi\r\n\u{e9}\u{1f600}"
+                        .encode_utf16()
+                        .flat_map(u16::to_le_bytes)
+                        .collect::<Vec<_>>(),
+                ]
+                .concat(),
+                Encoding::Utf16Le,
+            ),
+            (
+                [
+                    &[0xFE, 0xFF][..],
+                    &"hi\n"
+                        .encode_utf16()
+                        .flat_map(u16::to_be_bytes)
+                        .collect::<Vec<_>>(),
+                ]
+                .concat(),
+                Encoding::Utf16Be,
+            ),
+        ] {
+            let path = test_path();
+            fs::write(&path, &bytes).unwrap();
+            let mut document = DocumentSession::default();
+            document.open(&path).unwrap();
+            assert_eq!(document.encoding(), encoding);
+            assert!(
+                !document.text().starts_with('\u{feff}'),
+                "the BOM is not text"
+            );
+            // Saving unchanged text reproduces the original bytes exactly.
+            document.text_mut().push('x');
+            document.text_mut().pop();
+            document.overwrite().unwrap();
+            assert_eq!(fs::read(&path).unwrap(), bytes, "{encoding:?}");
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn invalid_bytes_and_truncated_utf16_are_refused() {
+        assert!(decode(&[0xC3, 0x28]).is_err());
+        assert!(decode(&[0xFF, 0xFE, 0x41]).is_err());
+        // An unpaired surrogate is not valid UTF-16.
+        assert!(decode(&[0xFF, 0xFE, 0x00, 0xD8]).is_err());
+    }
+
+    #[test]
+    fn outside_edits_are_noticed_through_the_encoding() {
+        let path = test_path();
+        fs::write(&path, "a\r\nb\r\n").unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&path).unwrap();
+        // The same text with different line endings is not an outside change.
+        fs::write(&path, "a\nb\n").unwrap();
+        assert!(!document.changed_on_disk());
+        fs::write(&path, "a\nB\n").unwrap();
+        assert!(document.changed_on_disk());
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

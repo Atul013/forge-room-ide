@@ -16,11 +16,6 @@ pub fn line_col(text: &str, char_index: usize) -> (usize, usize) {
     (line, column)
 }
 
-/// "CRLF" when the text uses Windows line endings, otherwise "LF".
-pub fn line_ending(text: &str) -> &'static str {
-    if text.contains("\r\n") { "CRLF" } else { "LF" }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,11 +31,5 @@ mod tests {
     #[test]
     fn counts_characters_not_bytes() {
         assert_eq!(line_col("héllo", 2), (1, 3));
-    }
-
-    #[test]
-    fn detects_line_endings() {
-        assert_eq!(line_ending("a\r\nb"), "CRLF");
-        assert_eq!(line_ending("a\nb"), "LF");
     }
 }
