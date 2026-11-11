@@ -349,6 +349,9 @@ pub fn show(
                         .size(13.0)
                         .color(theme::text_dim()),
                     );
+                    if ui.small_button("Stop").clicked() {
+                        state.stop();
+                    }
                 });
                 // The seconds count up even when nothing arrives.
                 ui.ctx()
@@ -486,12 +489,6 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
                 state.new_chat();
             }
         });
-        if busy {
-            ui.spinner();
-            if ui.button("Stop").clicked() {
-                state.stop();
-            }
-        }
     });
     // The choices are remembered for the next start.
     let now = state.choices();
@@ -582,6 +579,220 @@ fn quick_actions(ui: &mut egui::Ui, state: &mut State) {
         });
 }
 
+/// One block of an answer written in Markdown.
+#[derive(Debug, PartialEq)]
+enum Block {
+    Heading(usize, String),
+    /// A list item: its depth (0, 1, ...), the marker (`•` or `3.`) and its text.
+    Item(usize, String, String),
+    Code(String),
+    Paragraph(String),
+}
+
+/// The blocks of `text`: headings (`#`), list items (`-`, `*`, `1.`), fenced code and paragraphs
+/// (consecutive lines stay together). Only what agents actually write; no tables or links.
+fn blocks(text: &str) -> Vec<Block> {
+    let mut result = Vec::new();
+    let mut paragraph: Vec<&str> = Vec::new();
+    let mut code: Option<Vec<&str>> = None;
+    let flush = |paragraph: &mut Vec<&str>, result: &mut Vec<Block>| {
+        if !paragraph.is_empty() {
+            result.push(Block::Paragraph(paragraph.join("\n")));
+            paragraph.clear();
+        }
+    };
+    for line in text.lines() {
+        if let Some(lines) = &mut code {
+            if line.trim_start().starts_with("```") {
+                result.push(Block::Code(lines.join("\n")));
+                code = None;
+            } else {
+                lines.push(line);
+            }
+            continue;
+        }
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        if trimmed.starts_with("```") {
+            flush(&mut paragraph, &mut result);
+            code = Some(Vec::new());
+        } else if trimmed.is_empty() {
+            flush(&mut paragraph, &mut result);
+        } else if let Some(heading) = trimmed.strip_prefix('#') {
+            flush(&mut paragraph, &mut result);
+            let level = 1 + heading.chars().take_while(|c| *c == '#').count();
+            let title = heading.trim_start_matches('#').trim();
+            if title.is_empty() || level > 6 {
+                paragraph.push(line);
+            } else {
+                result.push(Block::Heading(level, title.to_string()));
+            }
+        } else if let Some(item) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "))
+        {
+            flush(&mut paragraph, &mut result);
+            result.push(Block::Item(indent / 2, "•".into(), item.trim().to_string()));
+        } else if let Some((number, rest)) = trimmed.split_once(". ")
+            && !number.is_empty()
+            && number.len() <= 3
+            && number.chars().all(|c| c.is_ascii_digit())
+        {
+            flush(&mut paragraph, &mut result);
+            result.push(Block::Item(
+                indent / 2,
+                format!("{number}."),
+                rest.trim().to_string(),
+            ));
+        } else {
+            paragraph.push(line);
+        }
+    }
+    // An unclosed fence is still shown as code.
+    if let Some(lines) = code {
+        result.push(Block::Code(lines.join("\n")));
+    }
+    flush(&mut paragraph, &mut result);
+    result
+}
+
+/// How a span of inline text is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Span {
+    bold: bool,
+    code: bool,
+}
+
+/// `text` split at `**bold**` and `` `code` `` markers. A marker that is never closed stays as
+/// written.
+fn spans(text: &str) -> Vec<(String, Span)> {
+    let mut result: Vec<(String, Span)> = Vec::new();
+    let mut plain = String::new();
+    let mut rest = text;
+    let push = |result: &mut Vec<(String, Span)>, plain: &mut String| {
+        if !plain.is_empty() {
+            result.push((std::mem::take(plain), Span::default()));
+        }
+    };
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("**")
+            && let Some(end) = after.find("**")
+            && end > 0
+        {
+            push(&mut result, &mut plain);
+            result.push((
+                after[..end].to_string(),
+                Span {
+                    bold: true,
+                    code: false,
+                },
+            ));
+            rest = &after[end + 2..];
+        } else if let Some(after) = rest.strip_prefix('`')
+            && let Some(end) = after.find('`')
+            && end > 0
+        {
+            push(&mut result, &mut plain);
+            result.push((
+                after[..end].to_string(),
+                Span {
+                    bold: false,
+                    code: true,
+                },
+            ));
+            rest = &after[end + 1..];
+        } else {
+            let mut chars = rest.chars();
+            if let Some(c) = chars.next() {
+                plain.push(c);
+            }
+            rest = chars.as_str();
+        }
+    }
+    push(&mut result, &mut plain);
+    result
+}
+
+/// An answer drawn as Markdown: headings, bold, inline code, lists and code blocks.
+fn markdown(ui: &mut egui::Ui, text: &str) {
+    for block in blocks(text) {
+        match block {
+            Block::Code(code) => {
+                egui::Frame::new()
+                    .fill(theme::overlay(14))
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        let mut job = egui::text::LayoutJob::single_section(
+                            code,
+                            egui::TextFormat::simple(FontId::monospace(12.5), theme::text()),
+                        );
+                        job.wrap.max_width = ui.available_width();
+                        job.wrap.break_anywhere = true;
+                        ui.label(job);
+                    });
+                ui.add_space(6.0);
+            }
+            Block::Heading(level, title) => {
+                let size = match level {
+                    1 => 17.0,
+                    2 => 16.0,
+                    _ => 15.0,
+                };
+                ui.add_space(4.0);
+                inline(ui, &title, size, true, "");
+                ui.add_space(2.0);
+            }
+            Block::Item(depth, marker, item) => {
+                let lead = format!("{}{marker} ", "    ".repeat(depth));
+                inline(ui, &item, 14.0, false, &lead);
+            }
+            Block::Paragraph(paragraph) => {
+                inline(ui, &paragraph, 14.0, false, "");
+                ui.add_space(6.0);
+            }
+        }
+    }
+}
+
+/// One run of text with bold and code spans, after an optional `lead` (a list marker).
+fn inline(ui: &mut egui::Ui, text: &str, size: f32, heading: bool, lead: &str) {
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = ui.available_width();
+    job.wrap.break_anywhere = true;
+    let normal = |bold: bool| {
+        let family = if bold || heading {
+            fonts::semibold()
+        } else {
+            egui::FontFamily::Proportional
+        };
+        egui::TextFormat::simple(
+            FontId::new(size, family),
+            if bold || heading {
+                theme::text()
+            } else {
+                theme::mix(theme::text(), theme::bg_sidebar(), 0.08)
+            },
+        )
+    };
+    if !lead.is_empty() {
+        job.append(lead, 0.0, normal(false));
+    }
+    for (piece, span) in spans(text) {
+        if span.code {
+            let mut format =
+                egui::TextFormat::simple(FontId::monospace(size * 0.92), theme::text());
+            format.background = theme::overlay(26);
+            job.append(&piece, 0.0, format);
+        } else {
+            job.append(&piece, 0.0, normal(span.bold));
+        }
+    }
+    ui.label(job);
+}
+
 /// Text that breaks into lines at the width it is given, even inside one long word (a path, a hash):
 /// it never makes the panel around it wider.
 fn wrapped(ui: &mut egui::Ui, text: &str, size: f32, color: Color32) {
@@ -612,29 +823,42 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
             return;
         }
         Author::Note => {
-            ui.horizontal_top(|ui| {
-                ui.add_space(52.0);
-                ui.set_max_width((ui.available_width() - 14.0).max(120.0));
-                wrapped(ui, &message.text, 13.0, theme::text_dim());
-            });
+            egui::Frame::new()
+                .inner_margin(egui::Margin {
+                    left: 52,
+                    right: 14,
+                    top: 0,
+                    bottom: 0,
+                })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    wrapped(ui, &message.text, 13.0, theme::text_dim());
+                });
             return;
         }
         Author::Error => {
-            ui.horizontal_top(|ui| {
-                ui.add_space(52.0);
-                egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(240, 113, 120, 26))
-                    .stroke(Stroke::new(
-                        1.0,
-                        Color32::from_rgba_unmultiplied(240, 113, 120, 110),
-                    ))
-                    .corner_radius(8.0)
-                    .inner_margin(egui::Margin::symmetric(10, 7))
-                    .show(ui, |ui| {
-                        ui.set_max_width((ui.available_width() - 14.0).max(120.0));
-                        wrapped(ui, &message.text, 13.0, Color32::from_rgb(244, 150, 156));
-                    });
-            });
+            egui::Frame::new()
+                .inner_margin(egui::Margin {
+                    left: 52,
+                    right: 14,
+                    top: 0,
+                    bottom: 0,
+                })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    egui::Frame::new()
+                        .fill(Color32::from_rgba_unmultiplied(240, 113, 120, 26))
+                        .stroke(Stroke::new(
+                            1.0,
+                            Color32::from_rgba_unmultiplied(240, 113, 120, 110),
+                        ))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::symmetric(10, 7))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            wrapped(ui, &message.text, 13.0, Color32::from_rgb(244, 150, 156));
+                        });
+                });
             return;
         }
         _ => {}
@@ -669,7 +893,11 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
                 // Top to bottom: the frame inherits the row's left-to-right layout, which would put
                 // the Copy button beside the text and widen the whole panel.
                 ui.vertical(|ui| {
-                    wrapped(ui, &message.text, 14.0, theme::text());
+                    if user {
+                        wrapped(ui, &message.text, 14.0, theme::text());
+                    } else {
+                        markdown(ui, &message.text);
+                    }
                     if !user
                         && ui
                             .small_button("Copy")
@@ -926,6 +1154,49 @@ mod tests {
             (Author::Note, unbroken),
         ]);
         eprintln!("unbroken widths {widths:?}");
+        assert!(
+            widths.iter().all(|w| (*w - 364.0).abs() < 2.0),
+            "{widths:?}"
+        );
+    }
+
+    #[test]
+    fn markdown_blocks_and_spans_are_read_as_agents_write_them() {
+        let text = "## Done today\n\nI fixed **three** bugs in `main.rs`.\nSecond line.\n\n- first\n  - nested\n1. step\n```rust\nfn main() {}\n```\nafter";
+        assert_eq!(
+            blocks(text),
+            vec![
+                Block::Heading(2, "Done today".into()),
+                Block::Paragraph("I fixed **three** bugs in `main.rs`.\nSecond line.".into()),
+                Block::Item(0, "•".into(), "first".into()),
+                Block::Item(1, "•".into(), "nested".into()),
+                Block::Item(0, "1.".into(), "step".into()),
+                Block::Code("fn main() {}".into()),
+                Block::Paragraph("after".into()),
+            ]
+        );
+        let found = spans("I fixed **three** bugs in `main.rs`.");
+        assert_eq!(found.len(), 5);
+        assert!(found[1].1.bold && found[3].1.code);
+        assert_eq!(found[1].0, "three");
+        // Markers that are never closed, and a lone hash, stay as written.
+        assert_eq!(spans("a **b").len(), 1);
+        assert_eq!(spans("a ` b")[0].0, "a ` b");
+        assert_eq!(blocks("#"), vec![Block::Paragraph("#".into())]);
+        // An unclosed fence still shows its code; text with multibyte characters is not split.
+        assert_eq!(blocks("```\nx"), vec![Block::Code("x".into())]);
+        assert_eq!(spans("héllo **wörld**")[1].0, "wörld");
+    }
+
+    /// Answers drawn as Markdown (headings, code blocks, long lists) keep the dock's width too.
+    #[test]
+    fn a_markdown_answer_keeps_the_dock_width() {
+        let long = "word ".repeat(150);
+        let answer = format!(
+            "## Heading\n\n**bold** and `code` {long}\n\n- item {long}\n\n```\n{}\n```",
+            "x".repeat(200)
+        );
+        let widths = dock_widths(vec![(Author::Assistant, answer)]);
         assert!(
             widths.iter().all(|w| (*w - 364.0).abs() < 2.0),
             "{widths:?}"
