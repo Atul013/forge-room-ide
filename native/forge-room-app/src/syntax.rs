@@ -195,10 +195,27 @@ fn update(
     job
 }
 
+/// The extension whose bundled syntax best fits files the default syntax set has no definition
+/// for: TypeScript and JSX are close enough to JavaScript to colour keywords, strings and comments
+/// correctly; TOML, INI and dotenv files share the `key = value` and `#` comment shape of
+/// properties files. Anything else keeps its own extension (and falls back to plain text).
+fn syntax_extension(extension: &str) -> String {
+    let lower = extension.to_ascii_lowercase();
+    match lower.as_str() {
+        "ts" | "tsx" | "jsx" | "mjs" | "cjs" => "js",
+        "jsonc" => "json",
+        "scss" => "css",
+        "vue" | "svelte" => "html",
+        "toml" | "ini" | "cfg" | "conf" | "env" | "lock" | "gitignore" => "properties",
+        other => other,
+    }
+    .to_string()
+}
+
 fn refresh(cache: &mut Cache, text: &str, budget: Duration) {
     let set = syntaxes();
     let syntax = set
-        .find_syntax_by_extension(&cache.extension)
+        .find_syntax_by_extension(&syntax_extension(&cache.extension))
         .unwrap_or_else(|| set.find_syntax_plain_text());
     let theme = cache.syntect_theme.clone();
     let highlighter = Highlighter::new(&theme);
@@ -340,6 +357,23 @@ mod tests {
             .unwrap();
         assert_eq!(first.format.color, keyword_rule);
         assert_eq!(job.text, "fn main() {}\n");
+    }
+
+    #[test]
+    fn common_extensions_without_their_own_syntax_borrow_a_close_one() {
+        let set = syntaxes();
+        for extension in [
+            "ts", "TSX", "jsx", "mjs", "cjs", "jsonc", "scss", "vue", "toml", "ini", "env", "lock",
+        ] {
+            let name = syntax_extension(extension);
+            assert!(
+                set.find_syntax_by_extension(&name).is_some(),
+                "{extension} -> {name} has no syntax"
+            );
+        }
+        // Nothing is invented for languages with no close relative.
+        assert_eq!(syntax_extension("swift"), "swift");
+        assert_eq!(syntax_extension("RS"), "rs");
     }
 
     #[test]
