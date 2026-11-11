@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai_panel;
+mod autosave;
 mod background;
 mod brand;
 mod commands;
+mod diagnostics;
 mod document;
 mod editing;
 mod explorer;
@@ -29,13 +31,16 @@ mod room_state;
 mod rooms;
 mod search;
 mod search_view;
+mod session;
 mod settings;
 mod source_control;
+mod symbols;
 mod syntax;
 mod tabs;
 mod terminal;
 mod theme;
 mod theme_gallery;
+mod transforms;
 mod workspace;
 
 use commands::Command;
@@ -200,11 +205,43 @@ struct ForgeRoomApp {
     last_git: std::time::Instant,
     hunks: Vec<git::Hunk>,
     hunks_tab: Option<u64>,
+    /// The file's history, blame and changes are read on a worker thread.
+    hunks_job: background::Latest<FileGit>,
+    /// Folders in which the user agreed to run cargo check during this run.
+    checked_folders: std::collections::HashSet<PathBuf>,
+    auto_checked: std::time::Instant,
+    recovery_warned: bool,
+    /// Sidebar width, right dock width and terminal height as last drawn, in points.
+    panel_sizes: (u16, u16, u16),
+    /// The terminal panel fills most of the window.
+    terminal_maximized: bool,
+    /// Two terminals shown side by side: their indexes.
+    split_pair: Option<(usize, usize)>,
+    /// The user trusts the open folder: until then Git and project tools stay off.
+    trusted: bool,
+    /// The folder waiting for the answer to the trust question.
+    trust_prompt: Option<PathBuf>,
+    /// The top folder of the repository when the open folder is a subfolder of it.
+    git_top: Option<PathBuf>,
+    /// The files git reported as changed at the last read; the Explorer refreshes when it differs.
+    change_paths: Vec<String>,
+    terminals_confirmed: bool,
     graph_commits: Vec<git::CommitInfo>,
     graph_rows: Vec<graph::Row>,
     file_history: Vec<git::CommitInfo>,
     history_name: Option<String>,
     stash_count: usize,
+    /// Editor text size relative to the default, kept in the settings.
+    editor_scale: f32,
+    /// Save file tabs automatically once their text rests.
+    auto_save: bool,
+    /// The last `cargo check`, and the worker that makes the next one.
+    problems: Option<diagnostics::Report>,
+    checking: background::Latest<diagnostics::Report>,
+    /// The last session written to disk, and when it was last compared with the window.
+    session_saved: session::Session,
+    session_checked: std::time::Instant,
+    auto_saves: autosave::Tracker,
     /// Unsaved text kept on disk so a crash does not lose it.
     recovery: recovery::Store,
     last_recovery: std::time::Instant,
@@ -219,7 +256,9 @@ struct ForgeRoomApp {
     pending_discard: Option<Vec<git::Change>>,
     gallery: theme_gallery::Gallery,
     room: rooms::RoomView,
-    terminal: Option<terminal::Terminal>,
+    /// Every terminal, in tab order; `active_terminal` is the one shown.
+    terminals: Vec<terminal::Terminal>,
+    active_terminal: usize,
     show_terminal: bool,
     bottom_tab: BottomTab,
     show_right: bool,
@@ -237,12 +276,20 @@ struct ForgeRoomApp {
     find: find_bar::FindState,
     /// Character range to select (and scroll to) in the active editor on the next frame.
     pending_select: Option<(usize, usize)>,
+    /// A palette text transformation waiting for the editor to apply it to its selection.
+    pending_edit: Option<transforms::Kind>,
     last_find_query: String,
     reselect_find: bool,
     new_folder_parent: Option<PathBuf>,
     new_folder_name: String,
     /// The file or folder being renamed and the name typed so far.
     rename: Option<(PathBuf, String)>,
+    /// The file or folder the user is being asked to move to the Recycle Bin.
+    delete: Option<PathBuf>,
+    /// A question that waits for a yes: dropping a stash, ending a terminal.
+    confirm: Option<Confirm>,
+    /// A move to the Recycle Bin running on a worker thread.
+    recycling: background::Latest<Recycled>,
 }
 
 /// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
@@ -311,11 +358,30 @@ impl ForgeRoomApp {
             last_git: std::time::Instant::now(),
             hunks: Vec::new(),
             hunks_tab: None,
+            hunks_job: background::Latest::default(),
+            checked_folders: std::collections::HashSet::new(),
+            auto_checked: std::time::Instant::now(),
+            recovery_warned: false,
+            panel_sizes: (250, 364, 200),
+            terminal_maximized: false,
+            split_pair: None,
+            trusted: true,
+            trust_prompt: None,
+            git_top: None,
+            change_paths: Vec::new(),
+            terminals_confirmed: false,
             graph_commits: Vec::new(),
             graph_rows: Vec::new(),
             file_history: Vec::new(),
             history_name: None,
             stash_count: 0,
+            editor_scale: settings::clean_scale(settings::load().editor_scale),
+            auto_save: settings::load().auto_save.unwrap_or(false),
+            problems: None,
+            checking: background::Latest::default(),
+            session_saved: session::Session::default(),
+            session_checked: std::time::Instant::now(),
+            auto_saves: autosave::Tracker::default(),
             recovery: recovery::Store::default_location(),
             last_recovery: std::time::Instant::now(),
             recovery_written: std::collections::HashMap::new(),
@@ -327,7 +393,8 @@ impl ForgeRoomApp {
             pending_discard: None,
             gallery: theme_gallery::Gallery::default(),
             room: rooms::RoomView::default(),
-            terminal: None,
+            terminals: Vec::new(),
+            active_terminal: 0,
             show_terminal: true,
             bottom_tab: BottomTab::Terminal,
             show_right: true,
@@ -345,16 +412,133 @@ impl ForgeRoomApp {
             new_folder_parent: None,
             new_folder_name: String::new(),
             rename: None,
+            delete: None,
+            confirm: None,
+            recycling: background::Latest::default(),
             find: find_bar::FindState::default(),
             pending_select: None,
+            pending_edit: None,
             last_find_query: String::new(),
             reselect_find: false,
         };
         app.restore_recovered();
+        // The last session comes back first, so a file given on the command line is added to it
+        // instead of replacing it in the session file a moment later.
+        app.restore_session();
         if let Some(path) = initial_path {
             app.open_path(path);
         }
+        // Text brought back by crash recovery is for the user to look at: Auto Save leaves it until
+        // they change it.
+        let now = std::time::Instant::now();
+        for tab in &app.tabs.tabs {
+            if tab.doc.is_dirty() {
+                let hash = recovery::text_hash(tab.doc.text());
+                app.auto_saves.hold(tab.id, hash, now);
+            }
+        }
         app
+    }
+
+    /// Open the folder and files of the last session (nothing was asked for on the command line).
+    fn restore_session(&mut self) {
+        let session = session::load_from(&session::default_path()).clean();
+        if let Some(folder) = &session.folder {
+            self.open_path(PathBuf::from(folder));
+        }
+        for file in &session.files {
+            self.open_path(PathBuf::from(file));
+        }
+        if let Some(index) = session.active
+            && let Some(file) = session.files.get(index)
+        {
+            self.open_path(PathBuf::from(file));
+        }
+        self.focus_editor = !session.files.is_empty();
+        // The panels as they were.
+        if let Some(layout) = &session.layout {
+            self.show_sidebar = layout.sidebar;
+            self.show_right = layout.right;
+            self.show_terminal = layout.terminal;
+            self.show_preview = layout.preview;
+            self.bottom_tab = match layout.bottom_tab {
+                1 => BottomTab::Output,
+                2 => BottomTab::Problems,
+                _ => BottomTab::Terminal,
+            };
+            self.panel_sizes = (
+                layout.sidebar_width,
+                layout.right_width,
+                layout.terminal_height,
+            );
+        }
+        // Fresh shells in place of the ones that were open.
+        for _ in 0..session.terminals {
+            self.spawn_terminal(true);
+        }
+        if session.terminals > 0 {
+            self.terminal_focus_request = false;
+            self.active_terminal = 0;
+        }
+        self.session_saved = self.current_session();
+    }
+
+    /// The folder and the file tabs as they are now.
+    fn current_session(&self) -> session::Session {
+        let mut files = Vec::new();
+        let mut active = None;
+        for (index, tab) in self.tabs.tabs.iter().enumerate() {
+            if tab.readonly {
+                continue;
+            }
+            if let Some(path) = tab.doc.path() {
+                if index == self.tabs.active {
+                    active = Some(files.len());
+                }
+                files.push(path.display().to_string());
+            }
+        }
+        session::Session {
+            layout: Some(session::Layout {
+                sidebar: self.show_sidebar,
+                right: self.show_right,
+                terminal: self.show_terminal,
+                preview: self.show_preview,
+                bottom_tab: match self.bottom_tab {
+                    BottomTab::Terminal => 0,
+                    BottomTab::Output => 1,
+                    BottomTab::Problems => 2,
+                },
+                sidebar_width: self.panel_sizes.0,
+                right_width: self.panel_sizes.1,
+                terminal_height: self.panel_sizes.2,
+            }),
+            terminals: self.terminals.len().min(session::MAX_TERMINALS),
+            folder: self
+                .workspace
+                .as_ref()
+                .map(|workspace| workspace.root.display().to_string()),
+            files,
+            active,
+        }
+    }
+
+    /// Write the session when it changed (checked every couple of seconds, and on exit).
+    fn save_session(&mut self, force: bool) {
+        const EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+        if !force && self.session_checked.elapsed() < EVERY {
+            // Nothing else may wake an idle window, so ask to be woken for the next check.
+            self.egui_ctx
+                .request_repaint_after(EVERY - self.session_checked.elapsed());
+            return;
+        }
+        self.session_checked = std::time::Instant::now();
+        let current = self.current_session();
+        if current != self.session_saved
+            && session::save_to(&session::default_path(), &current).is_ok()
+        {
+            self.session_saved = current;
+        }
     }
 
     /// Bring back the unsaved tabs a dead instance left in the recovery folder (it ended without a
@@ -391,6 +575,58 @@ impl ForgeRoomApp {
         self.autosave_recovery();
     }
 
+    /// With Auto Save on, save the file tabs whose text has rested. Tabs without a file are never
+    /// saved here (that would need a dialog), and a file that changed on disk is left alone: the
+    /// user decides with the usual conflict prompt when saving by hand.
+    fn auto_save_tabs(&mut self) {
+        if !self.auto_save || self.pending.is_some() {
+            return;
+        }
+        // Looking at every dirty text each frame is wasted work: twice a second is plenty.
+        let wait = std::time::Duration::from_millis(500);
+        if self.auto_checked.elapsed() < wait {
+            self.egui_ctx.request_repaint_after(wait);
+            return;
+        }
+        self.auto_checked = std::time::Instant::now();
+        let now = std::time::Instant::now();
+        let mut live = Vec::new();
+        let mut saved = None;
+        let mut failed = None;
+        for tab in &mut self.tabs.tabs {
+            if tab.readonly || !tab.doc.is_dirty() {
+                continue;
+            }
+            // A file that is gone (deleted or moved away) is not created again behind the user's back.
+            if !tab.doc.path().is_some_and(|path| path.exists()) {
+                continue;
+            }
+            live.push(tab.id);
+            let hash = recovery::text_hash(tab.doc.text());
+            if !self.auto_saves.due(tab.id, hash, now) {
+                continue;
+            }
+            match tab.doc.save() {
+                Ok(()) => saved = Some(tab.title()),
+                Err(error) => {
+                    self.auto_saves.failed(tab.id);
+                    failed = Some(format!("Auto Save skipped {}: {error}", tab.title()));
+                }
+            }
+        }
+        self.auto_saves.keep_only(&live);
+        if !live.is_empty() {
+            // Nothing else may wake the window while the user is not typing.
+            self.egui_ctx.request_repaint_after(autosave::DELAY / 2);
+        }
+        if let Some(message) = failed {
+            self.status = message;
+        } else if let Some(title) = saved {
+            self.status = format!("Auto-saved {title}");
+            self.refresh_git();
+        }
+    }
+
     /// Every few seconds write the text of tabs with unsaved changes to the recovery folder, and
     /// forget the entries of tabs that were saved or closed. Only changed text is rewritten.
     fn autosave_recovery(&mut self) {
@@ -405,18 +641,29 @@ impl ForgeRoomApp {
                 continue;
             }
             live.push(tab.id);
-            let hash = recovery::text_hash(tab.doc.text());
+            let path = tab.doc.path();
+            // The path is part of the fingerprint, so a renamed file is written again.
+            let hash = recovery::text_hash(tab.doc.text())
+                ^ recovery::text_hash(&path.map(|p| p.display().to_string()).unwrap_or_default())
+                    .rotate_left(1);
             if self.recovery_written.get(&tab.id) == Some(&hash) {
                 continue;
             }
-            let path = tab.doc.path();
             let entry = recovery::Entry {
                 path: path.map(|path| path.display().to_string()),
                 text: tab.doc.text().to_string(),
                 disk_hash: path.map(|_| recovery::text_hash(tab.doc.saved_text())),
             };
-            if self.recovery.save(tab.id, &entry).is_ok() {
-                self.recovery_written.insert(tab.id, hash);
+            match self.recovery.save(tab.id, &entry) {
+                Ok(()) => {
+                    self.recovery_written.insert(tab.id, hash);
+                }
+                Err(error) if !self.recovery_warned => {
+                    // The safety net is not working: say so once instead of retrying in silence.
+                    self.recovery_warned = true;
+                    self.status = format!("Crash recovery cannot write its files: {error}");
+                }
+                Err(_) => {}
             }
         }
         let gone: Vec<u64> = self
@@ -447,10 +694,36 @@ impl ForgeRoomApp {
                     &folder.display().to_string(),
                 );
             });
+            let previous = self.git_root();
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
             self.clear_git_state();
-            self.refresh_git();
+            // Tabs of the folder that was left would otherwise sit among the new project's files, and
+            // a shell would go on working in the old one.
+            let mut moved = String::new();
+            if previous.as_ref().is_some_and(|old| *old != folder) {
+                let closed = self.tabs.close_clean_outside(&folder);
+                if closed > 0 {
+                    moved.push_str(&format!(
+                        "; closed {closed} saved tab(s) of the other folder"
+                    ));
+                }
+                if self.terminals.iter().any(|t| !t.has_exited()) {
+                    self.spawn_terminal(true);
+                    moved.push_str(
+                        "; a new terminal is open here, the old ones still run in the other folder",
+                    );
+                }
+            }
+            // Git and the project's tools only run where the user said so: a folder can carry
+            // settings that make them start programs.
+            let known = settings::load().trusted_folders;
+            if settings::is_trusted(&known, &folder.display().to_string()) {
+                self.set_trust(true);
+            } else {
+                self.set_trust(false);
+                self.trust_prompt = Some(folder.clone());
+            }
             let root = self.repo_root();
             self.room.load_for(root.as_deref());
             let kept = self
@@ -460,8 +733,8 @@ impl ForgeRoomApp {
             self.search.reset();
             self.preview.forget_project();
             self.status = match kept {
-                Ok(()) => format!("Opened folder {}", path.display()),
-                Err(error) => format!("Opened folder {}. {error}", path.display()),
+                Ok(()) => format!("Opened folder {}{moved}", path.display()),
+                Err(error) => format!("Opened folder {}. {error}{moved}", path.display()),
             };
             return;
         }
@@ -559,13 +832,35 @@ impl ForgeRoomApp {
     /// left alone and surface a conflict choice when saved.
     fn sync_external_changes(&mut self) {
         let mut reloaded = None;
+        let mut warned = None;
         for tab in &mut self.tabs.tabs {
-            if !tab.doc.is_dirty() && tab.doc.changed_on_disk() && tab.doc.reload().is_ok() {
+            if tab.readonly || tab.doc.path().is_none() {
+                continue;
+            }
+            let dirty = tab.doc.is_dirty();
+            if !dirty && tab.doc.changed_on_disk() && tab.doc.reload().is_ok() {
                 reloaded = Some(tab.title());
             }
+            // What the tab cannot show on its own: the file is gone, or it changed under unsaved
+            // edits (saving would then replace the other change, or bring a deleted file back).
+            let gone = tab.doc.path().is_some_and(|path| !path.exists());
+            let now = if gone {
+                Some("deleted on disk")
+            } else if dirty && tab.doc.changed_on_disk() {
+                Some("changed on disk")
+            } else {
+                None
+            };
+            if now.is_some() && now != tab.external {
+                warned = Some((tab.title(), now.unwrap_or_default()));
+            }
+            tab.external = now;
         }
         if let Some(title) = reloaded {
             self.status = format!("Reloaded {title}: it changed on disk");
+        }
+        if let Some((title, what)) = warned {
+            self.status = format!("{title} was {what}; look at the tab before saving");
         }
     }
 
@@ -601,6 +896,64 @@ impl ForgeRoomApp {
                 if !self.tabs.tabs.is_empty() {
                     self.request_close(self.tabs.active);
                 }
+            }
+            Command::SelectNextOccurrence
+            | Command::GoToMatchingBracket
+            | Command::SelectToMatchingBracket
+            | Command::TransformUppercase
+            | Command::TransformLowercase
+            | Command::SortLinesAscending
+            | Command::SortLinesDescending
+            | Command::RemoveDuplicateLines
+            | Command::TrimTrailingWhitespace
+            | Command::JoinLines => {
+                use transforms::Kind;
+                self.pending_edit = Some(match command {
+                    Command::SelectNextOccurrence => Kind::SelectNextOccurrence,
+                    Command::GoToMatchingBracket => Kind::GoToMatchingBracket,
+                    Command::SelectToMatchingBracket => Kind::SelectToMatchingBracket,
+                    Command::TransformUppercase => Kind::Uppercase,
+                    Command::TransformLowercase => Kind::Lowercase,
+                    Command::SortLinesAscending => Kind::SortAscending,
+                    Command::SortLinesDescending => Kind::SortDescending,
+                    Command::RemoveDuplicateLines => Kind::RemoveDuplicateLines,
+                    Command::TrimTrailingWhitespace => Kind::TrimTrailingWhitespace,
+                    _ => Kind::JoinLines,
+                });
+                self.focus_editor = true;
+            }
+            Command::ZoomIn | Command::ZoomOut | Command::ZoomReset => {
+                let scale = match command {
+                    Command::ZoomIn => settings::step_scale(self.editor_scale, 1),
+                    Command::ZoomOut => settings::step_scale(self.editor_scale, -1),
+                    _ => 1.0,
+                };
+                self.editor_scale = scale;
+                // A convenience: failing to remember the size is not worth interrupting for.
+                let _ = settings::update(|settings| {
+                    settings.editor_scale = (scale != 1.0).then_some(scale);
+                });
+                self.status = format!("Editor font size {}%", (scale * 100.0).round());
+            }
+            Command::GoToSymbol => {
+                let outline =
+                    self.tabs
+                        .tabs
+                        .get(self.tabs.active)
+                        .map(|tab| {
+                            let extension =
+                                tab.syntax
+                                    .clone()
+                                    .or_else(|| {
+                                        tab.doc.path().and_then(|path| path.extension()).map(
+                                            |extension| extension.to_string_lossy().into_owned(),
+                                        )
+                                    })
+                                    .unwrap_or_default();
+                            symbols::outline(tab.doc.text(), &extension)
+                        })
+                        .unwrap_or_default();
+                self.palette.open_symbols(outline);
             }
             Command::ReopenClosedTab => match self.tabs.reopen_closed() {
                 Ok(Some(path)) => {
@@ -639,6 +992,42 @@ impl ForgeRoomApp {
             }
             Command::ColorTheme => self.gallery.open(),
             Command::GitRefresh => self.refresh_git(),
+            Command::ToggleAutoSave => {
+                self.auto_save = !self.auto_save;
+                let on = self.auto_save;
+                let _ = settings::update(|settings| settings.auto_save = on.then_some(true));
+                self.status = if on {
+                    "Auto Save on: files are saved when you stop typing".into()
+                } else {
+                    "Auto Save off".into()
+                };
+            }
+            Command::CopyPath | Command::CopyRelativePath | Command::RevealInExplorer => {
+                let path = self
+                    .tabs
+                    .active_tab()
+                    .and_then(|tab| tab.doc.path().map(std::path::Path::to_path_buf));
+                match (path, command) {
+                    (None, _) => self.status = "The active tab is not a file on disk".into(),
+                    (Some(path), Command::CopyPath) => {
+                        self.egui_ctx.copy_text(path.display().to_string());
+                        self.status = "Copied the path".into();
+                    }
+                    (Some(path), Command::CopyRelativePath) => {
+                        let text = match self.repo_root() {
+                            Some(root) => file_ops::relative_display(&root, &path),
+                            None => path.display().to_string(),
+                        };
+                        self.egui_ctx.copy_text(text);
+                        self.status = "Copied the relative path".into();
+                    }
+                    (Some(path), _) => {
+                        if let Err(error) = file_ops::reveal(&path) {
+                            self.status = error;
+                        }
+                    }
+                }
+            }
             Command::ToggleBlame => {
                 self.blame_enabled = !self.blame_enabled;
                 self.status = if self.blame_enabled {
@@ -648,7 +1037,7 @@ impl ForgeRoomApp {
                 };
             }
             Command::SwitchBranch => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     match git::branches(&root) {
                         Ok(list) => self
                             .palette
@@ -663,9 +1052,33 @@ impl ForgeRoomApp {
                 } else {
                     palette::BranchPurpose::Delete
                 };
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     match git::branches(&root) {
                         Ok(list) => self.palette.open_branches(list, purpose),
+                        Err(error) => self.status = format!("Git: {error}"),
+                    }
+                }
+            }
+            Command::CreateTag | Command::DeleteTag => {
+                let purpose = if command == Command::CreateTag {
+                    palette::BranchPurpose::TagCreate
+                } else {
+                    palette::BranchPurpose::TagDelete
+                };
+                if let Some(root) = self.git_root() {
+                    match git::tags(&root) {
+                        Ok(list) => {
+                            let tags = list
+                                .into_iter()
+                                .map(|name| git::Branch {
+                                    name,
+                                    current: false,
+                                    remote: false,
+                                    upstream: None,
+                                })
+                                .collect();
+                            self.palette.open_branches(tags, purpose);
+                        }
                         Err(error) => self.status = format!("Git: {error}"),
                     }
                 }
@@ -676,6 +1089,7 @@ impl ForgeRoomApp {
             Command::GitPush => self.git_action(source_control::Action::Push),
             Command::GitFetch => self.git_action(source_control::Action::Fetch),
             Command::GitStash => self.git_action(source_control::Action::Stash),
+            Command::GitStashApply => self.git_action(source_control::Action::StashApply),
             Command::Find => self.find.show_bar(false),
             Command::Replace => self.find.show_bar(true),
             Command::QuickOpen => {
@@ -684,6 +1098,36 @@ impl ForgeRoomApp {
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
+            Command::TrustFolder => {
+                if let Some(root) = self.repo_root() {
+                    if self.trusted {
+                        self.status = "This folder is already trusted".into();
+                    } else {
+                        self.trust_prompt = Some(root);
+                    }
+                } else {
+                    self.status = "Open a folder first".into();
+                }
+            }
+            Command::CheckProject => {
+                self.show_terminal = true;
+                self.bottom_tab = BottomTab::Problems;
+                self.start_check();
+            }
+            Command::CopyTerminalOutput => match self.terminals.get(self.active_terminal) {
+                Some(terminal) => {
+                    let text = terminal.all_text();
+                    let lines = text.lines().count();
+                    self.egui_ctx.copy_text(text);
+                    self.status = format!("Copied the whole terminal output ({lines} lines)");
+                }
+                None => self.status = "There is no terminal".into(),
+            },
+            Command::NewTerminal => {
+                self.show_terminal = true;
+                self.bottom_tab = BottomTab::Terminal;
+                self.spawn_terminal(true);
+            }
             Command::ToggleTerminal => {
                 if self.show_terminal && self.terminal_has_focus {
                     self.show_terminal = false;
@@ -699,27 +1143,107 @@ impl ForgeRoomApp {
 
     /// Start a shell in the project folder when there is none running.
     fn ensure_terminal(&mut self) {
-        let running = self.terminal.as_ref().is_some_and(|t| !t.has_exited());
+        let running = self
+            .terminals
+            .get(self.active_terminal)
+            .is_some_and(|t| !t.has_exited());
         if running {
             return;
         }
+        self.spawn_terminal(false);
+    }
+
+    /// Start a shell in the project folder: as one more terminal, or in place of the active one.
+    fn spawn_terminal(&mut self, add: bool) {
         let root = self.repo_root();
         match terminal::Terminal::spawn(&self.egui_ctx, root.as_deref()) {
             Ok(terminal) => {
-                self.terminal = Some(terminal);
                 self.terminal_error = None;
+                if add || self.terminals.is_empty() {
+                    self.terminals.push(terminal);
+                    self.active_terminal = self.terminals.len() - 1;
+                } else {
+                    let index = self.active_terminal.min(self.terminals.len() - 1);
+                    self.terminals[index] = terminal;
+                    self.active_terminal = index;
+                }
             }
-            Err(error) => {
-                self.terminal = None;
-                self.terminal_error = Some(error);
-            }
+            Err(error) => self.terminal_error = Some(error),
+        }
+        self.terminal_focus_request = true;
+    }
+
+    /// Run `cargo check` for the open folder on a worker thread.
+    fn start_check(&mut self) {
+        let Some(root) = self.repo_root() else {
+            self.status = "Open a folder to check it".into();
+            return;
+        };
+        if !self.trusted {
+            self.status = "Trust this folder first (Folder: Trust This Folder): cargo check runs its build scripts".into();
+            return;
+        }
+        if !self.checked_folders.contains(&root) {
+            self.confirm = Some(Confirm::RunCheck);
+            return;
+        }
+        let context = self.egui_ctx.clone();
+        if self
+            .checking
+            .request(&context, move || diagnostics::check(&root))
+        {
+            self.status = "Running cargo check…".into();
+        } else {
+            self.status = "A check is already running".into();
+        }
+    }
+
+    /// Take a finished check.
+    fn poll_check(&mut self) {
+        if let Some(report) = self.checking.poll() {
+            let errors = report.problems.iter().filter(|p| p.error).count();
+            let warnings = report.problems.len() - errors;
+            self.status = match &report.failure {
+                Some(failure) => format!("cargo check: {failure}"),
+                None => format!("cargo check: {errors} error(s), {warnings} warning(s)"),
+            };
+            self.problems = Some(report);
+        } else if self.checking.take_failed() {
+            self.status = "cargo check stopped unexpectedly".into();
+        }
+    }
+
+    /// Close the active terminal (its shell is ended); the one before it comes forward.
+    fn close_terminal(&mut self) {
+        self.split_pair = None;
+        if self.active_terminal < self.terminals.len() {
+            self.terminals.remove(self.active_terminal);
+        }
+        self.active_terminal = self
+            .active_terminal
+            .saturating_sub(1)
+            .min(self.terminals.len().saturating_sub(1));
+        self.terminal_focus_request = true;
+        if self.terminals.is_empty() {
+            self.show_terminal = false;
+            self.terminal_has_focus = false;
+            self.focus_editor = true;
         }
     }
 
     fn terminal_panel(&mut self, ui: &mut egui::Ui) {
-        let exited = self.terminal.as_ref().is_some_and(|t| t.has_exited());
+        let exited = self
+            .terminals
+            .get(self.active_terminal)
+            .is_some_and(|t| t.has_exited());
         let mut restart = false;
         let mut close = false;
+        let mut add_terminal = false;
+        let mut close_terminal = false;
+        let mut switch_to = None;
+        let mut toggle_split = false;
+        let mut toggle_maximize = false;
+        let mut copy_all = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(12.0);
@@ -735,8 +1259,42 @@ impl ForgeRoomApp {
             for label in ["Debug Console", "Ports"] {
                 underline_tab(ui, label, false, false).on_hover_text("Adapter not connected");
             }
+            if self.bottom_tab == BottomTab::Terminal {
+                // One small number per terminal, a plus for another and a cross to end the shown
+                // one, all drawn with the app's own icons (a font glyph may be missing).
+                ui.add_space(8.0);
+                if self.terminals.len() > 1 {
+                    for index in 0..self.terminals.len() {
+                        let (rect, response) =
+                            ui.allocate_exact_size(egui::vec2(24.0, 26.0), egui::Sense::click());
+                        let active = index == self.active_terminal;
+                        if active {
+                            ui.painter().rect_filled(rect, 6.0, theme::overlay(22));
+                        } else if response.hovered() {
+                            ui.painter().rect_filled(rect, 6.0, theme::overlay(12));
+                        }
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            index + 1,
+                            egui::FontId::proportional(13.0),
+                            if active {
+                                theme::text()
+                            } else {
+                                theme::text_dim()
+                            },
+                        );
+                        if response
+                            .on_hover_text(format!("Terminal {}", index + 1))
+                            .clicked()
+                        {
+                            switch_to = Some(index);
+                        }
+                    }
+                }
+            }
             if ui.available_width() > 760.0
-                && let Some(terminal) = &self.terminal
+                && let Some(terminal) = self.terminals.get(self.active_terminal)
             {
                 ui.add_space(10.0);
                 ui.label(
@@ -755,10 +1313,71 @@ impl ForgeRoomApp {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
+                // Right to left: close, maximize, a divider, then the terminal's own actions.
                 if icons::icon_button(ui, "Hide terminal (Ctrl+`)", icons::close_cross).clicked() {
                     close = true;
                 }
-                if (exited || self.terminal.is_none()) && ui.small_button("Restart").clicked() {
+                let maximize_tip = if self.terminal_maximized {
+                    "Restore panel size"
+                } else {
+                    "Maximize panel"
+                };
+                if icons::icon_button(ui, maximize_tip, icons::maximize).clicked() {
+                    toggle_maximize = true;
+                }
+                if self.bottom_tab == BottomTab::Terminal {
+                    let (divider, _) =
+                        ui.allocate_exact_size(egui::vec2(9.0, 16.0), egui::Sense::hover());
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(divider.center().x, divider.top()),
+                            egui::pos2(divider.center().x, divider.bottom()),
+                        ],
+                        egui::Stroke::new(1.0, theme::border()),
+                    );
+                    let more = icons::icon_button(ui, "More terminal actions", icons::more);
+                    egui::Popup::menu(&more).show(|ui| {
+                        if ui.button("Copy all output").clicked() {
+                            copy_all = true;
+                            ui.close();
+                        }
+                        if ui.button("Restart this terminal").clicked() {
+                            restart = true;
+                            ui.close();
+                        }
+                    });
+                    if icons::icon_button(ui, "Kill terminal", icons::trash).clicked() {
+                        close_terminal = true;
+                    }
+                    let split_tip = if self.split_pair.is_some() {
+                        "Unsplit terminals"
+                    } else {
+                        "Split terminal"
+                    };
+                    if icons::icon_button(ui, split_tip, icons::split).clicked() {
+                        toggle_split = true;
+                    }
+                    let menu = icons::icon_button(ui, "Terminal types", icons::chevron_small);
+                    egui::Popup::menu(&menu).show(|ui| {
+                        if ui
+                            .button(format!(
+                                "New {}",
+                                self.terminals
+                                    .first()
+                                    .map_or("terminal", |t| t.shell.as_str())
+                            ))
+                            .clicked()
+                        {
+                            add_terminal = true;
+                            ui.close();
+                        }
+                    });
+                    if icons::icon_button(ui, "New terminal (Ctrl+Shift+`)", icons::plus).clicked()
+                    {
+                        add_terminal = true;
+                    }
+                }
+                if (exited || self.terminals.is_empty()) && ui.small_button("Restart").clicked() {
                     restart = true;
                 }
             });
@@ -769,9 +1388,62 @@ impl ForgeRoomApp {
             self.focus_editor = true;
             return;
         }
+        if toggle_maximize {
+            self.terminal_maximized = !self.terminal_maximized;
+        }
+        if copy_all && let Some(terminal) = self.terminals.get(self.active_terminal) {
+            let text = terminal.all_text();
+            self.status = format!(
+                "Copied the whole terminal output ({} lines)",
+                text.lines().count()
+            );
+            ui.ctx().copy_text(text);
+        }
+        if toggle_split {
+            if self.split_pair.is_some() {
+                self.split_pair = None;
+            } else {
+                // Two terminals side by side: the shown one and another (made when there is none).
+                if self.terminals.len() < 2 {
+                    self.spawn_terminal(true);
+                }
+                if self.terminals.len() >= 2 {
+                    let shown = self.active_terminal.min(self.terminals.len() - 1);
+                    let other = if shown + 1 < self.terminals.len() {
+                        shown + 1
+                    } else {
+                        shown - 1
+                    };
+                    self.split_pair = Some((shown.min(other), shown.max(other)));
+                    self.active_terminal = shown;
+                }
+            }
+        }
         if restart {
-            self.terminal = None;
-            self.ensure_terminal();
+            self.spawn_terminal(false);
+        }
+        if add_terminal {
+            self.spawn_terminal(true);
+        }
+        if close_terminal {
+            let running = self
+                .terminals
+                .get(self.active_terminal)
+                .is_some_and(|t| !t.has_exited());
+            if running {
+                self.confirm = Some(Confirm::EndTerminal);
+            } else {
+                self.close_terminal();
+            }
+        }
+        if let Some(index) = switch_to {
+            if self
+                .split_pair
+                .is_some_and(|(a, b)| index != a && index != b)
+            {
+                self.split_pair = None;
+            }
+            self.active_terminal = index;
             self.terminal_focus_request = true;
         }
         if ui.available_width() > 640.0
@@ -829,6 +1501,11 @@ impl ForgeRoomApp {
                         });
                 });
         }
+        if self.bottom_tab == BottomTab::Problems {
+            self.terminal_has_focus = false;
+            self.problems_view(ui);
+            return;
+        }
         if self.bottom_tab != BottomTab::Terminal {
             self.terminal_has_focus = false;
             self.terminal_output_view(ui);
@@ -836,7 +1513,38 @@ impl ForgeRoomApp {
         }
         let request = std::mem::take(&mut self.terminal_focus_request);
         let mut link = None;
-        match self.terminal.as_mut() {
+        let active = self.active_terminal;
+        // A split that no longer fits the terminals that exist is dropped.
+        if self
+            .split_pair
+            .is_some_and(|(a, b)| a >= b || b >= self.terminals.len())
+        {
+            self.split_pair = None;
+        }
+        if let Some((a, b)) = self.split_pair {
+            let (first, second) = self.terminals.split_at_mut(b);
+            let (left, right) = (&mut first[a], &mut second[0]);
+            let (mut left_focus, mut right_focus) = (false, false);
+            ui.columns(2, |columns| {
+                left_focus = left.show(&mut columns[0], request && active == a);
+                right_focus = right.show(&mut columns[1], request && active == b);
+            });
+            if let Some(found) = left.take_link().or_else(|| right.take_link()) {
+                link = Some(found);
+            }
+            self.terminal_has_focus = left_focus || right_focus;
+            // Actions that follow the shown terminal follow the one that has the keyboard.
+            if right_focus {
+                self.active_terminal = b;
+            } else if left_focus {
+                self.active_terminal = a;
+            }
+            if let Some(link) = link {
+                self.open_terminal_link(&link);
+            }
+            return;
+        }
+        match self.terminals.get_mut(active) {
             Some(terminal) => {
                 self.terminal_has_focus = terminal.show(ui, request);
                 link = terminal.take_link();
@@ -885,8 +1593,107 @@ impl ForgeRoomApp {
         }
     }
 
+    /// The Problems tab: a button that runs `cargo check` and the compiler's errors and warnings,
+    /// each opening its file at the right line.
+    fn problems_view(&mut self, ui: &mut egui::Ui) {
+        let mut run = false;
+        let mut open: Option<diagnostics::Problem> = None;
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            let busy = self.checking.busy();
+            if ui
+                .add_enabled(!busy, egui::Button::new("Run cargo check"))
+                .clicked()
+            {
+                run = true;
+            }
+            if busy {
+                ui.spinner();
+                ui.label(egui::RichText::new("Checking…").color(theme::text_dim()));
+            } else if let Some(report) = &self.problems {
+                let errors = report.problems.iter().filter(|p| p.error).count();
+                let text = match &report.failure {
+                    Some(failure) => failure.clone(),
+                    None => format!(
+                        "{errors} error(s), {} warning(s){}",
+                        report.problems.len() - errors,
+                        if report.truncated {
+                            " (first 500 shown)"
+                        } else {
+                            ""
+                        }
+                    ),
+                };
+                ui.label(egui::RichText::new(text).color(theme::text_dim()));
+            }
+        });
+        let Some(report) = &self.problems else {
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Run cargo check to list the compiler's errors and warnings. \
+                         It is not a language server: the list is as old as the last run.",
+                    )
+                    .color(theme::text_dim()),
+                );
+            });
+            if run {
+                self.start_check();
+            }
+            return;
+        };
+        let root = self
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone());
+        egui::ScrollArea::vertical()
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                for problem in &report.problems {
+                    let shown = root
+                        .as_deref()
+                        .map(|root| file_ops::relative_display(root, &problem.file))
+                        .unwrap_or_else(|| problem.file.display().to_string());
+                    let color = if problem.error {
+                        egui::Color32::from_rgb(235, 100, 100)
+                    } else {
+                        egui::Color32::from_rgb(220, 180, 80)
+                    };
+                    let line = format!(
+                        "{}  {shown}:{}:{}  {}",
+                        if problem.error { "error" } else { "warning" },
+                        problem.line,
+                        problem.column,
+                        problem.message.lines().next().unwrap_or("")
+                    );
+                    let response = ui.add(
+                        egui::Label::new(egui::RichText::new(line).monospace().color(color))
+                            .sense(egui::Sense::click())
+                            .truncate(),
+                    );
+                    if response.clicked() {
+                        open = Some(problem.clone());
+                    }
+                }
+            });
+        if let Some(problem) = open {
+            self.open_path(problem.file.clone());
+            if self.tabs.active_path() == Some(tabs::normalize(&problem.file).as_path())
+                && let Some(tab) = self.tabs.tabs.get(self.tabs.active)
+            {
+                let at = path_links::locate(tab.doc.text(), problem.line, problem.column);
+                self.pending_select = Some((at, at));
+                self.focus_editor = true;
+            }
+        }
+        if run {
+            self.start_check();
+        }
+    }
+
     fn terminal_output_view(&mut self, ui: &mut egui::Ui) {
-        let Some(terminal) = &self.terminal else {
+        let Some(terminal) = self.terminals.get(self.active_terminal) else {
             ui.label("Start the terminal to see local output.");
             return;
         };
@@ -896,7 +1703,7 @@ impl ForgeRoomApp {
                 ui.horizontal(|ui| {
                     ui.label("Current terminal screen");
                     if ui.button("Copy output").clicked() {
-                        ui.ctx().copy_text(text.clone());
+                        ui.ctx().copy_text(terminal.all_text());
                     }
                 });
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -907,31 +1714,7 @@ impl ForgeRoomApp {
                     });
                 });
             }
-            BottomTab::Problems => {
-                ui.label("Errors and warnings on the current terminal screen");
-                let matches: Vec<_> = text
-                    .lines()
-                    .filter(|line| {
-                        let lower = line.to_ascii_lowercase();
-                        lower.contains("error:")
-                            || lower.contains("error[")
-                            || lower.contains("warning:")
-                    })
-                    .take(50)
-                    .collect();
-                if matches.is_empty() {
-                    ui.label(
-                        "No error or warning lines visible. Language diagnostics are not connected yet.",
-                    );
-                } else {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for line in matches {
-                            ui.monospace(line);
-                        }
-                    });
-                }
-            }
-            BottomTab::Terminal => {}
+            BottomTab::Problems | BottomTab::Terminal => {}
         }
     }
 
@@ -1021,7 +1804,9 @@ impl ForgeRoomApp {
         let command_shift = Modifiers::COMMAND | Modifiers::SHIFT;
         if self.terminal_has_focus {
             // The shell owns plain Ctrl keys (Ctrl+C, Ctrl+W...); only app-level chords work here.
-            if shortcut(ui, command, Key::Backtick) {
+            if shortcut(ui, command_shift, Key::Backtick) {
+                self.run_command(Command::NewTerminal, false);
+            } else if shortcut(ui, command, Key::Backtick) {
                 self.run_command(Command::ToggleTerminal, false);
             } else if shortcut(ui, command_shift, Key::P) {
                 self.run_command(Command::GoToLine, true);
@@ -1044,6 +1829,8 @@ impl ForgeRoomApp {
             self.switch_view(SidebarView::Room);
         } else if shortcut(ui, command_shift, Key::O) {
             self.open_folder_dialog();
+        } else if shortcut(ui, command_shift, Key::Y) {
+            self.run_command(Command::GoToSymbol, false);
         } else if shortcut(ui, command_shift, Key::T) {
             self.run_command(Command::ReopenClosedTab, false);
         } else if shortcut(ui, command, Key::P) {
@@ -1054,8 +1841,16 @@ impl ForgeRoomApp {
             self.run_command(Command::Replace, false);
         } else if shortcut(ui, command, Key::G) {
             self.run_command(Command::GoToLine, false);
+        } else if shortcut(ui, command_shift, Key::Backtick) {
+            self.run_command(Command::NewTerminal, false);
         } else if shortcut(ui, command, Key::Backtick) {
             self.run_command(Command::ToggleTerminal, false);
+        } else if shortcut(ui, command, Key::Equals) || shortcut(ui, command, Key::Plus) {
+            self.run_command(Command::ZoomIn, false);
+        } else if shortcut(ui, command, Key::Minus) {
+            self.run_command(Command::ZoomOut, false);
+        } else if shortcut(ui, command, Key::Num0) {
+            self.run_command(Command::ZoomReset, false);
         } else if shortcut(ui, command, Key::S) {
             self.save_active(false);
         } else if shortcut(ui, command, Key::O) {
@@ -1356,6 +2151,11 @@ impl ForgeRoomApp {
                     .clicked()
                 {
                     self.save_active(true);
+                    ui.close();
+                }
+                let mut auto_save = self.auto_save;
+                if ui.checkbox(&mut auto_save, "Auto Save").clicked() {
+                    self.run_command(Command::ToggleAutoSave, false);
                     ui.close();
                 }
                 ui.separator();
@@ -1729,6 +2529,30 @@ impl ForgeRoomApp {
 
     // ---- Version control ---------------------------------------------------------------
 
+    /// Where Git commands run: the top folder of the repository (which is above the open folder
+    /// when a subfolder of a bigger repository was opened). `None` until the folder is trusted.
+    fn git_root(&self) -> Option<PathBuf> {
+        if !self.trusted {
+            return None;
+        }
+        self.git_top.clone().or_else(|| self.repo_root())
+    }
+
+    /// Switch the open folder to trusted or restricted, and read the repository when trusted.
+    fn set_trust(&mut self, trusted: bool) {
+        self.trusted = trusted;
+        self.git_top = None;
+        if trusted {
+            if let Some(root) = self.repo_root() {
+                self.git_top = git::toplevel(&root);
+            }
+            self.refresh_git();
+        } else {
+            self.clear_git_state();
+            self.git_refresh.discard();
+        }
+    }
+
     fn repo_root(&self) -> Option<PathBuf> {
         self.workspace
             .as_ref()
@@ -1757,7 +2581,7 @@ impl ForgeRoomApp {
     /// in a big repository never freezes the window; [`Self::poll_git_refresh`] applies the result.
     fn refresh_git(&mut self) {
         self.last_git = std::time::Instant::now();
-        let Some(root) = self.repo_root() else {
+        let Some(root) = self.git_root() else {
             self.clear_git_state();
             self.git_refresh.discard();
             return;
@@ -1765,6 +2589,46 @@ impl ForgeRoomApp {
         let context = self.egui_ctx.clone();
         self.git_refresh
             .request(&context, move || git::snapshot(&root));
+    }
+
+    /// Apply a finished move to the Recycle Bin: close the saved tabs of what is gone, refresh the
+    /// tree and say what happened, including tabs with unsaved changes that were kept.
+    fn poll_recycling(&mut self) {
+        let Some(done) = self.recycling.poll() else {
+            if self.recycling.take_failed() {
+                self.status = "Moving to the Recycle Bin failed unexpectedly".into();
+            }
+            return;
+        };
+        // What matters is whether it is gone, even when the helper then reported a problem.
+        let gone = !done.path.exists();
+        let (mut closed, mut kept) = (0, 0);
+        if gone {
+            kept = self.tabs.dirty_under(&done.canonical);
+            closed = self.tabs.close_clean_under(&done.canonical);
+            if let Some(workspace) = &mut self.workspace {
+                workspace.refresh();
+            }
+            self.refresh_git();
+        }
+        let mut text = match (&done.result, gone) {
+            (Ok(()), _) => format!("Moved {} to the Recycle Bin", done.name),
+            (Err(error), true) => format!("{} is gone, but: {error}", done.name),
+            (Err(error), false) => error.clone(),
+        };
+        if closed > 0 {
+            text.push_str(&format!(
+                "; closed {closed} saved tab{}",
+                if closed == 1 { "" } else { "s" }
+            ));
+        }
+        if kept > 0 {
+            text.push_str(&format!(
+                "; {kept} tab{} with unsaved changes stay open (saving would create the file again)",
+                if kept == 1 { "" } else { "s" }
+            ));
+        }
+        self.status = text;
     }
 
     /// Take a finished repository read, if any, and start another when one was asked for meanwhile.
@@ -1779,10 +2643,22 @@ impl ForgeRoomApp {
             return;
         };
         // The result of a read for a folder that is no longer open is dropped.
-        if self.repo_root().as_deref() == Some(snapshot.root.as_path()) {
+        if self.git_root().as_deref() == Some(snapshot.root.as_path()) {
             self.is_repo = snapshot.is_repo;
             self.operation = snapshot.operation;
             self.branch = snapshot.branch;
+            // Files that appear or disappear (an agent creating or deleting them) change this list, and
+            // then the cached Explorer listing is stale.
+            let paths: Vec<String> = match &snapshot.status {
+                Ok(status) => status.changes.iter().map(|c| c.path.clone()).collect(),
+                Err(_) => Vec::new(),
+            };
+            if paths != self.change_paths {
+                self.change_paths = paths;
+                if let Some(workspace) = &mut self.workspace {
+                    workspace.refresh();
+                }
+            }
             self.git_status = Some(snapshot.status);
             if self.is_repo {
                 self.graph_commits = snapshot.commits;
@@ -1799,42 +2675,94 @@ impl ForgeRoomApp {
         }
     }
 
+    /// Stage or revert the single change at `line` of the active file (from the gutter menu).
+    fn change_at_line(&mut self, stage: bool, line: usize) {
+        let (Some(root), Some(tab)) = (self.git_root(), self.tabs.tabs.get(self.tabs.active))
+        else {
+            return;
+        };
+        let Some(path) = tab.doc.path() else { return };
+        let Ok(relative) = path.strip_prefix(&root) else {
+            return;
+        };
+        // The change positions come from the file on disk: unsaved edits would not line up.
+        if tab.doc.is_dirty() {
+            self.status = "Save the file first, then stage or revert a change".into();
+            return;
+        }
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let result = if stage {
+            git::stage_hunk(&root, &relative, line).map(|()| "Staged the change")
+        } else {
+            git::revert_hunk(&root, &relative, line).map(|()| "Reverted the change")
+        };
+        self.status = match result {
+            Ok(message) => message.to_string(),
+            Err(error) => format!("Git: {error}"),
+        };
+        self.refresh_git();
+        if !stage {
+            // The file changed on disk: the open (saved) tab shows the reverted text.
+            self.reload_clean_tabs();
+        }
+    }
+
     fn refresh_hunks(&mut self) {
-        self.hunks_tab = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.id);
-        self.hunks.clear();
-        let (Some(root), Some(path)) = (self.repo_root(), self.tabs.active_path()) else {
+        let active = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.id);
+        if self.hunks_tab != active {
+            // Another file: what is shown belongs to the previous one.
+            self.hunks.clear();
+            self.blame.clear();
+            self.file_history.clear();
+            self.history_name = None;
+        }
+        self.hunks_tab = active;
+        let (Some(root), Some(path), Some(tab)) = (
+            self.git_root(),
+            self.tabs.active_path().map(std::path::Path::to_path_buf),
+            active,
+        ) else {
             return;
         };
         let Ok(relative) = path.strip_prefix(&root) else {
             self.file_history.clear();
             self.history_name = None;
             self.blame.clear();
+            self.hunks.clear();
             return;
         };
         let relative = relative.to_string_lossy().replace('\\', "/");
-        self.file_history = git::file_log(&root, &relative, 30).unwrap_or_default();
-        self.history_name = relative.rsplit('/').next().map(String::from);
         let untracked = matches!(&self.git_status, Some(Ok(status))
             if status.changes.iter().any(|c| c.path == relative && c.is_untracked()));
-        self.blame = if untracked {
-            Vec::new()
-        } else {
-            git::blame(&root, &relative)
+        let lines = self
+            .tabs
+            .tabs
+            .get(self.tabs.active)
+            .map(|tab| gutter::line_count(tab.doc.text()))
+            .unwrap_or(0);
+        let context = self.egui_ctx.clone();
+        // Busy: the request is remembered and runs when this one finishes.
+        self.hunks_job.request(&context, move || {
+            FileGit::read(tab, &root, &relative, untracked, lines)
+        });
+    }
+
+    /// Apply a finished read of the active file's history, blame and changes.
+    fn poll_hunks(&mut self) {
+        let Some(read) = self.hunks_job.poll() else {
+            if self.hunks_job.take_failed() {
+                self.hunks_job = background::Latest::default();
+            }
+            return;
         };
-        if untracked {
-            let lines = self
-                .tabs
-                .tabs
-                .get(self.tabs.active)
-                .map(|tab| gutter::line_count(tab.doc.text()))
-                .unwrap_or(0);
-            self.hunks.push(git::Hunk {
-                kind: git::HunkKind::Added,
-                start: 1,
-                len: lines,
-            });
-        } else {
-            self.hunks = git::file_hunks(&root, &relative);
+        if Some(read.tab) == self.hunks_tab {
+            self.file_history = read.history;
+            self.history_name = read.name;
+            self.blame = read.blame;
+            self.hunks = read.hunks;
+        }
+        if self.hunks_job.take_again() || Some(read.tab) != self.hunks_tab {
+            self.refresh_hunks();
         }
     }
 
@@ -1848,7 +2776,7 @@ impl ForgeRoomApp {
             self.status = "Another Git operation is still running".into();
             return;
         }
-        let Some(root) = self.repo_root() else {
+        let Some(root) = self.git_root() else {
             return;
         };
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -1889,7 +2817,7 @@ impl ForgeRoomApp {
 
     fn git_action(&mut self, action: source_control::Action) {
         use source_control::Action;
-        let Some(root) = self.repo_root() else {
+        let Some(root) = self.git_root() else {
             return;
         };
         let upstream = self.has_upstream();
@@ -1897,6 +2825,14 @@ impl ForgeRoomApp {
             Some(Ok(status)) => (status.ahead, status.behind),
             _ => (0, 0),
         };
+        if matches!(action, Action::StashDrop) {
+            self.confirm = Some(Confirm::DropStash);
+            return;
+        }
+        if matches!(action, Action::AbortOperation) {
+            self.confirm = Some(Confirm::AbortOperation);
+            return;
+        }
         let outcome: Result<String, String> = match action {
             Action::None => return,
             Action::Refresh => {
@@ -2004,6 +2940,8 @@ impl ForgeRoomApp {
             }
             Action::Stash => git::stash_push(&root, ""),
             Action::StashPop => git::stash_pop(&root, 0),
+            Action::StashApply => git::stash_apply(&root, 0),
+            Action::StashDrop => git::stash_drop(&root, 0),
             Action::AbortOperation => git::abort_operation(&root)
                 .map(|operation| format!("{} aborted", operation.label())),
             Action::CherryPick(hash) => {
@@ -2129,7 +3067,7 @@ impl ForgeRoomApp {
             return;
         };
         let changes = self.pending_discard.take().unwrap_or_default();
-        if confirmed && let Some(root) = self.repo_root() {
+        if confirmed && let Some(root) = self.git_root() {
             let mut failed = None;
             for change in &changes {
                 if let Err(error) = git::discard(&root, change) {
@@ -2172,7 +3110,9 @@ impl ForgeRoomApp {
                     line,
                     column,
                     length,
-                } = self.search.show(ui, root.as_deref())
+                } = self
+                    .search
+                    .show(ui, root.as_deref(), &self.tabs.dirty_paths())
                 {
                     self.open_path(path);
                     if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
@@ -2192,8 +3132,15 @@ impl ForgeRoomApp {
                     Some(project_tools::Selected::Command(command)) => {
                         self.show_terminal = true;
                         self.bottom_tab = BottomTab::Terminal;
-                        self.ensure_terminal();
-                        if let Some(terminal) = &mut self.terminal {
+                        // A shell that is already running may be busy with an agent or a server, and
+                        // the command would be typed into its prompt: it gets a terminal of its own.
+                        if self.terminals.iter().any(|t| !t.has_exited()) {
+                            self.spawn_terminal(true);
+                        } else {
+                            self.ensure_terminal();
+                        }
+                        let active = self.active_terminal;
+                        if let Some(terminal) = self.terminals.get_mut(active) {
                             terminal.send(format!("{command}\r").as_bytes());
                             self.status = format!("Running {command} in terminal");
                         }
@@ -2258,11 +3205,238 @@ impl ForgeRoomApp {
                     .unwrap_or_default();
                 self.rename = Some((path, name));
             }
+            explorer::Action::Delete(path) => self.delete = Some(path),
+            explorer::Action::CopyRelative(path) => {
+                let text = match self.repo_root() {
+                    Some(root) => file_ops::relative_display(&root, &path),
+                    None => path.display().to_string(),
+                };
+                self.egui_ctx.copy_text(text);
+                self.status = "Copied the relative path".into();
+            }
+            explorer::Action::Reveal(path) => {
+                if let Err(error) = file_ops::reveal(&path) {
+                    self.status = error;
+                }
+            }
             explorer::Action::Refresh => {
                 if let Some(workspace) = self.workspace.as_mut() {
                     workspace.refresh();
                 }
                 self.refresh_git();
+            }
+        }
+        if let Some(folder) = self.trust_prompt.take() {
+            let (mut trust, mut restricted) = (false, false);
+            egui::Window::new("Trust this folder?")
+                .collapsible(false)
+                .resizable(false)
+                .show(&self.egui_ctx, |ui| {
+                    ui.set_max_width(440.0);
+                    ui.label(format!("{}", folder.display()));
+                    ui.add_space(4.0);
+                    ui.label(
+                        "Forge Room runs Git and your project's tools in this folder. A folder from \
+                         someone you do not trust can carry settings that make them start \
+                         programs. Trust it only if you know where it came from.",
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        trust = ui.button("Trust this folder").clicked();
+                        restricted = ui.button("Browse without Git and tools").clicked();
+                    });
+                });
+            if ui_escape(&self.egui_ctx) {
+                restricted = true;
+            }
+            if trust {
+                let shown = folder.display().to_string();
+                let _ = settings::update(|settings| {
+                    settings::trust(&mut settings.trusted_folders, &shown)
+                });
+                self.set_trust(true);
+                self.status = format!("Trusted {shown}");
+            } else if restricted {
+                self.status = "Restricted mode: Git and cargo check are off (Folder: Trust This Folder turns them on)".into();
+            } else {
+                self.trust_prompt = Some(folder);
+            }
+        }
+        if let Some(question) = self.confirm.take() {
+            let (mut yes, mut no) = (false, false);
+            let (title, text, button) = match question {
+                Confirm::DropStash => {
+                    let latest = self
+                        .git_root()
+                        .and_then(|root| git::stash_list(&root).into_iter().next())
+                        .map(|stash| stash.message)
+                        .unwrap_or_default();
+                    (
+                        "Drop stash",
+                        format!(
+                            "Drop the latest stash ({latest})? Its changes are removed from the \
+                             stash list; the status line shows the commit so it can be brought back \
+                             with git stash store."
+                        ),
+                        "Drop stash",
+                    )
+                }
+                Confirm::AbortOperation => (
+                    "Abort",
+                    format!(
+                        "Abort the {}? Everything done since it started is thrown away, including \
+                         conflicts you have already resolved and saved: the files go back to how \
+                         they were before.",
+                        self.operation
+                            .map(|operation| operation.label().to_lowercase())
+                            .unwrap_or_else(|| "operation".into())
+                    ),
+                    "Abort",
+                ),
+                Confirm::QuitWithTerminals => (
+                    "Quit",
+                    format!(
+                        "{} terminal(s) are still running. Quitting stops the programs in them \
+                         (coding agents, dev servers).",
+                        self.terminals.iter().filter(|t| !t.has_exited()).count()
+                    ),
+                    "Quit anyway",
+                ),
+                Confirm::RunCheck => {
+                    let manifest = self
+                        .repo_root()
+                        .and_then(|root| diagnostics::find_manifest(&root))
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default();
+                    (
+                        "Run cargo check",
+                        format!(
+                            "cargo check runs the build scripts and macros of this project \
+                             ({manifest}) with your rights. Only do that for code you trust."
+                        ),
+                        "Run cargo check",
+                    )
+                }
+                Confirm::EndTerminal => (
+                    "End terminal",
+                    format!(
+                        "End terminal {}? A program still running in it (a dev server, a build, a \
+                         coding agent) is stopped.",
+                        self.active_terminal + 1
+                    ),
+                    "End terminal",
+                ),
+            };
+            egui::Window::new(title)
+                .collapsible(false)
+                .resizable(false)
+                .show(&self.egui_ctx, |ui| {
+                    ui.set_max_width(380.0);
+                    ui.label(text);
+                    ui.horizontal(|ui| {
+                        yes = ui.button(button).clicked();
+                        no = ui.button("Cancel").clicked();
+                    });
+                });
+            if ui_escape(&self.egui_ctx) {
+                no = true;
+            }
+            if yes {
+                match question {
+                    Confirm::DropStash => {
+                        if let Some(root) = self.git_root() {
+                            self.status = match git::stash_drop(&root, 0) {
+                                Ok(text) => format!(
+                                    "{text}. To bring it back: git stash store <that commit>"
+                                ),
+                                Err(error) => format!("Git: {error}"),
+                            };
+                            self.refresh_git();
+                        }
+                    }
+                    Confirm::EndTerminal => self.close_terminal(),
+                    Confirm::AbortOperation => {
+                        if let Some(root) = self.git_root() {
+                            self.status = match git::abort_operation(&root) {
+                                Ok(operation) => format!("{} aborted", operation.label()),
+                                Err(error) => format!("Git: {error}"),
+                            };
+                            self.refresh_git();
+                            self.reload_clean_tabs();
+                        }
+                    }
+                    Confirm::QuitWithTerminals => {
+                        self.terminals_confirmed = true;
+                        self.egui_ctx
+                            .send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    Confirm::RunCheck => {
+                        if let Some(root) = self.repo_root() {
+                            self.checked_folders.insert(root);
+                        }
+                        self.start_check();
+                    }
+                }
+            } else if !no {
+                self.confirm = Some(question);
+            }
+        }
+        if let Some(path) = self.delete.take() {
+            let (mut confirm, mut cancel) = (false, false);
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            egui::Window::new("Delete")
+                .collapsible(false)
+                .resizable(false)
+                .show(&self.egui_ctx, |ui| {
+                    ui.label(format!(
+                        "Move {} {name:?} to the Recycle Bin?",
+                        if path.is_dir() {
+                            "the folder"
+                        } else {
+                            "the file"
+                        }
+                    ));
+                    ui.label(
+                        egui::RichText::new("You can restore it from the Recycle Bin.")
+                            .color(theme::text_dim()),
+                    );
+                    ui.horizontal(|ui| {
+                        confirm = ui.button("Move to Recycle Bin").clicked();
+                        cancel = ui.button("Cancel").clicked();
+                    });
+                });
+            if ui_escape(&self.egui_ctx) {
+                cancel = true;
+            }
+            // The open folder itself, or a folder that holds it, is not something to delete from here.
+            let holds_the_project = self.workspace.as_ref().is_some_and(|workspace| {
+                let (target, root) = (tabs::normalize(&path), tabs::normalize(&workspace.root));
+                root.starts_with(&target)
+            });
+            if confirm && holds_the_project {
+                self.status =
+                    "The open folder (or a folder that holds it) cannot be deleted here".into();
+            } else if confirm {
+                // The tabs hold canonical paths, and this one can only be made canonical while the
+                // file still exists.
+                let canonical = tabs::normalize(&path);
+                let context = self.egui_ctx.clone();
+                let (moved, label) = (path.clone(), name.clone());
+                if self.recycling.request(&context, move || Recycled {
+                    result: file_ops::recycle(&moved),
+                    path: moved,
+                    canonical,
+                    name: label,
+                }) {
+                    self.status = format!("Moving {name} to the Recycle Bin…");
+                } else {
+                    self.status = "Another delete is still running".into();
+                }
+            } else if !cancel {
+                self.delete = Some(path);
             }
         }
         if let Some((path, mut name)) = self.rename.take() {
@@ -2377,7 +3551,10 @@ impl ForgeRoomApp {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     for (index, tab) in self.tabs.tabs.iter().enumerate() {
                         let is_active = index == self.tabs.active;
-                        let title = tab.title();
+                        let mut title = tab.title();
+                        if tab.external.is_some() {
+                            title.push_str("  (!)");
+                        }
                         let galley = ui.painter().layout_no_wrap(
                             title,
                             egui::FontId::proportional(14.0),
@@ -2398,6 +3575,16 @@ impl ForgeRoomApp {
                             egui::Sense::click(),
                         );
                         let hovered = response.hovered() || close_response.hovered();
+                        if let Some(what) = tab.external {
+                            response.clone().on_hover_text(format!(
+                                "This file was {what}. Saving would {}.",
+                                if what == "deleted on disk" {
+                                    "create it again"
+                                } else {
+                                    "replace the other change"
+                                }
+                            ));
+                        }
 
                         let painter = ui.painter();
                         if hovered && !is_active {
@@ -2463,7 +3650,8 @@ impl ForgeRoomApp {
 
     fn editor(&mut self, ui: &mut egui::Ui) {
         let focus = std::mem::take(&mut self.focus_editor);
-        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let mut font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        font_id.size *= self.editor_scale;
         let (row_height, char_width) =
             ui.fonts_mut(|fonts| (fonts.row_height(&font_id), fonts.glyph_width(&font_id, '0')));
         let current_line = self.cursor.0 - 1;
@@ -2475,7 +3663,10 @@ impl ForgeRoomApp {
             None
         };
         let mut blame_click: Option<String> = None;
+        // A change menu choice in the gutter: (stage it, line).
+        let mut hunk_choice: Option<(bool, usize)> = None;
         let select = self.pending_select.take();
+        let transform = self.pending_edit.take();
         let find_matches = if self.find.open {
             self.find.matches.clone()
         } else {
@@ -2557,6 +3748,10 @@ impl ForgeRoomApp {
                         // indent and unindent the line or the selected lines.
                         if !editing::smart_tab(ui, id, tab.doc.text_mut()) {
                             editing::smart_enter(ui, id, tab.doc.text_mut());
+                        }
+                        // A transformation chosen in the command palette works on the selection.
+                        if let Some(kind) = transform {
+                            transforms::run(ui, id, tab.doc.text_mut(), kind);
                         }
                         // Brackets and quotes are completed, stepped over and deleted in pairs.
                         editing::smart_pairs(ui, id, tab.doc.text_mut(), &extension);
@@ -2718,6 +3913,27 @@ impl ForgeRoomApp {
                                 ),
                             };
                             painter.rect_filled(bar, 1.0, color);
+                            // Right-click the coloured bar to stage or revert just this change.
+                            let strip = egui::Rect::from_min_size(
+                                egui::pos2(gutter.right() - 12.0, top),
+                                egui::vec2(14.0, height),
+                            );
+                            ui.interact(
+                                strip,
+                                ui.scope_id().with(("hunk-bar", line)),
+                                egui::Sense::click(),
+                            )
+                            .on_hover_text("Right-click: stage or revert this change")
+                            .context_menu(|ui| {
+                                if ui.button("Stage this change").clicked() {
+                                    hunk_choice = Some((true, line + 1));
+                                    ui.close();
+                                }
+                                if ui.button("Revert this change").clicked() {
+                                    hunk_choice = Some((false, line + 1));
+                                    ui.close();
+                                }
+                            });
                         }
                         if current {
                             painter.set(
@@ -2749,6 +3965,9 @@ impl ForgeRoomApp {
             });
         if let Some(hash) = blame_click {
             self.git_action(source_control::Action::ShowCommit(hash));
+        }
+        if let Some((stage, line)) = hunk_choice {
+            self.change_at_line(stage, line);
         }
         if let (Some(index), Some(tab)) = (cursor_index, self.tabs.tabs.get(self.tabs.active)) {
             self.cursor = position::line_col(tab.doc.text(), index);
@@ -2883,8 +4102,14 @@ impl ForgeRoomApp {
                                     (RightTab::Activity, "Activity"),
                                     (RightTab::Ai, "AI"),
                                 ] {
-                                    if underline_tab(ui, label, self.right_tab == tab, true)
-                                        .clicked()
+                                    if underline_tab_padded(
+                                        ui,
+                                        label,
+                                        self.right_tab == tab,
+                                        true,
+                                        16.0,
+                                    )
+                                    .clicked()
                                     {
                                         self.right_tab = tab;
                                     }
@@ -2923,7 +4148,7 @@ impl ForgeRoomApp {
                     .inner_margin(egui::Margin::symmetric(14, 7))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.horizontal_centered(|ui| {
+                        ui.horizontal(|ui| {
                             let label = if conflicts > 0 {
                                 format!(
                                     "{conflicts} merge conflict{}",
@@ -3233,7 +4458,9 @@ impl ForgeRoomApp {
             1 => match tab.doc.reload() {
                 Ok(()) => {
                     self.status = format!("Reloaded {name} from disk; your edits were discarded");
-                    true
+                    // Not "settled": a close or quit that led here is asked again, so discarding
+                    // work never ends with the window closing by itself.
+                    false
                 }
                 Err(error) => {
                     self.status = format!("Cannot reload {name}: {error}");
@@ -3428,6 +4655,7 @@ impl eframe::App for ForgeRoomApp {
 
     fn on_exit(&mut self) {
         let _ = self.lobby.finish();
+        self.save_session(true);
         // A normal exit already asked about every unsaved tab: nothing is left to recover.
         self.recovery.clear();
     }
@@ -3435,6 +4663,12 @@ impl eframe::App for ForgeRoomApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
+        for terminal in &self.terminals {
+            terminal.set_hidden();
+        }
+        self.auto_save_tabs();
+        self.poll_check();
+        self.save_session(false);
         self.autosave_recovery();
         if context.input(|input| input.viewport().close_requested())
             && self.tabs.any_dirty()
@@ -3442,6 +4676,16 @@ impl eframe::App for ForgeRoomApp {
         {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(Pending::Quit);
+        }
+        // Shells that are still running are stopped by quitting: ask once.
+        if context.input(|input| input.viewport().close_requested())
+            && !self.allow_close
+            && !self.terminals_confirmed
+            && self.pending.is_none()
+            && self.terminals.iter().any(|t| !t.has_exited())
+        {
+            context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm = Some(Confirm::QuitWithTerminals);
         }
         // Closing with lobby edits that cannot be saved asks once before losing them.
         if context.input(|input| input.viewport().close_requested())
@@ -3470,7 +4714,7 @@ impl eframe::App for ForgeRoomApp {
         // Flat panels separated by hairline dividers, as in the reference.
         let card = |fill| egui::Frame::new().fill(fill);
 
-        if self.show_terminal && self.terminal.is_none() && self.terminal_error.is_none() {
+        if self.show_terminal && self.terminals.is_empty() && self.terminal_error.is_none() {
             self.ensure_terminal();
         }
 
@@ -3503,28 +4747,37 @@ impl eframe::App for ForgeRoomApp {
         }
 
         if self.show_sidebar && !self.show_lobby {
-            egui::Panel::left("sidebar")
-                .default_size(250.0)
+            let drawn = egui::Panel::left("sidebar")
+                .default_size(f32::from(self.panel_sizes.0))
                 .size_range(180.0..=560.0)
                 .resizable(true)
                 .frame(card(theme::bg_sidebar()))
                 .show(ui, |ui| self.sidebar(ui));
+            self.panel_sizes.0 = drawn.response.rect.width().round().clamp(180.0, 560.0) as u16;
         }
 
         if self.show_right && !self.show_lobby {
-            egui::Panel::right("right-dock")
-                .default_size(364.0)
+            let drawn = egui::Panel::right("right-dock")
+                .default_size(f32::from(self.panel_sizes.1))
                 .size_range(280.0..=640.0)
                 .resizable(true)
                 .frame(card(theme::bg_sidebar()))
                 .show(ui, |ui| self.right_dock(ui));
+            self.panel_sizes.1 = drawn.response.rect.width().round().clamp(280.0, 640.0) as u16;
         }
 
         if self.show_terminal && !self.show_lobby {
-            egui::Panel::bottom("terminal")
-                .resizable(true)
-                .default_size(200.0)
-                .size_range(120.0..=720.0)
+            let panel = if self.terminal_maximized {
+                // Most of the window; the editor keeps a strip above it.
+                egui::Panel::bottom("terminal-maximized")
+                    .exact_size((ui.available_height() - 90.0).max(200.0))
+            } else {
+                egui::Panel::bottom("terminal")
+                    .resizable(true)
+                    .default_size(f32::from(self.panel_sizes.2))
+                    .size_range(120.0..=720.0)
+            };
+            let drawn = panel
                 .frame(card(theme::bg_editor()).inner_margin(egui::Margin {
                     left: 0,
                     right: 0,
@@ -3532,10 +4785,14 @@ impl eframe::App for ForgeRoomApp {
                     bottom: 0,
                 }))
                 .show(ui, |ui| self.terminal_panel(ui));
+            if !self.terminal_maximized {
+                self.panel_sizes.2 =
+                    drawn.response.rect.height().round().clamp(120.0, 720.0) as u16;
+            }
         }
 
         if self.show_preview && !self.show_lobby && ui.available_width() > 760.0 {
-            if let Some(terminal) = &self.terminal {
+            if let Some(terminal) = self.terminals.get(self.active_terminal) {
                 self.preview.detect(&terminal.screen_text());
             }
             let mut close = false;
@@ -3574,6 +4831,11 @@ impl eframe::App for ForgeRoomApp {
             context.request_repaint_after(std::time::Duration::from_secs(3));
         }
 
+        if let Some(done) = self.search.take_replaced() {
+            self.status = replaced_status(&done);
+            self.reload_clean_tabs();
+            self.refresh_git();
+        }
         if self.search.poll() {
             context.request_repaint_after(std::time::Duration::from_millis(120));
         }
@@ -3583,7 +4845,7 @@ impl eframe::App for ForgeRoomApp {
         }
         match palette::show(&context, &mut self.palette) {
             Some(palette::Outcome::Checkout { name, remote }) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::checkout(&root, &name, remote) {
                         Ok(()) => format!("Switched to {name}"),
                         Err(error) => format!("Git: {error}"),
@@ -3593,7 +4855,7 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::CreateBranch(name)) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::create_branch(&root, &name) {
                         Ok(()) => format!("Created and switched to {name}"),
                         Err(error) => format!("Git: {error}"),
@@ -3602,7 +4864,7 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::Merge(name)) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::merge(&root, &name) {
                         Ok(git::MergeOutcome::Merged(text)) => format!("Merged {name}: {text}"),
                         Ok(git::MergeOutcome::UpToDate) => {
@@ -3619,9 +4881,33 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::DeleteBranch(name)) => {
-                if let Some(root) = self.repo_root() {
+                if let Some(root) = self.git_root() {
                     self.status = match git::delete_branch(&root, &name, false) {
                         Ok(()) => format!("Deleted branch {name}"),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                }
+            }
+            Some(palette::Outcome::CreateTag(name)) => {
+                if let Some(root) = self.git_root() {
+                    self.status = match git::create_tag(&root, &name) {
+                        Ok(()) => format!("Tagged the current commit {name}"),
+                        Err(error) => format!("Git: {error}"),
+                    };
+                    self.refresh_git();
+                }
+            }
+            Some(palette::Outcome::DeleteTag(name)) => {
+                if let Some(root) = self.git_root() {
+                    self.status = match git::delete_tag(&root, &name) {
+                        Ok(text) => match text.split("(was ").nth(1) {
+                            Some(rest) => format!(
+                                "{text}. To make it again: git tag {name} {}",
+                                rest.trim_end_matches(')')
+                            ),
+                            None => text,
+                        },
                         Err(error) => format!("Git: {error}"),
                     };
                     self.refresh_git();
@@ -3646,6 +4932,8 @@ impl eframe::App for ForgeRoomApp {
 
         self.poll_git_job(&context);
         self.poll_git_refresh();
+        self.poll_hunks();
+        self.poll_recycling();
         self.discard_dialog(&context);
         self.pending_dialog(&context);
         self.update_title(&context);
@@ -3750,6 +5038,96 @@ fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
 }
 
 /// Display name of the language for a file name, judged from its extension.
+/// What is read about the active file from Git, on a worker thread.
+struct FileGit {
+    tab: u64,
+    history: Vec<git::CommitInfo>,
+    name: Option<String>,
+    blame: Vec<git::BlameLine>,
+    hunks: Vec<git::Hunk>,
+}
+
+impl FileGit {
+    fn read(
+        tab: u64,
+        root: &std::path::Path,
+        relative: &str,
+        untracked: bool,
+        lines: usize,
+    ) -> Self {
+        let history = git::file_log(root, relative, 30).unwrap_or_default();
+        let name = relative.rsplit('/').next().map(String::from);
+        let blame = if untracked {
+            Vec::new()
+        } else {
+            git::blame(root, relative)
+        };
+        let hunks = if untracked {
+            vec![git::Hunk {
+                kind: git::HunkKind::Added,
+                start: 1,
+                len: lines,
+            }]
+        } else {
+            git::file_hunks(root, relative)
+        };
+        FileGit {
+            tab,
+            history,
+            name,
+            blame,
+            hunks,
+        }
+    }
+}
+
+/// A question the user must answer before something that cannot be undone happens.
+#[derive(Clone, Copy)]
+enum Confirm {
+    DropStash,
+    EndTerminal,
+    /// `cargo check` runs the folder's build scripts and macros.
+    RunCheck,
+    /// Abort the merge, cherry-pick, revert or rebase in progress.
+    AbortOperation,
+    /// Quit while shells are still running.
+    QuitWithTerminals,
+}
+
+/// What to tell the user after Replace All.
+fn replaced_status(done: &search::Replaced) -> String {
+    if let Some(error) = &done.error {
+        return format!("Replace failed: {}", error.lines().next().unwrap_or(""));
+    }
+    let mut text = format!(
+        "Replaced {} match{} in {} file{}",
+        done.replacements,
+        if done.replacements == 1 { "" } else { "es" },
+        done.files,
+        if done.files == 1 { "" } else { "s" }
+    );
+    if !done.skipped.is_empty() {
+        let (path, why) = &done.skipped[0];
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        text.push_str(&format!(
+            "; skipped {} (first: {name}, {why})",
+            done.skipped.len()
+        ));
+    }
+    text
+}
+
+/// The outcome of moving a file or folder to the Recycle Bin on a worker thread.
+struct Recycled {
+    path: PathBuf,
+    canonical: PathBuf,
+    name: String,
+    result: Result<(), String>,
+}
+
 /// Whether Escape was pressed this frame (and takes it, so nothing else reacts).
 fn ui_escape(context: &egui::Context) -> bool {
     context.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
@@ -3802,6 +5180,17 @@ fn detect_runtimes(root: &std::path::Path) -> Vec<String> {
 
 /// Native tab button with the active theme underline, shared by dock and terminal headers.
 fn underline_tab(ui: &mut egui::Ui, label: &str, active: bool, enabled: bool) -> egui::Response {
+    underline_tab_padded(ui, label, active, enabled, 30.0)
+}
+
+/// A tab label with an underline when active; `pad` is the space added around the text.
+fn underline_tab_padded(
+    ui: &mut egui::Ui,
+    label: &str,
+    active: bool,
+    enabled: bool,
+    pad: f32,
+) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
         label.to_string(),
         egui::FontId::proportional(14.0),
@@ -3816,7 +5205,7 @@ fn underline_tab(ui: &mut egui::Ui, label: &str, active: bool, enabled: bool) ->
     };
     let button = egui::Button::new(egui::RichText::new(label).size(14.0).color(color))
         .frame(false)
-        .min_size(egui::vec2(galley.size().x + 30.0, 36.0));
+        .min_size(egui::vec2(galley.size().x + pad, 36.0));
     let response = ui.add_enabled(enabled, button);
     if active {
         ui.painter().rect_filled(

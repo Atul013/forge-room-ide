@@ -75,6 +75,8 @@ pub enum Action {
     Fetch,
     Stash,
     StashPop,
+    StashApply,
+    StashDrop,
     AbortOperation,
     CherryPick(String),
     Revert(String),
@@ -145,6 +147,20 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo, compact: bool) -> 
                         .clicked()
                     {
                         action = Action::StashPop;
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(view.stashes > 0, egui::Button::new("Apply latest stash"))
+                        .clicked()
+                    {
+                        action = Action::StashApply;
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(view.stashes > 0, egui::Button::new("Drop latest stash"))
+                        .clicked()
+                    {
+                        action = Action::StashDrop;
                         ui.close();
                     }
                     ui.separator();

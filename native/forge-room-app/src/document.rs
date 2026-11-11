@@ -191,6 +191,11 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         }
         let _ = fs::remove_file(&temporary);
     };
+    // Only a temporary file that could not even be created (a folder that cannot be written to
+    // while the file itself can) falls back to writing in place. Once the new content is being
+    // written beside the file, a failure (a full disk) is reported and the original stays as it was:
+    // writing over it would truncate it first.
+    let mut created = false;
     let written = (|| {
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true).truncate(true);
@@ -201,12 +206,17 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
             options.attributes(existing.file_attributes() & HIDDEN_AND_SYSTEM);
         }
         let mut file = options.open(&temporary)?;
+        created = true;
         file.write_all(bytes)?;
         file.sync_all()
     })();
-    if written.is_err() {
+    if let Err(error) = written {
         remove_temporary();
-        return fs::write(path, bytes);
+        return if created {
+            Err(error)
+        } else {
+            fs::write(path, bytes)
+        };
     }
     match fs::rename(&temporary, path) {
         Ok(()) => Ok(()),

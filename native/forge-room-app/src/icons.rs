@@ -12,7 +12,7 @@ struct Line {
     points: Vec<Pos2>,
 }
 
-const SOURCES: [(&str, &str); 65] = [
+const SOURCES: [(&str, &str); 67] = [
     (
         "accessibility-off",
         include_str!("../assets/icons/accessibility-off.svg"),
@@ -72,6 +72,8 @@ const SOURCES: [(&str, &str); 65] = [
     ("lock", include_str!("../assets/icons/lock.svg")),
     ("models", include_str!("../assets/icons/models.svg")),
     ("more", include_str!("../assets/icons/more.svg")),
+    ("split", include_str!("../assets/icons/split.svg")),
+    ("trash", include_str!("../assets/icons/trash.svg")),
     ("new-file", include_str!("../assets/icons/new-file.svg")),
     (
         "panel-bottom",
@@ -282,6 +284,26 @@ pub fn refresh(painter: &Painter, center: Pos2, color: Color32) {
 /// Three dots for "More actions".
 pub fn more(painter: &Painter, center: Pos2, color: Color32) {
     draw(painter, "more", center, 18.0, color);
+}
+
+/// A window cut in two, for "Split terminal".
+pub fn split(painter: &Painter, center: Pos2, color: Color32) {
+    draw(painter, "split", center, 16.0, color);
+}
+
+/// A bin, for "Kill terminal".
+pub fn trash(painter: &Painter, center: Pos2, color: Color32) {
+    draw(painter, "trash", center, 16.0, color);
+}
+
+/// A small downward chevron (the arrow of a menu button).
+pub fn chevron_small(painter: &Painter, center: Pos2, color: Color32) {
+    draw(painter, "chevron-down", center, 14.0, color);
+}
+
+/// A square, for "Maximize panel".
+pub fn maximize(painter: &Painter, center: Pos2, color: Color32) {
+    draw(painter, "window-maximize", center, 15.0, color);
 }
 
 /// Terminal window with a prompt for the Terminal entry.

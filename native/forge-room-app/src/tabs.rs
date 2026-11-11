@@ -12,6 +12,9 @@ pub struct Tab {
     label: Option<String>,
     /// Syntax name used for highlighting when there is no file extension.
     pub syntax: Option<String>,
+    /// Something happened to the file outside the editor that this tab does not show yet: it
+    /// changed (the tab has unsaved edits, so it was not reloaded) or it was deleted.
+    pub external: Option<&'static str>,
 }
 
 impl Tab {
@@ -95,6 +98,72 @@ impl Tabs {
         }
     }
 
+    /// Close the tabs of a deleted file (or of files inside a deleted folder) that have no unsaved
+    /// changes, and return how many. A tab with unsaved work stays open: saving it writes the file
+    /// again, which is the user's choice to make. `path` must be the canonical form taken before the
+    /// deletion, while it still existed.
+    pub fn close_clean_under(&mut self, path: &Path) -> usize {
+        let mut closed = 0;
+        let mut index = 0;
+        while index < self.tabs.len() {
+            let inside = self.tabs[index]
+                .doc
+                .path()
+                .is_some_and(|tab_path| tab_path.starts_with(path));
+            if inside && !self.tabs[index].doc.is_dirty() {
+                self.close(index);
+                closed += 1;
+            } else {
+                index += 1;
+            }
+        }
+        closed
+    }
+
+    /// How many tabs of a file (or of files inside a folder) hold unsaved changes.
+    pub fn dirty_under(&self, path: &Path) -> usize {
+        self.tabs
+            .iter()
+            .filter(|tab| {
+                tab.doc.is_dirty()
+                    && tab
+                        .doc
+                        .path()
+                        .is_some_and(|tab_path| tab_path.starts_with(path))
+            })
+            .count()
+    }
+
+    /// Close the saved file tabs that are not inside `root` (another folder was opened) and return
+    /// how many. Tabs with unsaved changes, and tabs that are not files, stay.
+    pub fn close_clean_outside(&mut self, root: &Path) -> usize {
+        let root = normalize(root);
+        let mut closed = 0;
+        let mut index = 0;
+        while index < self.tabs.len() {
+            let tab = &self.tabs[index];
+            let outside = !tab.readonly
+                && !tab.doc.is_dirty()
+                && tab.doc.path().is_some_and(|path| !path.starts_with(&root));
+            if outside {
+                self.close(index);
+                closed += 1;
+            } else {
+                index += 1;
+            }
+        }
+        closed
+    }
+
+    /// The files of tabs that hold unsaved changes.
+    pub fn dirty_paths(&self) -> Vec<PathBuf> {
+        self.tabs
+            .iter()
+            .filter(|tab| tab.doc.is_dirty())
+            .filter_map(|tab| tab.doc.path().map(Path::to_path_buf))
+            .collect()
+    }
+
     pub fn any_dirty(&self) -> bool {
         self.tabs.iter().any(|tab| tab.doc.is_dirty())
     }
@@ -109,6 +178,7 @@ impl Tabs {
             readonly: false,
             label: None,
             syntax: None,
+            external: None,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -137,6 +207,7 @@ impl Tabs {
             readonly: false,
             label: None,
             syntax: None,
+            external: None,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -164,6 +235,7 @@ impl Tabs {
             readonly: true,
             label: Some(label),
             syntax: Some(syntax.to_string()),
+            external: None,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -219,6 +291,7 @@ impl Tabs {
                     readonly: false,
                     label: None,
                     syntax: None,
+                    external: None,
                 };
                 self.tabs.push(tab);
                 self.active = self.tabs.len() - 1;
@@ -380,6 +453,65 @@ mod tests {
             Recovered::InFile
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_folder_closes_its_saved_tabs_and_keeps_unsaved_ones() {
+        let dir = std::env::temp_dir().join(format!("forge-del-{}", std::process::id()));
+        fs::create_dir_all(dir.join("gone")).unwrap();
+        let (saved, unsaved, outside) = (
+            dir.join("gone").join("saved.txt"),
+            dir.join("gone").join("unsaved.txt"),
+            dir.join("outside.txt"),
+        );
+        for path in [&saved, &unsaved, &outside] {
+            fs::write(path, "text").unwrap();
+        }
+        let mut tabs = Tabs::default();
+        for path in [&saved, &unsaved, &outside] {
+            tabs.open_file(path).unwrap();
+        }
+        tabs.tabs[1].doc.text_mut().push('x');
+        let canonical = normalize(&dir.join("gone"));
+        assert_eq!(tabs.dirty_under(&canonical), 1);
+        assert_eq!(tabs.close_clean_under(&canonical), 1);
+        let names: Vec<String> = tabs.tabs.iter().map(|tab| tab.title()).collect();
+        assert_eq!(
+            names,
+            vec!["unsaved.txt".to_string(), "outside.txt".to_string()]
+        );
+        assert!(tabs.active < tabs.tabs.len());
+        // A sibling that merely shares the start of the name is not inside.
+        assert_eq!(tabs.close_clean_under(&normalize(&dir.join("out"))), 0);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn opening_another_folder_closes_only_saved_tabs_outside_it() {
+        let base = std::env::temp_dir().join(format!("forge-outside-{}", std::process::id()));
+        fs::create_dir_all(base.join("a")).unwrap();
+        fs::create_dir_all(base.join("b")).unwrap();
+        let (inside, outside, dirty) = (
+            base.join("a").join("in.txt"),
+            base.join("b").join("out.txt"),
+            base.join("b").join("dirty.txt"),
+        );
+        for path in [&inside, &outside, &dirty] {
+            fs::write(path, "x").unwrap();
+        }
+        let mut tabs = Tabs::default();
+        for path in [&inside, &outside, &dirty] {
+            tabs.open_file(path).unwrap();
+        }
+        tabs.new_untitled();
+        tabs.tabs[2].doc.text_mut().push('!');
+        assert_eq!(tabs.close_clean_outside(&base.join("a")), 1);
+        let names: Vec<String> = tabs.tabs.iter().map(|tab| tab.title()).collect();
+        assert_eq!(names.len(), 3);
+        assert!(names.contains(&"in.txt".to_string()));
+        assert!(names.contains(&"dirty.txt".to_string()));
+        assert!(tabs.active < tabs.tabs.len());
+        let _ = fs::remove_dir_all(base);
     }
 
     #[test]

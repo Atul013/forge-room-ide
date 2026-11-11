@@ -178,7 +178,13 @@ pub fn show(context: &egui::Context, state: &mut FindState) -> Vec<Intent> {
                             if ui.add_enabled(any, egui::Button::new("Replace")).clicked() {
                                 intents.push(Intent::ReplaceOne);
                             }
-                            if ui.add_enabled(any, egui::Button::new("All")).clicked() {
+                            if ui
+                                .add_enabled(any, egui::Button::new("All"))
+                                .on_hover_text(
+                                    "Replace all in this file (not saved until you save)",
+                                )
+                                .clicked()
+                            {
                                 intents.push(Intent::ReplaceAll);
                             }
                         });

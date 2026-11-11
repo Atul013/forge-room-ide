@@ -222,6 +222,8 @@ pub fn handle(ui: &egui::Ui, id: egui::Id, text: &mut String, extension: &str) -
         Move(bool),
         Duplicate(bool),
         Delete,
+        SelectNext,
+        GoToBracket,
     }
     let chords = [
         (
@@ -242,6 +244,12 @@ pub fn handle(ui: &egui::Ui, id: egui::Id, text: &mut String, extension: &str) -
         (Modifiers::ALT, Key::ArrowUp, Command::Move(true)),
         (Modifiers::ALT, Key::ArrowDown, Command::Move(false)),
         (Modifiers::COMMAND, Key::Slash, Command::Comment),
+        (Modifiers::COMMAND, Key::D, Command::SelectNext),
+        (
+            Modifiers::COMMAND | Modifiers::SHIFT,
+            Key::Backslash,
+            Command::GoToBracket,
+        ),
     ];
     // The exact chord: a pattern's extra Shift or Alt must not be ignored.
     let Some((modifiers, key, command)) = chords.into_iter().find(|(modifiers, key, _)| {
@@ -259,6 +267,18 @@ pub fn handle(ui: &egui::Ui, id: egui::Id, text: &mut String, extension: &str) -
         Command::Move(up) => move_lines(text, start, end, up),
         Command::Duplicate(down) => Some(duplicate_lines(text, start, end, down)),
         Command::Delete => Some(delete_lines(text, start, end)),
+        Command::GoToBracket => crate::transforms::apply(
+            crate::transforms::Kind::GoToMatchingBracket,
+            text,
+            start,
+            end,
+        ),
+        Command::SelectNext => crate::transforms::apply(
+            crate::transforms::Kind::SelectNextOccurrence,
+            text,
+            start,
+            end,
+        ),
     };
     // The key is only taken when the command did something.
     let Some(edit) = edit else { return false };
