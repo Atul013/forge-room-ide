@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod ai_panel;
 mod ai_backend;
+mod ai_panel;
 mod autosave;
 mod background;
 mod brand;
@@ -4200,7 +4200,11 @@ impl ForgeRoomApp {
             }
             RightTab::Ai => {
                 let name = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.title());
-                let root = self.workspace.as_ref().filter(|_| self.trusted).map(|workspace| workspace.root.as_path());
+                let root = self
+                    .workspace
+                    .as_ref()
+                    .filter(|_| self.trusted)
+                    .map(|workspace| workspace.root.as_path());
                 ai_panel::show(ui, &mut self.ai, name.as_deref(), root);
             }
         }

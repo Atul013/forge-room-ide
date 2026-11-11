@@ -3,7 +3,10 @@
 //! The first functional path runs Codex CLI in read-only Ask mode. Authentication is managed by
 //! the CLI in the integrated terminal; this panel never handles credentials.
 
-use crate::{ai_backend::{self, Provider}, brand, fonts, icons, theme};
+use crate::{
+    ai_backend::{self, Provider},
+    brand, fonts, icons, theme,
+};
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Sense, Stroke};
 use std::{path::Path, sync::mpsc};
 
@@ -37,7 +40,9 @@ const QUICK_ACTIONS: [(&str, &str); 4] = [
 
 impl State {
     fn send(&mut self, context: &egui::Context, root: Option<&Path>) {
-        if self.pending.is_some() { return; }
+        if self.pending.is_some() {
+            return;
+        }
         let text = self.input.trim().to_string();
         if text.is_empty() || root.is_none() {
             return;
@@ -61,14 +66,21 @@ impl State {
     }
 
     fn poll(&mut self) {
-        let Some(receiver) = self.pending.as_ref() else { return; };
+        let Some(receiver) = self.pending.as_ref() else {
+            return;
+        };
         let result = match receiver.try_recv() {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => Err("Codex worker stopped without a reply.".into()),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err("Codex worker stopped without a reply.".into())
+            }
         };
         self.pending = None;
-        self.messages.push(Message { author: Author::Assistant, text: result.unwrap_or_else(|error| error) });
+        self.messages.push(Message {
+            author: Author::Assistant,
+            text: result.unwrap_or_else(|error| error),
+        });
     }
 
     /// Add `@name ` to the input, the way the design references files and Room context.
@@ -207,11 +219,20 @@ fn composer(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>, roo
                     ui.selectable_value(&mut state.provider, provider, provider.label());
                 }
             });
-        ui.add(egui::TextEdit::singleline(&mut state.model).desired_width(120.0).hint_text("Default model"));
+        ui.add(
+            egui::TextEdit::singleline(&mut state.model)
+                .desired_width(120.0)
+                .hint_text("Default model"),
+        );
     });
     ui.label(RichText::new("Ask only · read-only Codex CLI. Sign in with `codex login` in Terminal; local providers use Codex CLI too.").size(11.0).color(theme::text_dim()));
-    if root.is_none() { ui.label("Open and trust a project folder before asking."); }
-    if state.pending.is_some() { ui.spinner(); ui.label("Codex is working…"); }
+    if root.is_none() {
+        ui.label("Open and trust a project folder before asking.");
+    }
+    if state.pending.is_some() {
+        ui.spinner();
+        ui.label("Codex is working…");
+    }
     let id = ui.scope_id().with("ai-input");
     // Enter sends, Shift+Enter adds a line. Consumed before the text box sees it.
     let focused = ui.memory(|memory| memory.has_focus(id));
@@ -262,7 +283,8 @@ fn composer(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>, roo
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(34.0, 30.0), Sense::click());
-                    let ready = !state.input.trim().is_empty() && root.is_some() && state.pending.is_none();
+                    let ready =
+                        !state.input.trim().is_empty() && root.is_some() && state.pending.is_none();
                     let fill = if ready {
                         theme::button()
                     } else {
@@ -281,11 +303,7 @@ fn composer(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>, roo
                         state.send(ui.ctx(), root);
                     }
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Ask")
-                            .size(13.0)
-                            .color(theme::text_dim()),
-                    );
+                    ui.label(RichText::new("Ask").size(13.0).color(theme::text_dim()));
                 });
             });
         });
