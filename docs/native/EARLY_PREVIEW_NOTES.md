@@ -10,7 +10,7 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 - Editor typing: Enter keeps the indentation and opens bracket blocks, Tab and Shift+Tab indent and unindent, brackets and quotes are completed in pairs (not in prose files, and not a single quote in Rust), and Ctrl+/ comments lines, Alt+Up/Down moves them, Shift+Alt+Up/Down duplicates them, Ctrl+Shift+K deletes them.
 - Find and Search in Files: whole word and regular expressions; invalid patterns are reported.
 - Quick Open and Search in Files follow `.gitignore` in a repository.
-- Explorer: rename files and folders. Tabs: Ctrl+Shift+T reopens the last closed tab; View: Close Saved Tabs. File > Open Recent.
+- Explorer: rename files and folders; Delete… moves them to the Recycle Bin (fixed local drives only, never links, never the open folder; saved tabs close, tabs with unsaved changes stay). Tabs: Ctrl+Shift+T reopens the last closed tab; View: Close Saved Tabs. File > Open Recent.
 - Source Control: merge a branch, abort a merge, delete a branch; Changes and History pages; Git status is read on a worker thread.
 - Syntax colours for TypeScript, JSX, TOML, INI and dotenv files (borrowed from the closest bundled syntax).
 - Editing commands: Ctrl+D (select next occurrence), palette commands for upper/lower case, sorting and de-duplicating lines, trimming trailing whitespace and joining lines; Ctrl+= / Ctrl+- / Ctrl+0 for the editor font size (remembered).

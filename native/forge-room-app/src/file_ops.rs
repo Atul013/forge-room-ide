@@ -99,8 +99,10 @@ pub fn recycle(path: &Path) -> Result<(), String> {
         // On a drive without a Recycle Bin (a network share, a USB stick) Windows deletes for good
         // when asked to recycle, so only fixed local drives are accepted.
         let script = format!(
-            "$drive = New-Object System.IO.DriveInfo([System.IO.Path]::GetPathRoot($env:FORGE_RECYCLE)); \
-             if ($drive.DriveType -ne 'Fixed') {{ [Console]::Error.WriteLine('The Recycle Bin is only \
+            "$root = [System.IO.Path]::GetPathRoot($env:FORGE_RECYCLE); \
+             $drive = $null; \
+             if ($root -match '^[A-Za-z]:') {{ $drive = New-Object System.IO.DriveInfo($root) }}; \
+             if ($null -eq $drive -or $drive.DriveType -ne 'Fixed') {{ [Console]::Error.WriteLine('The Recycle Bin is only \
              used for files on a fixed local drive; nothing was deleted'); exit 3 }}; \
              Add-Type -AssemblyName Microsoft.VisualBasic; \
              [Microsoft.VisualBasic.FileIO.FileSystem]::{method}($env:FORGE_RECYCLE, \
@@ -114,6 +116,15 @@ pub fn recycle(path: &Path) -> Result<(), String> {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|error| format!("Could not run PowerShell: {error}"))?;
+        // stderr is drained on its own thread so a long message can never block the helper.
+        let mut pipe = child.stderr.take();
+        let reader = std::thread::spawn(move || {
+            let mut text = String::new();
+            if let Some(pipe) = &mut pipe {
+                let _ = pipe.read_to_string(&mut text);
+            }
+            text
+        });
         // A dialog nobody can see (the window is hidden) must not keep this waiting for ever.
         let started = std::time::Instant::now();
         let status = loop {
@@ -128,10 +139,7 @@ pub fn recycle(path: &Path) -> Result<(), String> {
                 Err(error) => return Err(format!("Could not wait for PowerShell: {error}")),
             }
         };
-        let mut text = String::new();
-        if let Some(mut stderr) = child.stderr.take() {
-            let _ = stderr.read_to_string(&mut text);
-        }
+        let text = reader.join().unwrap_or_default();
         if status.success() && !path.exists() {
             Ok(())
         } else if text.trim().is_empty() {
@@ -253,7 +261,14 @@ mod tests {
     #[test]
     fn files_and_folders_go_to_the_recycle_bin_and_odd_names_are_safe() {
         let dir = folder("recycle");
-        let stamp = format!("zz{}", std::process::id());
+        let stamp = format!(
+            "zz{}x{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
         // A name with characters that would break a command line if it were pasted into one.
         let file = dir.join(format!("it's $(odd) `name` & {stamp}.txt"));
         fs::write(&file, "x").unwrap();
