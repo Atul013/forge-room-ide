@@ -35,7 +35,34 @@ fn lines_of(text: &str, start: usize, end: usize, whole_if_empty: bool) -> (usiz
     let last = text[anchor..]
         .find('\n')
         .map_or(text.len(), |index| anchor + index);
-    (first, last.max(first))
+    (first, without_carriage_return(text, first, last))
+}
+
+/// `last` moved back before a carriage return that belongs to the line break after it (`\r\n`).
+fn without_carriage_return(text: &str, first: usize, last: usize) -> usize {
+    let last = last.max(first);
+    if last > first && text.as_bytes()[last - 1] == b'\r' && text[last..].starts_with('\n') {
+        last - 1
+    } else {
+        last
+    }
+}
+
+/// The lines of `text` as (content, line break) pairs: the break is `"\r\n"`, `"\n"` or empty for a
+/// last line without one. Sorting and de-duplicating move the contents and leave the breaks where
+/// they are, so a final newline and the file's line-ending style survive.
+fn lines_with_breaks(text: &str) -> Vec<(&str, &str)> {
+    text.split_inclusive('\n')
+        .map(|piece| {
+            if let Some(body) = piece.strip_suffix("\r\n") {
+                (body, "\r\n")
+            } else if let Some(body) = piece.strip_suffix('\n') {
+                (body, "\n")
+            } else {
+                (piece, "")
+            }
+        })
+        .collect()
 }
 
 /// Replace `first..last` and select the replacement.
@@ -72,19 +99,36 @@ pub fn apply(kind: Kind, text: &str, start: usize, end: usize) -> Option<Edit> {
         }
         Kind::SortAscending | Kind::SortDescending | Kind::RemoveDuplicateLines => {
             let (first, last) = lines_of(text, start, end, true);
-            let mut lines: Vec<&str> = text[first..last].split('\n').collect();
-            let before = lines.clone();
+            let original = &text[first..last];
+            let lines = lines_with_breaks(original);
+            let bodies: Vec<&str> = lines.iter().map(|(body, _)| *body).collect();
+            let mut changed = bodies.clone();
             match kind {
-                Kind::SortAscending => lines.sort_by_key(|line| sort_key(line)),
+                Kind::SortAscending => changed.sort_by_key(|line| sort_key(line)),
                 Kind::SortDescending => {
-                    lines.sort_by_key(|line| std::cmp::Reverse(sort_key(line)));
+                    changed.sort_by_key(|line| std::cmp::Reverse(sort_key(line)));
                 }
                 _ => {
                     let mut seen = std::collections::HashSet::new();
-                    lines.retain(|line| seen.insert(*line));
+                    changed.retain(|line| seen.insert(*line));
                 }
             }
-            (lines != before).then(|| replace_selecting(first, last, lines.join("\n")))
+            if changed == bodies {
+                return None;
+            }
+            // The line breaks stay in their places; when lines were dropped the last line keeps
+            // the break the file had at its end.
+            let last_break = lines.last().map_or("", |(_, line_break)| *line_break);
+            let mut result = String::with_capacity(original.len());
+            for (index, body) in changed.iter().enumerate() {
+                result.push_str(body);
+                if index + 1 == changed.len() {
+                    result.push_str(last_break);
+                } else {
+                    result.push_str(lines.get(index).map_or("\n", |(_, line_break)| *line_break));
+                }
+            }
+            Some(replace_selecting(first, first + original.len(), result))
         }
         Kind::TrimTrailingWhitespace => {
             let (first, last) = lines_of(text, start, end, true);
@@ -119,9 +163,14 @@ pub fn apply(kind: Kind, text: &str, start: usize, end: usize) -> Option<Edit> {
             // With a selection, join the lines it touches; with a caret, the line and the next.
             let (first, mut last) = lines_of(text, start, end, false);
             if start == end && last < text.len() {
-                last = text[last + 1..]
+                // `last` stops before a carriage return, so skip it with the break to the next line.
+                let after = text[last..]
                     .find('\n')
-                    .map_or(text.len(), |index| last + 1 + index);
+                    .map_or(text.len(), |index| last + index + 1);
+                let next_end = text[after..]
+                    .find('\n')
+                    .map_or(text.len(), |index| after + index);
+                last = without_carriage_return(text, first, next_end);
             }
             let block = &text[first..last];
             if !block.contains('\n') {
@@ -242,6 +291,72 @@ mod tests {
         );
         // Already sorted: no edit.
         assert_eq!(go(Kind::SortAscending, "a\nb", 0, 0), None);
+    }
+
+    #[test]
+    fn sorting_keeps_the_final_newline_and_the_line_ending_style() {
+        // A whole file that ends with a newline: no phantom blank line comes to the top.
+        assert_eq!(go(Kind::SortAscending, "b\na\n", 0, 0).unwrap().0, "a\nb\n");
+        assert_eq!(
+            go(Kind::SortDescending, "a\nb\n", 0, 0).unwrap().0,
+            "b\na\n"
+        );
+        // CRLF: the breaks stay where they are, in the same style.
+        assert_eq!(go(Kind::SortAscending, "b\r\na", 0, 0).unwrap().0, "a\r\nb");
+        assert_eq!(
+            go(Kind::SortAscending, "c\r\nb\r\na\r\n", 0, 0).unwrap().0,
+            "a\r\nb\r\nc\r\n"
+        );
+        // Blank lines are lines too and are not dropped.
+        assert_eq!(
+            go(Kind::SortAscending, "b\n\na\n", 0, 0).unwrap().0,
+            "\na\nb\n"
+        );
+        // De-duplicating keeps the final newline, whether or not the last line was a repeat.
+        assert_eq!(
+            go(Kind::RemoveDuplicateLines, "a\n\n", 0, 0),
+            None,
+            "one blank line is no repeat"
+        );
+        assert_eq!(
+            go(Kind::RemoveDuplicateLines, "a\n\n\n", 0, 0).unwrap().0,
+            "a\n\n"
+        );
+        assert_eq!(
+            go(Kind::RemoveDuplicateLines, "a\nb\na\n", 0, 0).unwrap().0,
+            "a\nb\n"
+        );
+        assert_eq!(
+            go(Kind::RemoveDuplicateLines, "a\nb\na", 0, 0).unwrap().0,
+            "a\nb"
+        );
+        assert_eq!(
+            go(Kind::RemoveDuplicateLines, "a\r\nb\r\na", 0, 0)
+                .unwrap()
+                .0,
+            "a\r\nb"
+        );
+        // A partial selection leaves the text around it alone.
+        assert_eq!(
+            go(Kind::SortAscending, "z\nb\na\nq\n", 2, 5).unwrap().0,
+            "z\na\nb\nq\n"
+        );
+    }
+
+    #[test]
+    fn joining_keeps_the_carriage_return_of_the_break_after_the_block() {
+        assert_eq!(
+            go(Kind::JoinLines, "a\r\nb\r\nc", 0, 0).unwrap().0,
+            "a b\r\nc"
+        );
+        assert_eq!(
+            go(Kind::JoinLines, "a\r\nb\r\nc", 0, 6).unwrap().0,
+            "a b\r\nc"
+        );
+        assert_eq!(
+            go(Kind::JoinLines, "x\r\na\r\nb\r\nc\r\n", 3, 3).unwrap().0,
+            "x\r\na b\r\nc\r\n"
+        );
     }
 
     #[test]
