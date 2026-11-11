@@ -50,7 +50,10 @@ impl FindState {
         }
         let query_changed = self.key.as_ref().map(|old| (&old.2, old.3)) != Some((&key.2, key.3));
         (self.matches, self.error) = match find::Matcher::new(&self.query, self.mode) {
-            Ok(matcher) => (matcher.find_all(text), None),
+            Ok(matcher) => match matcher.find_all_checked(text) {
+                (matches, false) => (matches, None),
+                (matches, true) => (matches, Some("The pattern is too complex".to_string())),
+            },
             Err(error) => (Vec::new(), Some(error)),
         };
         self.key = Some(key);
@@ -122,8 +125,13 @@ pub fn show(context: &egui::Context, state: &mut FindState) -> Vec<Intent> {
                         }
                         let summary = if state.query.is_empty() {
                             String::new()
-                        } else if state.error.is_some() {
-                            "Invalid pattern".to_string()
+                        } else if let Some(error) = &state.error {
+                            // An invalid pattern finds nothing; a complex one may be incomplete.
+                            if state.matches.is_empty() {
+                                "Invalid pattern".to_string()
+                            } else {
+                                format!("{} (incomplete)", error)
+                            }
                         } else if state.matches.is_empty() {
                             "No results".to_string()
                         } else {

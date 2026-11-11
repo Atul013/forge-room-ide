@@ -48,8 +48,12 @@ impl Matcher {
         }
         let mut pattern = query.to_string();
         if mode.whole_word {
-            pattern = format!(r"\b(?:{pattern})\b");
+            // No word character right before or after the match, whatever the pattern's own
+            // first and last characters are (`\b` would fail between two symbols).
+            pattern = format!(r"(?<!\w)(?:{pattern})(?!\w)");
         }
+        // `^` and `$` match at every line, as in Search in Files (which feeds one line at a time).
+        pattern = format!("(?m){pattern}");
         if !mode.case_sensitive {
             pattern = format!("(?i){pattern}");
         }
@@ -64,17 +68,27 @@ impl Matcher {
 
     /// Every non-empty, non-overlapping match in `text`, as character ranges.
     pub fn find_all(&self, text: &str) -> Vec<Range<usize>> {
+        self.find_all_checked(text).0
+    }
+
+    /// Like [`Matcher::find_all`], and true when the regular expression gave up part-way (it hit
+    /// its backtracking limit), so the matches may be incomplete.
+    pub fn find_all_checked(&self, text: &str) -> (Vec<Range<usize>>, bool) {
         match &self.kind {
             Kind::Literal {
                 needle,
                 case_sensitive,
                 whole_word,
-            } => literal(text, needle, *case_sensitive, *whole_word),
+            } => (literal(text, needle, *case_sensitive, *whole_word), false),
             Kind::Pattern(regex) => {
                 let mut bytes: Vec<Range<usize>> = Vec::new();
+                let mut gave_up = false;
                 for found in regex.find_iter(text) {
                     // A match that exceeds the backtracking limit is an error: stop there.
-                    let Ok(found) = found else { break };
+                    let Ok(found) = found else {
+                        gave_up = true;
+                        break;
+                    };
                     if found.start() < found.end() {
                         bytes.push(found.start()..found.end());
                     }
@@ -82,7 +96,7 @@ impl Matcher {
                         break;
                     }
                 }
-                to_char_ranges(text, &bytes)
+                (to_char_ranges(text, &bytes), gave_up)
             }
         }
     }
@@ -301,6 +315,25 @@ mod tests {
     }
 
     #[test]
+    fn anchors_are_per_line_and_whole_word_has_one_rule_for_both_modes() {
+        let regex = Mode {
+            regex: true,
+            case_sensitive: true,
+            whole_word: false,
+        };
+        assert_eq!(matches("^foo", "a\nfoo", regex), vec![(2, 5)]);
+        assert_eq!(matches("o$", "foo\nbar", regex), vec![(2, 3)]);
+        // Whole word, regex: the same answer as the plain query for edges that are symbols.
+        let both = Mode {
+            regex: true,
+            whole_word: true,
+            case_sensitive: true,
+        };
+        assert_eq!(matches(r"a\)", "a))", both), vec![(0, 2)]);
+        assert_eq!(matches("cat", "cat concat", both), vec![(0, 3)]);
+    }
+
+    #[test]
     fn empty_matches_invalid_patterns_and_runaway_patterns_are_handled() {
         let regex = Mode {
             regex: true,
@@ -314,8 +347,13 @@ mod tests {
         // Catastrophic backtracking gives up instead of hanging.
         let text = format!("{}!", "a".repeat(40));
         let started = std::time::Instant::now();
-        let _ = Matcher::new("(a+)+$", regex).unwrap().find_all(&text);
+        let (found, gave_up) = Matcher::new("(a+)+$", regex)
+            .unwrap()
+            .find_all_checked(&text);
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(found.is_empty(), "there is no match to find");
+        // Whether it ran out of backtracking or proved no match, the flag is a plain bool.
+        let _ = gave_up;
         // Plain text queries are never treated as patterns.
         assert_eq!(matches("a.c", "abc a.c", Mode::default()), vec![(4, 7)]);
         assert_eq!(matches("(", "f(x)", Mode::default()), vec![(1, 2)]);

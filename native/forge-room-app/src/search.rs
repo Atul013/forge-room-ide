@@ -167,8 +167,10 @@ pub fn search(root: &Path, query: &str, mode: find::Mode, cancel: &AtomicBool) -
                 let marks = matches
                     .iter()
                     .filter_map(|range| {
-                        let (start, end) = (range.start.checked_sub(lead)?, range.end - lead);
-                        (start < shown).then_some(start..end.min(shown))
+                        // A match that begins in the dropped whitespace keeps the part that is shown.
+                        let start = range.start.saturating_sub(lead);
+                        let end = range.end.saturating_sub(lead).min(shown);
+                        (start < end).then_some(start..end)
                     })
                     .collect();
                 results.hits.push(Hit {
@@ -345,6 +347,12 @@ mod tests {
         assert_eq!(first.preview, "// TODO: later");
         assert_eq!(first.marks, vec![3..7]);
         assert_eq!(first.length, 4);
+        // A match that starts in the leading whitespace still marks the visible part.
+        fs::write(root.join("lead.txt"), "    foo bar\n").unwrap();
+        let leading = search(&root, r"\s+foo", regex, &cancel);
+        assert_eq!(leading.hits.len(), 1);
+        assert_eq!(leading.hits[0].preview, "foo bar");
+        assert_eq!(leading.hits[0].marks, vec![0..3]);
         // A bad pattern is reported, not searched.
         let bad = search(&root, "(", regex, &cancel);
         assert!(bad.error.is_some() && bad.hits.is_empty());
