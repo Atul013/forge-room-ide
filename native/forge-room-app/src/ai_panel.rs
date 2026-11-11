@@ -1,11 +1,11 @@
 //! The AI Assistant tab of the right dock: transcript, quick actions and the composer.
 //!
-//! There is no model behind it yet. Sending a message records it and answers honestly that no
-//! provider is connected, so nothing a user types leaves the machine. The shape (messages,
-//! composer, context chips) is what a real provider will plug into.
+//! The first functional path runs Codex CLI in read-only Ask mode. Authentication is managed by
+//! the CLI in the integrated terminal; this panel never handles credentials.
 
-use crate::{brand, fonts, icons, theme};
+use crate::{ai_backend::{self, Provider}, brand, fonts, icons, theme};
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Sense, Stroke};
+use std::{path::Path, sync::mpsc};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Author {
@@ -23,6 +23,9 @@ pub struct State {
     messages: Vec<Message>,
     input: String,
     focus_input: bool,
+    provider: Provider,
+    model: String,
+    pending: Option<mpsc::Receiver<Result<String, String>>>,
 }
 
 const QUICK_ACTIONS: [(&str, &str); 4] = [
@@ -32,26 +35,40 @@ const QUICK_ACTIONS: [(&str, &str); 4] = [
     ("Find and fix issues", "Find and fix issues in "),
 ];
 
-const NOT_CONNECTED: &str = "No AI provider is connected yet, so I can't answer. \
-Your message stayed on this computer. Rooms already track agents and the tasks they own; \
-running agents from this panel is on the roadmap.";
-
 impl State {
-    fn send(&mut self) {
+    fn send(&mut self, context: &egui::Context, root: Option<&Path>) {
+        if self.pending.is_some() { return; }
         let text = self.input.trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() || root.is_none() {
             return;
         }
         self.messages.push(Message {
             author: Author::User,
-            text,
+            text: text.clone(),
         });
-        self.messages.push(Message {
-            author: Author::Assistant,
-            text: NOT_CONNECTED.to_string(),
+        let root = root.unwrap().to_path_buf();
+        let provider = self.provider;
+        let model = self.model.clone();
+        let (sender, receiver) = mpsc::channel();
+        let context = context.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(ai_backend::ask(&root, provider, &model, &text));
+            context.request_repaint();
         });
+        self.pending = Some(receiver);
         self.input.clear();
         self.focus_input = true;
+    }
+
+    fn poll(&mut self) {
+        let Some(receiver) = self.pending.as_ref() else { return; };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => Err("Codex worker stopped without a reply.".into()),
+        };
+        self.pending = None;
+        self.messages.push(Message { author: Author::Assistant, text: result.unwrap_or_else(|error| error) });
     }
 
     /// Add `@name ` to the input, the way the design references files and Room context.
@@ -66,12 +83,13 @@ impl State {
     }
 }
 
-pub fn show(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>) {
+pub fn show(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>, root: Option<&Path>) {
+    state.poll();
     egui::Panel::bottom("ai-composer")
         .resizable(false)
         .frame(egui::Frame::new().inner_margin(egui::Margin::same(12)))
         .show_separator_line(false)
-        .show(ui, |ui| composer(ui, state, active_file));
+        .show(ui, |ui| composer(ui, state, active_file, root));
 
     egui::ScrollArea::vertical()
         .auto_shrink(false)
@@ -180,7 +198,20 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
     });
 }
 
-fn composer(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>) {
+fn composer(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>, root: Option<&Path>) {
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_id_salt("ai-provider")
+            .selected_text(state.provider.label())
+            .show_ui(ui, |ui| {
+                for provider in [Provider::Codex, Provider::Ollama, Provider::LmStudio] {
+                    ui.selectable_value(&mut state.provider, provider, provider.label());
+                }
+            });
+        ui.add(egui::TextEdit::singleline(&mut state.model).desired_width(120.0).hint_text("Default model"));
+    });
+    ui.label(RichText::new("Ask only · read-only Codex CLI. Sign in with `codex login` in Terminal; local providers use Codex CLI too.").size(11.0).color(theme::text_dim()));
+    if root.is_none() { ui.label("Open and trust a project folder before asking."); }
+    if state.pending.is_some() { ui.spinner(); ui.label("Codex is working…"); }
     let id = ui.scope_id().with("ai-input");
     // Enter sends, Shift+Enter adds a line. Consumed before the text box sees it.
     let focused = ui.memory(|memory| memory.has_focus(id));
@@ -231,7 +262,7 @@ fn composer(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(34.0, 30.0), Sense::click());
-                    let ready = !state.input.trim().is_empty();
+                    let ready = !state.input.trim().is_empty() && root.is_some() && state.pending.is_none();
                     let fill = if ready {
                         theme::button()
                     } else {
@@ -247,11 +278,11 @@ fn composer(ui: &mut egui::Ui, state: &mut State, active_file: Option<&str>) {
                     );
                     if (response.on_hover_text("Send (Enter)").clicked() || send_requested) && ready
                     {
-                        state.send();
+                        state.send(ui.ctx(), root);
                     }
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new("Forge AI")
+                        RichText::new("Ask")
                             .size(13.0)
                             .color(theme::text_dim()),
                     );
@@ -265,16 +296,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sending_records_the_message_and_an_honest_reply() {
+    fn sending_without_a_project_does_not_start_a_provider() {
         let mut state = State {
             input: "  explain main.rs  ".into(),
             ..State::default()
         };
-        state.send();
-        assert_eq!(state.messages.len(), 2);
-        assert_eq!(state.messages[0].text, "explain main.rs");
-        assert!(state.messages[1].text.contains("No AI provider"));
-        assert!(state.input.is_empty());
+        state.send(&egui::Context::default(), None);
+        assert!(state.messages.is_empty());
     }
 
     #[test]
@@ -283,7 +311,7 @@ mod tests {
             input: "   \n".into(),
             ..State::default()
         };
-        state.send();
+        state.send(&egui::Context::default(), Some(Path::new(".")));
         assert!(state.messages.is_empty());
     }
 
