@@ -2266,6 +2266,8 @@ impl ForgeRoomApp {
                         if !editing::smart_tab(ui, id, tab.doc.text_mut()) {
                             editing::smart_enter(ui, id, tab.doc.text_mut());
                         }
+                        // Brackets and quotes are completed, stepped over and deleted in pairs.
+                        editing::smart_pairs(ui, id, tab.doc.text_mut());
                     }
                     let output = egui::TextEdit::multiline(tab.doc.text_mut())
                         .id(id)
