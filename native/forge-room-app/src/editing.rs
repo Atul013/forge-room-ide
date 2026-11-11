@@ -6,7 +6,7 @@ use eframe::egui::{self, text::CCursor, text::CCursorRange};
 
 /// A byte offset clamped into `text` and moved back to a character boundary, so a stray offset can
 /// never panic a slice.
-fn boundary(text: &str, offset: usize) -> usize {
+pub(crate) fn boundary(text: &str, offset: usize) -> usize {
     text.floor_char_boundary(offset.min(text.len()))
 }
 
@@ -197,7 +197,7 @@ fn plain_key_pending(ui: &egui::Ui, key: egui::Key) -> bool {
 }
 
 /// The caret and selection of the text edit `id` as byte offsets, and its stored state.
-fn selection_bytes(ui: &egui::Ui, id: egui::Id, text: &str) -> Option<(usize, usize)> {
+pub(crate) fn selection_bytes(ui: &egui::Ui, id: egui::Id, text: &str) -> Option<(usize, usize)> {
     let state = egui::TextEdit::load_state(ui.ctx(), id)?;
     let range = state.cursor.char_range()?;
     let to_byte = |chars: usize| {
@@ -239,7 +239,7 @@ pub fn smart_enter(ui: &egui::Ui, id: egui::Id, text: &mut String) -> bool {
 }
 
 /// Moves the caret (or selection) of the text edit `id` to byte offsets in `text`.
-fn place_caret(ui: &egui::Ui, id: egui::Id, text: &str, from: usize, to: usize) {
+pub(crate) fn place_caret(ui: &egui::Ui, id: egui::Id, text: &str, from: usize, to: usize) {
     let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) else {
         return;
     };

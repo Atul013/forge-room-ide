@@ -14,6 +14,7 @@ mod git;
 mod graph;
 mod gutter;
 mod icons;
+mod line_ops;
 mod lobby;
 mod mark;
 mod palette;
@@ -2268,6 +2269,9 @@ impl ForgeRoomApp {
                         }
                         // Brackets and quotes are completed, stepped over and deleted in pairs.
                         editing::smart_pairs(ui, id, tab.doc.text_mut());
+                        // Ctrl+/ comments lines; Alt+Up/Down move them, Shift+Alt+Up/Down
+                        // duplicate them and Ctrl+Shift+K deletes them.
+                        line_ops::handle(ui, id, tab.doc.text_mut(), &extension);
                     }
                     let output = egui::TextEdit::multiline(tab.doc.text_mut())
                         .id(id)
