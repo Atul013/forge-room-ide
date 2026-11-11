@@ -17,6 +17,7 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 - Editing commands: Ctrl+D (select next occurrence), palette commands for upper/lower case, sorting and de-duplicating lines, trimming trailing whitespace and joining lines; Ctrl+= / Ctrl+- / Ctrl+0 for the editor font size (remembered); Ctrl+Shift+\ jumps to the matching bracket (and a palette command selects up to it), counting only the same kind of bracket and not skipping strings or comments.
 - Go to Symbol in File (Ctrl+Shift+Y, or @ in the palette): an outline from simple per-language line patterns for Rust, Python, JavaScript/TypeScript, Go, Java-family languages, Markdown, shell, TOML and INI. It is not a language server: it finds what is written at the start of a line.
 - Source Control: right-click a coloured change bar in the editor gutter to stage or revert just that change.
+- Starting the app with nothing to open reopens the last folder and the files that were open (the front tab stays in front); files and folders that are gone are skipped. Unsaved text is the job of crash recovery.
 - Crash recovery: unsaved text is written to a recovery folder every few seconds and restored as unsaved tabs after an abnormal exit; a normal exit clears it.
 - Terminal: Ctrl+click a `file:line:column` reference in the output to open it (network and device paths are never followed).
 - Source Control: right-click a commit in the History graph to cherry-pick or revert it; merge, cherry-pick, revert and a rebase started elsewhere show a banner with an Abort button.

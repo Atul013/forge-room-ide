@@ -30,6 +30,7 @@ mod room_state;
 mod rooms;
 mod search;
 mod search_view;
+mod session;
 mod settings;
 mod source_control;
 mod symbols;
@@ -212,6 +213,9 @@ struct ForgeRoomApp {
     editor_scale: f32,
     /// Save file tabs automatically once their text rests.
     auto_save: bool,
+    /// The last session written to disk, and when it was last compared with the window.
+    session_saved: session::Session,
+    session_checked: std::time::Instant,
     auto_saves: autosave::Tracker,
     /// Unsaved text kept on disk so a crash does not lose it.
     recovery: recovery::Store,
@@ -332,6 +336,8 @@ impl ForgeRoomApp {
             stash_count: 0,
             editor_scale: settings::clean_scale(settings::load().editor_scale),
             auto_save: settings::load().auto_save.unwrap_or(false),
+            session_saved: session::Session::default(),
+            session_checked: std::time::Instant::now(),
             auto_saves: autosave::Tracker::default(),
             recovery: recovery::Store::default_location(),
             last_recovery: std::time::Instant::now(),
@@ -373,8 +379,67 @@ impl ForgeRoomApp {
         app.restore_recovered();
         if let Some(path) = initial_path {
             app.open_path(path);
+        } else {
+            app.restore_session();
         }
         app
+    }
+
+    /// Open the folder and files of the last session (nothing was asked for on the command line).
+    fn restore_session(&mut self) {
+        let session = session::load_from(&session::default_path()).clean();
+        if let Some(folder) = &session.folder {
+            self.open_path(PathBuf::from(folder));
+        }
+        for file in &session.files {
+            self.open_path(PathBuf::from(file));
+        }
+        if let Some(index) = session.active
+            && let Some(file) = session.files.get(index)
+        {
+            self.open_path(PathBuf::from(file));
+        }
+        self.focus_editor = !session.files.is_empty();
+        self.session_saved = self.current_session();
+    }
+
+    /// The folder and the file tabs as they are now.
+    fn current_session(&self) -> session::Session {
+        let mut files = Vec::new();
+        let mut active = None;
+        for (index, tab) in self.tabs.tabs.iter().enumerate() {
+            if tab.readonly {
+                continue;
+            }
+            if let Some(path) = tab.doc.path() {
+                if index == self.tabs.active {
+                    active = Some(files.len());
+                }
+                files.push(path.display().to_string());
+            }
+        }
+        session::Session {
+            folder: self
+                .workspace
+                .as_ref()
+                .map(|workspace| workspace.root.display().to_string()),
+            files,
+            active,
+        }
+    }
+
+    /// Write the session when it changed (checked every couple of seconds, and on exit).
+    fn save_session(&mut self, force: bool) {
+        if !force && self.session_checked.elapsed() < std::time::Duration::from_secs(2) {
+            return;
+        }
+        self.session_checked = std::time::Instant::now();
+        let current = self.current_session();
+        if current != self.session_saved
+            && session::save_to(&session::default_path(), &current).is_ok()
+        {
+            self.session_saved = current;
+        }
     }
 
     /// Bring back the unsaved tabs a dead instance left in the recovery folder (it ended without a
@@ -3796,6 +3861,7 @@ impl eframe::App for ForgeRoomApp {
 
     fn on_exit(&mut self) {
         let _ = self.lobby.finish();
+        self.save_session(true);
         // A normal exit already asked about every unsaved tab: nothing is left to recover.
         self.recovery.clear();
     }
@@ -3804,6 +3870,7 @@ impl eframe::App for ForgeRoomApp {
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
         self.auto_save_tabs();
+        self.save_session(false);
         self.autosave_recovery();
         if context.input(|input| input.viewport().close_requested())
             && self.tabs.any_dirty()
