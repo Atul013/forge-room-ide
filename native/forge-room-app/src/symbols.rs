@@ -74,9 +74,12 @@ fn rules_for(family: Family) -> &'static [Rule] {
                 ("struct", &format!(r"{RUST_PREFIX}struct\s+([A-Za-z_]\w*)")),
                 ("enum", &format!(r"{RUST_PREFIX}enum\s+([A-Za-z_]\w*)")),
                 ("trait", &format!(r"{RUST_PREFIX}trait\s+([A-Za-z_]\w*)")),
-                ("impl", r"^\s*(?:unsafe\s+)?impl\b\s*(?:<[^>]*>\s*)?([^{]+?)\s*(?:\{|where\b|$)"),
+                ("impl", r"^\s*(?:unsafe\s+)?impl\b\s*(?:<(?:[^<>]|<[^<>]*>)*>\s*)?([^{]+?)\s*(?:\{|where\b|$)"),
                 ("mod", &format!(r"{RUST_PREFIX}mod\s+([A-Za-z_]\w*)")),
-                ("type", &format!(r"{RUST_PREFIX}type\s+([A-Za-z_]\w*)")),
+                (
+                    "type",
+                    r"^(?:pub(?:\([^)]*\))?\s+)?type\s+([A-Za-z_]\w*)",
+                ),
                 ("macro", r"^\s*macro_rules!\s*([A-Za-z_]\w*)"),
             ])
         }),
@@ -90,7 +93,7 @@ fn rules_for(family: Family) -> &'static [Rule] {
             rules(&[
                 (
                     "function",
-                    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)",
+                    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\b\s*\*?\s*([A-Za-z_$][\w$]*)",
                 ),
                 (
                     "class",
@@ -114,10 +117,10 @@ fn rules_for(family: Family) -> &'static [Rule] {
         Family::Classes => CLASSES.get_or_init(|| {
             rules(&[(
                 "class",
-                r"^\s*(?:[A-Za-z]+\s+)*?(?:class|interface|enum|record|struct|object|trait)\s+([A-Za-z_]\w*)",
+                r"^\s*(?:(?:public|private|protected|internal|static|abstract|final|sealed|open|data|partial|export|default|pub|case|inline|value|annotation|readonly)\s+)*(?:class|interface|enum|record|struct|object|trait)\s+([A-Za-z_]\w*)",
             )])
         }),
-        Family::Markdown => MARKDOWN.get_or_init(|| rules(&[("heading", r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")])),
+        Family::Markdown => MARKDOWN.get_or_init(|| rules(&[("heading", r"^\s{0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$")])),
         Family::Shell => SHELL.get_or_init(|| {
             rules(&[
                 ("function", r"^\s*function\s+([A-Za-z_][\w-]*)"),
@@ -128,6 +131,18 @@ fn rules_for(family: Family) -> &'static [Rule] {
     }
 }
 
+/// The character and length of a Markdown code fence starting `line` (three or more backticks or
+/// tildes, after up to three spaces of indent).
+fn fence_marker(line: &str) -> Option<(char, usize)> {
+    let trimmed = line.trim_start();
+    if line.len() - trimmed.len() > 3 {
+        return None;
+    }
+    let marker = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let count = trimmed.chars().take_while(|c| *c == marker).count();
+    (count >= 3).then_some((marker, count))
+}
+
 /// The symbols of `text`, in file order. Nothing for file types without patterns.
 pub fn outline(text: &str, extension: &str) -> Vec<Symbol> {
     let Some(family) = family(extension) else {
@@ -135,14 +150,30 @@ pub fn outline(text: &str, extension: &str) -> Vec<Symbol> {
     };
     let rules = rules_for(family);
     let mut found = Vec::new();
-    let mut in_fence = false;
+    // The Markdown fence that is open: its character and how many it had.
+    let mut fence: Option<(char, usize)> = None;
+    // A byte order mark would stop `^` from matching on the first line.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     for (index, line) in text.lines().enumerate() {
         // Lines of a code sample inside a Markdown fence are not headings.
-        if matches!(family, Family::Markdown) && line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
+        if matches!(family, Family::Markdown)
+            && let Some((marker, count)) = fence_marker(line)
+        {
+            match fence {
+                None => fence = Some((marker, count)),
+                // Only the same character, at least as many, and nothing else closes it.
+                Some((open, length))
+                    if open == marker
+                        && count >= length
+                        && line.trim().chars().all(|c| c == marker) =>
+                {
+                    fence = None;
+                }
+                Some(_) => {}
+            }
             continue;
         }
-        if in_fence || line.len() > 400 {
+        if fence.is_some() || line.len() > 400 {
             continue;
         }
         for rule in rules {
@@ -279,6 +310,63 @@ const value = 3;
         assert_eq!(
             names(java, "java"),
             vec![("Main".into(), "class", 1), ("Mode".into(), "class", 2)]
+        );
+    }
+
+    #[test]
+    fn identifiers_that_merely_start_with_a_keyword_are_not_declarations() {
+        assert!(outline("functionCall(x);\nfunctions.map(f);", "js").is_empty());
+        assert_eq!(
+            names("function real() {}", "js"),
+            vec![("real".into(), "function", 1)]
+        );
+        // Prose with a keyword in it is not a class.
+        assert!(outline("This class handles requests\n", "java").is_empty());
+        assert_eq!(
+            names("public static final class Real {}", "java"),
+            vec![("Real".into(), "class", 1)]
+        );
+    }
+
+    #[test]
+    fn impls_with_nested_generics_and_associated_types_are_handled() {
+        assert_eq!(
+            names("impl<T: Into<String>> Foo<T> {", "rs"),
+            vec![("Foo<T>".into(), "impl", 1)]
+        );
+        assert_eq!(
+            names("impl<I: Iterator<Item = u8>> Foo for Bar {", "rs"),
+            vec![("Foo for Bar".into(), "impl", 1)]
+        );
+        // An associated type inside an impl is not listed, a top-level alias is.
+        assert_eq!(
+            names(
+                "impl A for B {\n    type Output = u8;\n}\npub type Alias = u8;\n",
+                "rs"
+            ),
+            vec![("A for B".into(), "impl", 1), ("Alias".into(), "type", 4)]
+        );
+    }
+
+    #[test]
+    fn markdown_fences_by_character_and_length_and_headings_ending_in_a_hash() {
+        let md = "~~~\n# not a heading\n~~~\n# Real\n````\n```\n# inside\n```\n````\n## After\n";
+        assert_eq!(
+            names(md, "md"),
+            vec![
+                ("Real".into(), "heading", 4),
+                ("After".into(), "heading", 10)
+            ]
+        );
+        assert_eq!(names("# C#\n", "md"), vec![("C#".into(), "heading", 1)]);
+        assert_eq!(
+            names("## Closed ##\n", "md"),
+            vec![("Closed".into(), "heading", 1)]
+        );
+        // A byte order mark does not hide the first line.
+        assert_eq!(
+            names("\u{feff}# First\n", "md"),
+            vec![("First".into(), "heading", 1)]
         );
     }
 

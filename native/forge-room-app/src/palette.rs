@@ -42,6 +42,7 @@ pub enum Outcome {
 
 impl Palette {
     pub fn open_commands(&mut self) {
+        self.symbols.clear();
         self.query = ">".into();
         self.selected = 0;
         self.open = true;
@@ -49,6 +50,7 @@ impl Palette {
     }
 
     pub fn open_files(&mut self, root: Option<&Path>) {
+        self.symbols.clear();
         self.query.clear();
         self.selected = 0;
         self.open = true;
@@ -91,6 +93,7 @@ impl Palette {
     }
 
     pub fn open_goto(&mut self) {
+        self.symbols.clear();
         self.query = ":".into();
         self.selected = 0;
         self.open = true;
@@ -179,7 +182,7 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                         .iter()
                         .map(|symbol| symbol.name.as_str())
                         .collect();
-                    fuzzy::rank(text, &names, 80)
+                    fuzzy::rank(text, &names, 300)
                         .into_iter()
                         .map(Row::Symbol)
                         .collect()
@@ -418,6 +421,8 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
     if close {
         palette.open = false;
         palette.branches = None;
+        // The outline belongs to the file it was made for: never offer it for another one.
+        palette.symbols.clear();
         palette.purpose = BranchPurpose::Checkout;
     }
     outcome

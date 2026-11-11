@@ -147,6 +147,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn no_two_commands_advertise_the_same_shortcut() {
+        let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+        for (_, title, keys) in ALL {
+            if keys.is_empty() {
+                continue;
+            }
+            if let Some(other) = seen.insert(keys, title) {
+                panic!("{keys} is listed for both \"{other}\" and \"{title}\"");
+            }
+        }
+    }
+
+    #[test]
     fn titles_are_unique_and_every_command_is_listed_once() {
         let mut titles: Vec<&str> = ALL.iter().map(|(_, title, _)| *title).collect();
         titles.sort_unstable();
