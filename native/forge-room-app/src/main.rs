@@ -2261,8 +2261,11 @@ impl ForgeRoomApp {
                     // place in the paint order now and fill it once the line's position is known.
                     let line_wash = ui.painter().add(egui::Shape::Noop);
                     if !readonly {
-                        // Enter keeps the indentation and opens bracket blocks.
-                        editing::smart_enter(ui, id, tab.doc.text_mut());
+                        // Enter keeps the indentation and opens bracket blocks; Tab and Shift+Tab
+                        // indent and unindent the line or the selected lines.
+                        if !editing::smart_tab(ui, id, tab.doc.text_mut()) {
+                            editing::smart_enter(ui, id, tab.doc.text_mut());
+                        }
                     }
                     let output = egui::TextEdit::multiline(tab.doc.text_mut())
                         .id(id)
