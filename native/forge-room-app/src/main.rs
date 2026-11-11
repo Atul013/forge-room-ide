@@ -5,6 +5,7 @@ mod autosave;
 mod background;
 mod brand;
 mod commands;
+mod diagnostics;
 mod document;
 mod editing;
 mod explorer;
@@ -213,6 +214,9 @@ struct ForgeRoomApp {
     editor_scale: f32,
     /// Save file tabs automatically once their text rests.
     auto_save: bool,
+    /// The last `cargo check`, and the worker that makes the next one.
+    problems: Option<diagnostics::Report>,
+    checking: background::Latest<diagnostics::Report>,
     /// The last session written to disk, and when it was last compared with the window.
     session_saved: session::Session,
     session_checked: std::time::Instant,
@@ -338,6 +342,8 @@ impl ForgeRoomApp {
             stash_count: 0,
             editor_scale: settings::clean_scale(settings::load().editor_scale),
             auto_save: settings::load().auto_save.unwrap_or(false),
+            problems: None,
+            checking: background::Latest::default(),
             session_saved: session::Session::default(),
             session_checked: std::time::Instant::now(),
             auto_saves: autosave::Tracker::default(),
@@ -932,6 +938,11 @@ impl ForgeRoomApp {
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
+            Command::CheckProject => {
+                self.show_terminal = true;
+                self.bottom_tab = BottomTab::Problems;
+                self.start_check();
+            }
             Command::NewTerminal => {
                 self.show_terminal = true;
                 self.bottom_tab = BottomTab::Terminal;
@@ -980,6 +991,38 @@ impl ForgeRoomApp {
             Err(error) => self.terminal_error = Some(error),
         }
         self.terminal_focus_request = true;
+    }
+
+    /// Run `cargo check` for the open folder on a worker thread.
+    fn start_check(&mut self) {
+        let Some(root) = self.repo_root() else {
+            self.status = "Open a folder to check it".into();
+            return;
+        };
+        let context = self.egui_ctx.clone();
+        if self
+            .checking
+            .request(&context, move || diagnostics::check(&root))
+        {
+            self.status = "Running cargo check…".into();
+        } else {
+            self.status = "A check is already running".into();
+        }
+    }
+
+    /// Take a finished check.
+    fn poll_check(&mut self) {
+        if let Some(report) = self.checking.poll() {
+            let errors = report.problems.iter().filter(|p| p.error).count();
+            let warnings = report.problems.len() - errors;
+            self.status = match &report.failure {
+                Some(failure) => format!("cargo check: {failure}"),
+                None => format!("cargo check: {errors} error(s), {warnings} warning(s)"),
+            };
+            self.problems = Some(report);
+        } else if self.checking.take_failed() {
+            self.status = "cargo check stopped unexpectedly".into();
+        }
     }
 
     /// Close the active terminal (its shell is ended); the one before it comes forward.
@@ -1157,6 +1200,11 @@ impl ForgeRoomApp {
                         });
                 });
         }
+        if self.bottom_tab == BottomTab::Problems {
+            self.terminal_has_focus = false;
+            self.problems_view(ui);
+            return;
+        }
         if self.bottom_tab != BottomTab::Terminal {
             self.terminal_has_focus = false;
             self.terminal_output_view(ui);
@@ -1214,6 +1262,105 @@ impl ForgeRoomApp {
         }
     }
 
+    /// The Problems tab: a button that runs `cargo check` and the compiler's errors and warnings,
+    /// each opening its file at the right line.
+    fn problems_view(&mut self, ui: &mut egui::Ui) {
+        let mut run = false;
+        let mut open: Option<diagnostics::Problem> = None;
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            let busy = self.checking.busy();
+            if ui
+                .add_enabled(!busy, egui::Button::new("Run cargo check"))
+                .clicked()
+            {
+                run = true;
+            }
+            if busy {
+                ui.spinner();
+                ui.label(egui::RichText::new("Checking…").color(theme::text_dim()));
+            } else if let Some(report) = &self.problems {
+                let errors = report.problems.iter().filter(|p| p.error).count();
+                let text = match &report.failure {
+                    Some(failure) => failure.clone(),
+                    None => format!(
+                        "{errors} error(s), {} warning(s){}",
+                        report.problems.len() - errors,
+                        if report.truncated {
+                            " (first 500 shown)"
+                        } else {
+                            ""
+                        }
+                    ),
+                };
+                ui.label(egui::RichText::new(text).color(theme::text_dim()));
+            }
+        });
+        let Some(report) = &self.problems else {
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Run cargo check to list the compiler's errors and warnings. \
+                         It is not a language server: the list is as old as the last run.",
+                    )
+                    .color(theme::text_dim()),
+                );
+            });
+            if run {
+                self.start_check();
+            }
+            return;
+        };
+        let root = self
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone());
+        egui::ScrollArea::vertical()
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                for problem in &report.problems {
+                    let shown = root
+                        .as_deref()
+                        .map(|root| file_ops::relative_display(root, &problem.file))
+                        .unwrap_or_else(|| problem.file.display().to_string());
+                    let color = if problem.error {
+                        egui::Color32::from_rgb(235, 100, 100)
+                    } else {
+                        egui::Color32::from_rgb(220, 180, 80)
+                    };
+                    let line = format!(
+                        "{}  {shown}:{}:{}  {}",
+                        if problem.error { "error" } else { "warning" },
+                        problem.line,
+                        problem.column,
+                        problem.message.lines().next().unwrap_or("")
+                    );
+                    let response = ui.add(
+                        egui::Label::new(egui::RichText::new(line).monospace().color(color))
+                            .sense(egui::Sense::click())
+                            .truncate(),
+                    );
+                    if response.clicked() {
+                        open = Some(problem.clone());
+                    }
+                }
+            });
+        if let Some(problem) = open {
+            self.open_path(problem.file.clone());
+            if self.tabs.active_path() == Some(tabs::normalize(&problem.file).as_path())
+                && let Some(tab) = self.tabs.tabs.get(self.tabs.active)
+            {
+                let at = path_links::locate(tab.doc.text(), problem.line, problem.column);
+                self.pending_select = Some((at, at));
+                self.focus_editor = true;
+            }
+        }
+        if run {
+            self.start_check();
+        }
+    }
+
     fn terminal_output_view(&mut self, ui: &mut egui::Ui) {
         let Some(terminal) = self.terminals.get(self.active_terminal) else {
             ui.label("Start the terminal to see local output.");
@@ -1236,31 +1383,7 @@ impl ForgeRoomApp {
                     });
                 });
             }
-            BottomTab::Problems => {
-                ui.label("Errors and warnings on the current terminal screen");
-                let matches: Vec<_> = text
-                    .lines()
-                    .filter(|line| {
-                        let lower = line.to_ascii_lowercase();
-                        lower.contains("error:")
-                            || lower.contains("error[")
-                            || lower.contains("warning:")
-                    })
-                    .take(50)
-                    .collect();
-                if matches.is_empty() {
-                    ui.label(
-                        "No error or warning lines visible. Language diagnostics are not connected yet.",
-                    );
-                } else {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for line in matches {
-                            ui.monospace(line);
-                        }
-                    });
-                }
-            }
-            BottomTab::Terminal => {}
+            BottomTab::Problems | BottomTab::Terminal => {}
         }
     }
 
@@ -3959,6 +4082,7 @@ impl eframe::App for ForgeRoomApp {
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
         self.auto_save_tabs();
+        self.poll_check();
         self.save_session(false);
         self.autosave_recovery();
         if context.input(|input| input.viewport().close_requested())

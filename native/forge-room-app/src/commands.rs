@@ -56,6 +56,7 @@ pub enum Command {
     GitStash,
     GitStashApply,
     ToggleTerminal,
+    CheckProject,
     NewTerminal,
 }
 
@@ -144,6 +145,11 @@ pub const ALL: &[(Command, &str, &str)] = &[
     (Command::TogglePreview, "View: Toggle Preview", ""),
     (Command::ToggleSidebar, "View: Toggle Sidebar", "Ctrl+B"),
     (Command::ToggleTerminal, "View: Toggle Terminal", "Ctrl+`"),
+    (
+        Command::CheckProject,
+        "Rust: Check Project (cargo check)",
+        "",
+    ),
     (
         Command::NewTerminal,
         "Terminal: New Terminal",
