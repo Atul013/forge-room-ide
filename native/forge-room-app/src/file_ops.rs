@@ -10,6 +10,41 @@ const RESERVED: [&str; 22] = [
     "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
+/// `path` relative to `root` for copying (`src\\main.rs` on Windows); the full path when it is not
+/// inside `root`. Both are compared in their normal form, so a `\\?\` prefix does not matter.
+pub fn relative_display(root: &Path, path: &Path) -> String {
+    let (root, full) = (crate::tabs::normalize(root), crate::tabs::normalize(path));
+    full.strip_prefix(&root)
+        .ok()
+        .filter(|relative| !relative.as_os_str().is_empty())
+        .map_or_else(
+            || path.display().to_string(),
+            |relative| relative.display().to_string(),
+        )
+}
+
+/// Show a file in Windows File Explorer with it selected (a folder is opened). The path is passed as
+/// one argument, never through a shell.
+pub fn reveal(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("That file no longer exists".into());
+    }
+    #[cfg(windows)]
+    {
+        let mut argument = std::ffi::OsString::from(if path.is_dir() { "" } else { "/select," });
+        argument.push(path);
+        std::process::Command::new("explorer.exe")
+            .arg(argument)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Could not open File Explorer: {error}"))
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Showing a file in the file manager is only available on Windows".into())
+    }
+}
+
 /// A single file or folder name that is valid as it stands, or why it is not. The name is
 /// trimmed; path separators, `.` and `..`, characters Windows forbids, control characters, names
 /// ending in a dot and the reserved device names (`CON`, `NUL`, `COM1`...) are refused.
@@ -292,6 +327,27 @@ mod tests {
         fs::write(dir.join("keep.txt"), "k").unwrap();
         assert!(recycle(&dir.join("missing.txt")).is_err());
         assert!(dir.join("keep.txt").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn relative_paths_are_inside_the_folder_or_the_full_path() {
+        let dir = folder("relative");
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src").join("a.rs"), "x").unwrap();
+        let expected = Path::new("src").join("a.rs").display().to_string();
+        assert_eq!(
+            relative_display(&dir, &dir.join("src").join("a.rs")),
+            expected
+        );
+        // Outside the folder, or the folder itself: the path as it is.
+        let outside = std::env::temp_dir().join("elsewhere.txt");
+        assert_eq!(
+            relative_display(&dir, &outside),
+            outside.display().to_string()
+        );
+        assert_eq!(relative_display(&dir, &dir), dir.display().to_string());
+        assert!(reveal(&dir.join("missing")).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -12,6 +12,8 @@ pub enum Action {
     NewFolder(PathBuf),
     Rename(PathBuf),
     Delete(PathBuf),
+    CopyRelative(PathBuf),
+    Reveal(PathBuf),
 }
 
 #[derive(Clone, Copy)]
@@ -127,6 +129,14 @@ fn tree(
                     *action = Action::Delete(entry.path.clone());
                     ui.close();
                 }
+                if ui.button("Copy relative path").clicked() {
+                    *action = Action::CopyRelative(entry.path.clone());
+                    ui.close();
+                }
+                if ui.button("Reveal in File Explorer").clicked() {
+                    *action = Action::Reveal(entry.path.clone());
+                    ui.close();
+                }
                 if ui.button("Copy path").clicked() {
                     ui.ctx().copy_text(entry.path.display().to_string());
                     ui.close();
@@ -148,6 +158,14 @@ fn tree(
                 }
                 if ui.button("Delete…").clicked() {
                     *action = Action::Delete(entry.path.clone());
+                    ui.close();
+                }
+                if ui.button("Copy relative path").clicked() {
+                    *action = Action::CopyRelative(entry.path.clone());
+                    ui.close();
+                }
+                if ui.button("Reveal in File Explorer").clicked() {
+                    *action = Action::Reveal(entry.path.clone());
                     ui.close();
                 }
                 if ui.button("Copy path").clicked() {

@@ -711,6 +711,32 @@ impl ForgeRoomApp {
             }
             Command::ColorTheme => self.gallery.open(),
             Command::GitRefresh => self.refresh_git(),
+            Command::CopyPath | Command::CopyRelativePath | Command::RevealInExplorer => {
+                let path = self
+                    .tabs
+                    .active_tab()
+                    .and_then(|tab| tab.doc.path().map(std::path::Path::to_path_buf));
+                match (path, command) {
+                    (None, _) => self.status = "The active tab is not a file on disk".into(),
+                    (Some(path), Command::CopyPath) => {
+                        self.egui_ctx.copy_text(path.display().to_string());
+                        self.status = "Copied the path".into();
+                    }
+                    (Some(path), Command::CopyRelativePath) => {
+                        let text = match self.repo_root() {
+                            Some(root) => file_ops::relative_display(&root, &path),
+                            None => path.display().to_string(),
+                        };
+                        self.egui_ctx.copy_text(text);
+                        self.status = "Copied the relative path".into();
+                    }
+                    (Some(path), _) => {
+                        if let Err(error) = file_ops::reveal(&path) {
+                            self.status = error;
+                        }
+                    }
+                }
+            }
             Command::ToggleBlame => {
                 self.blame_enabled = !self.blame_enabled;
                 self.status = if self.blame_enabled {
@@ -2440,6 +2466,19 @@ impl ForgeRoomApp {
                 self.rename = Some((path, name));
             }
             explorer::Action::Delete(path) => self.delete = Some(path),
+            explorer::Action::CopyRelative(path) => {
+                let text = match self.repo_root() {
+                    Some(root) => file_ops::relative_display(&root, &path),
+                    None => path.display().to_string(),
+                };
+                self.egui_ctx.copy_text(text);
+                self.status = "Copied the relative path".into();
+            }
+            explorer::Action::Reveal(path) => {
+                if let Err(error) = file_ops::reveal(&path) {
+                    self.status = error;
+                }
+            }
             explorer::Action::Refresh => {
                 if let Some(workspace) = self.workspace.as_mut() {
                     workspace.refresh();
