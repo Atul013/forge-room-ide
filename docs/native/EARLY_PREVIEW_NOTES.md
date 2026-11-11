@@ -36,10 +36,10 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 
 ## Missing
 
-- Run/Debug, Extensions, Output, Problems, Debug Console and Ports are placeholders.
+- Run/Debug, Extensions, Debug Console and Ports are placeholders (Problems lists cargo check output only).
 - AI features (model-backed chat, editor actions), LSP and DAP, extensions, a task runner.
-- Rebase, line history, minimap, bracket matching, multi-cursor and split editors.
-- File create/rename/delete in the explorer.
+- Rebase, line history, minimap, multi-cursor and split editors.
+- Keyboard control of the Explorer tree (rows are mouse-only; F2 and Delete do not work yet).
 - Realtime room transport, invitations, encryption and reconnect.
 - Theme/profile import, accessibility and high-DPI acceptance.
 - A signed release.

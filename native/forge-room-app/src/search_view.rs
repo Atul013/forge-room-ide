@@ -308,9 +308,14 @@ impl SearchView {
                 ui.add_space(14.0);
                 if self.confirming {
                     let text = if truncated {
-                        "Replace every match, including those not listed?".to_string()
+                        "Replace every match on disk, including those not listed? Files with \
+                         unsaved changes are skipped. Undo with Git."
+                            .to_string()
                     } else {
-                        format!("Replace {hits} results in {files} files?")
+                        format!(
+                            "Replace {hits} matches in {files} files on disk? Files with unsaved \
+                             changes are skipped. Undo with Git."
+                        )
                     };
                     ui.label(RichText::new(text).size(12.0).color(theme::text()));
                 } else if ui.button("Replace All").clicked() {

@@ -265,6 +265,8 @@ struct ForgeRoomApp {
     rename: Option<(PathBuf, String)>,
     /// The file or folder the user is being asked to move to the Recycle Bin.
     delete: Option<PathBuf>,
+    /// A question that waits for a yes: dropping a stash, ending a terminal.
+    confirm: Option<Confirm>,
     /// A move to the Recycle Bin running on a worker thread.
     recycling: background::Latest<Recycled>,
 }
@@ -378,6 +380,7 @@ impl ForgeRoomApp {
             new_folder_name: String::new(),
             rename: None,
             delete: None,
+            confirm: None,
             recycling: background::Latest::default(),
             find: find_bar::FindState::default(),
             pending_select: None,
@@ -1157,7 +1160,15 @@ impl ForgeRoomApp {
             self.spawn_terminal(true);
         }
         if close_terminal {
-            self.close_terminal();
+            let running = self
+                .terminals
+                .get(self.active_terminal)
+                .is_some_and(|t| !t.has_exited());
+            if running {
+                self.confirm = Some(Confirm::EndTerminal);
+            } else {
+                self.close_terminal();
+            }
         }
         if let Some(index) = switch_to {
             self.active_terminal = index;
@@ -1840,6 +1851,11 @@ impl ForgeRoomApp {
                     self.save_active(true);
                     ui.close();
                 }
+                let mut auto_save = self.auto_save;
+                if ui.checkbox(&mut auto_save, "Auto Save").clicked() {
+                    self.run_command(Command::ToggleAutoSave, false);
+                    ui.close();
+                }
                 ui.separator();
                 if ui
                     .add(egui::Button::new("Close Tab").shortcut_text("Ctrl+W"))
@@ -2451,6 +2467,10 @@ impl ForgeRoomApp {
             Some(Ok(status)) => (status.ahead, status.behind),
             _ => (0, 0),
         };
+        if matches!(action, Action::StashDrop) {
+            self.confirm = Some(Confirm::DropStash);
+            return;
+        }
         let outcome: Result<String, String> = match action {
             Action::None => return,
             Action::Refresh => {
@@ -2836,6 +2856,68 @@ impl ForgeRoomApp {
                     workspace.refresh();
                 }
                 self.refresh_git();
+            }
+        }
+        if let Some(question) = self.confirm.take() {
+            let (mut yes, mut no) = (false, false);
+            let (title, text, button) = match question {
+                Confirm::DropStash => {
+                    let latest = self
+                        .repo_root()
+                        .and_then(|root| git::stash_list(&root).into_iter().next())
+                        .map(|stash| stash.message)
+                        .unwrap_or_default();
+                    (
+                        "Drop stash",
+                        format!(
+                            "Drop the latest stash ({latest})? Its changes are removed from the \
+                             stash list; the status line shows the commit so it can be brought back \
+                             with git stash store."
+                        ),
+                        "Drop stash",
+                    )
+                }
+                Confirm::EndTerminal => (
+                    "End terminal",
+                    format!(
+                        "End terminal {}? A program still running in it (a dev server, a build, a \
+                         coding agent) is stopped.",
+                        self.active_terminal + 1
+                    ),
+                    "End terminal",
+                ),
+            };
+            egui::Window::new(title)
+                .collapsible(false)
+                .resizable(false)
+                .show(&self.egui_ctx, |ui| {
+                    ui.set_max_width(380.0);
+                    ui.label(text);
+                    ui.horizontal(|ui| {
+                        yes = ui.button(button).clicked();
+                        no = ui.button("Cancel").clicked();
+                    });
+                });
+            if ui_escape(&self.egui_ctx) {
+                no = true;
+            }
+            if yes {
+                match question {
+                    Confirm::DropStash => {
+                        if let Some(root) = self.repo_root() {
+                            self.status = match git::stash_drop(&root, 0) {
+                                Ok(text) => format!(
+                                    "{text}. To bring it back: git stash store <that commit>"
+                                ),
+                                Err(error) => format!("Git: {error}"),
+                            };
+                            self.refresh_git();
+                        }
+                    }
+                    Confirm::EndTerminal => self.close_terminal(),
+                }
+            } else if !no {
+                self.confirm = Some(question);
             }
         }
         if let Some(path) = self.delete.take() {
@@ -4311,7 +4393,13 @@ impl eframe::App for ForgeRoomApp {
             Some(palette::Outcome::DeleteTag(name)) => {
                 if let Some(root) = self.repo_root() {
                     self.status = match git::delete_tag(&root, &name) {
-                        Ok(text) => text,
+                        Ok(text) => match text.split("(was ").nth(1) {
+                            Some(rest) => format!(
+                                "{text}. To make it again: git tag {name} {}",
+                                rest.trim_end_matches(')')
+                            ),
+                            None => text,
+                        },
                         Err(error) => format!("Git: {error}"),
                     };
                     self.refresh_git();
@@ -4441,6 +4529,13 @@ fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
 }
 
 /// Display name of the language for a file name, judged from its extension.
+/// A question the user must answer before something that cannot be undone happens.
+#[derive(Clone, Copy)]
+enum Confirm {
+    DropStash,
+    EndTerminal,
+}
+
 /// What to tell the user after Replace All.
 fn replaced_status(done: &search::Replaced) -> String {
     if let Some(error) = &done.error {
