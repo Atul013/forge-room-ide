@@ -249,6 +249,8 @@ struct ForgeRoomApp {
     new_folder_name: String,
     /// The file or folder being renamed and the name typed so far.
     rename: Option<(PathBuf, String)>,
+    /// The file or folder the user is being asked to move to the Recycle Bin.
+    delete: Option<PathBuf>,
 }
 
 /// Unified-diff coloring: green additions, red removals, blue hunk headers, dim file headers.
@@ -352,6 +354,7 @@ impl ForgeRoomApp {
             new_folder_parent: None,
             new_folder_name: String::new(),
             rename: None,
+            delete: None,
             find: find_bar::FindState::default(),
             pending_select: None,
             pending_edit: None,
@@ -2360,11 +2363,71 @@ impl ForgeRoomApp {
                     .unwrap_or_default();
                 self.rename = Some((path, name));
             }
+            explorer::Action::Delete(path) => self.delete = Some(path),
             explorer::Action::Refresh => {
                 if let Some(workspace) = self.workspace.as_mut() {
                     workspace.refresh();
                 }
                 self.refresh_git();
+            }
+        }
+        if let Some(path) = self.delete.take() {
+            let (mut confirm, mut cancel) = (false, false);
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            egui::Window::new("Delete")
+                .collapsible(false)
+                .resizable(false)
+                .show(&self.egui_ctx, |ui| {
+                    ui.label(format!(
+                        "Move {} {name:?} to the Recycle Bin?",
+                        if path.is_dir() {
+                            "the folder"
+                        } else {
+                            "the file"
+                        }
+                    ));
+                    ui.label(
+                        egui::RichText::new("You can restore it from the Recycle Bin.")
+                            .color(theme::text_dim()),
+                    );
+                    ui.horizontal(|ui| {
+                        confirm = ui.button("Move to Recycle Bin").clicked();
+                        cancel = ui.button("Cancel").clicked();
+                    });
+                });
+            if ui_escape(&self.egui_ctx) {
+                cancel = true;
+            }
+            if confirm {
+                // The tabs hold canonical paths, and this one can only be made canonical while the
+                // file still exists.
+                let canonical = tabs::normalize(&path);
+                match file_ops::recycle(&path) {
+                    Ok(()) => {
+                        let closed = self.tabs.close_clean_under(&canonical);
+                        if let Some(workspace) = &mut self.workspace {
+                            workspace.refresh();
+                        }
+                        self.refresh_git();
+                        self.status = format!(
+                            "Moved {name} to the Recycle Bin{}",
+                            if closed > 0 {
+                                format!(
+                                    " and closed {closed} saved tab{}",
+                                    if closed == 1 { "" } else { "s" }
+                                )
+                            } else {
+                                String::new()
+                            }
+                        );
+                    }
+                    Err(message) => self.status = message,
+                }
+            } else if !cancel {
+                self.delete = Some(path);
             }
         }
         if let Some((path, mut name)) = self.rename.take() {

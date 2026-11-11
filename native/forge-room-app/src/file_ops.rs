@@ -68,6 +68,50 @@ pub fn rename(from: &Path, new_name: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// Move a file or folder to the Recycle Bin, so deleting it can be undone from Windows. Nothing is
+/// ever deleted for good: when the Recycle Bin cannot be used the call fails and the file stays. The
+/// path travels in an environment variable, never inside the command text, so no file name can
+/// change what the command does.
+pub fn recycle(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("That file no longer exists".into());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let method = if path.is_dir() {
+            "DeleteDirectory"
+        } else {
+            "DeleteFile"
+        };
+        let script = format!(
+            "Add-Type -AssemblyName Microsoft.VisualBasic; \
+             [Microsoft.VisualBasic.FileIO.FileSystem]::{method}($env:FORGE_RECYCLE, \
+             'OnlyErrorDialogs', 'SendToRecycleBin')"
+        );
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .env("FORGE_RECYCLE", path)
+            .creation_flags(0x0800_0000)
+            .output()
+            .map_err(|error| format!("Could not run PowerShell: {error}"))?;
+        if output.status.success() && !path.exists() {
+            Ok(())
+        } else {
+            let text = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(if text.is_empty() {
+                "Could not move it to the Recycle Bin".into()
+            } else {
+                text.lines().next().unwrap_or("").to_string()
+            })
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Moving to the Recycle Bin is only available on Windows".into())
+    }
+}
+
 /// Whether `target` is `from` under a name that differs only in case: the same folder and the
 /// same letters. Links are deliberately not followed (a link renamed onto the file it points at is
 /// a clash, not a case change).
@@ -146,6 +190,29 @@ mod tests {
             assert!(valid_name(bad).is_err(), "{bad:?} must be refused");
         }
         assert!(valid_name("a:b").unwrap_err().contains("':'"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn files_and_folders_go_to_the_recycle_bin_and_odd_names_are_safe() {
+        let dir = folder("recycle");
+        // A name with characters that would break a command line if it were pasted into one.
+        let file = dir.join("it's $(odd) `name` & more.txt");
+        fs::write(&file, "x").unwrap();
+        recycle(&file).unwrap();
+        assert!(!file.exists());
+
+        let sub = dir.join("sub folder");
+        fs::create_dir_all(sub.join("inner")).unwrap();
+        fs::write(sub.join("inner").join("a.txt"), "y").unwrap();
+        recycle(&sub).unwrap();
+        assert!(!sub.exists());
+
+        // Something that is not there is an error, and nothing else is touched.
+        fs::write(dir.join("keep.txt"), "k").unwrap();
+        assert!(recycle(&dir.join("missing.txt")).is_err());
+        assert!(dir.join("keep.txt").exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -95,6 +95,28 @@ impl Tabs {
         }
     }
 
+    /// Close the tabs of a deleted file (or of files inside a deleted folder) that have no unsaved
+    /// changes, and return how many. A tab with unsaved work stays open: saving it writes the file
+    /// again, which is the user's choice to make. `path` must be the canonical form taken before the
+    /// deletion, while it still existed.
+    pub fn close_clean_under(&mut self, path: &Path) -> usize {
+        let mut closed = 0;
+        let mut index = 0;
+        while index < self.tabs.len() {
+            let inside = self.tabs[index]
+                .doc
+                .path()
+                .is_some_and(|tab_path| tab_path.starts_with(path));
+            if inside && !self.tabs[index].doc.is_dirty() {
+                self.close(index);
+                closed += 1;
+            } else {
+                index += 1;
+            }
+        }
+        closed
+    }
+
     pub fn any_dirty(&self) -> bool {
         self.tabs.iter().any(|tab| tab.doc.is_dirty())
     }
@@ -380,6 +402,36 @@ mod tests {
             Recovered::InFile
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_folder_closes_its_saved_tabs_and_keeps_unsaved_ones() {
+        let dir = std::env::temp_dir().join(format!("forge-del-{}", std::process::id()));
+        fs::create_dir_all(dir.join("gone")).unwrap();
+        let (saved, unsaved, outside) = (
+            dir.join("gone").join("saved.txt"),
+            dir.join("gone").join("unsaved.txt"),
+            dir.join("outside.txt"),
+        );
+        for path in [&saved, &unsaved, &outside] {
+            fs::write(path, "text").unwrap();
+        }
+        let mut tabs = Tabs::default();
+        for path in [&saved, &unsaved, &outside] {
+            tabs.open_file(path).unwrap();
+        }
+        tabs.tabs[1].doc.text_mut().push('x');
+        let canonical = normalize(&dir.join("gone"));
+        assert_eq!(tabs.close_clean_under(&canonical), 1);
+        let names: Vec<String> = tabs.tabs.iter().map(|tab| tab.title()).collect();
+        assert_eq!(
+            names,
+            vec!["unsaved.txt".to_string(), "outside.txt".to_string()]
+        );
+        assert!(tabs.active < tabs.tabs.len());
+        // A sibling that merely shares the start of the name is not inside.
+        assert_eq!(tabs.close_clean_under(&normalize(&dir.join("out"))), 0);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
