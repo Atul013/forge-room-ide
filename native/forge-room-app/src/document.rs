@@ -71,6 +71,8 @@ pub enum LineEnding {
     #[default]
     Lf,
     CrLf,
+    /// CR and LF used inconsistently (or a stray CR): the text is kept exactly as it is on disk.
+    Mixed,
 }
 
 impl LineEnding {
@@ -78,6 +80,7 @@ impl LineEnding {
         match self {
             Self::Lf => "LF",
             Self::CrLf => "CRLF",
+            Self::Mixed => "Mixed",
         }
     }
 }
@@ -104,15 +107,20 @@ fn decode(bytes: &[u8]) -> io::Result<(String, Encoding, LineEnding)> {
             Encoding::Utf8,
         )
     };
-    let crlf = raw.matches("\r\n").count();
-    let lf = raw.matches('\n').count();
-    // CRLF wins only when most line breaks are CRLF; a tie stays LF.
-    let ending = if crlf > lf - crlf {
-        LineEnding::CrLf
+    let (crlf, lf, cr) = (
+        raw.matches("\r\n").count(),
+        raw.matches('\n').count(),
+        raw.matches('\r').count(),
+    );
+    // Only files that are purely one style are normalised. Anything else (mixed breaks, a stray
+    // CR, `\r\r\n`) is kept byte for byte, so saving can never alter a line the user did not edit.
+    Ok(if cr == 0 {
+        (raw, encoding, LineEnding::Lf)
+    } else if cr == crlf && lf == crlf {
+        (raw.replace("\r\n", "\n"), encoding, LineEnding::CrLf)
     } else {
-        LineEnding::Lf
-    };
-    Ok((raw.replace("\r\n", "\n"), encoding, ending))
+        (raw, encoding, LineEnding::Mixed)
+    })
 }
 
 fn utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> io::Result<String> {
@@ -126,10 +134,9 @@ fn utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> io::Result<String> {
 
 /// The bytes to write for `text` in the file's own encoding and line ending.
 fn encode(text: &str, encoding: Encoding, ending: LineEnding) -> Vec<u8> {
-    let unified = text.replace("\r\n", "\n");
     let text = match ending {
-        LineEnding::Lf => unified,
-        LineEnding::CrLf => unified.replace('\n', "\r\n"),
+        LineEnding::Lf | LineEnding::Mixed => text.to_string(),
+        LineEnding::CrLf => text.replace("\r\n", "\n").replace('\n', "\r\n"),
     };
     match encoding {
         Encoding::Utf8 => text.into_bytes(),
@@ -191,8 +198,8 @@ impl DocumentSession {
     }
 
     /// The file's current text as this session would read it, or why it cannot be read.
-    fn read_disk(path: &Path) -> io::Result<String> {
-        decode(&fs::read(path)?).map(|(text, _, _)| text)
+    fn read_disk(path: &Path) -> io::Result<(String, Encoding)> {
+        decode(&fs::read(path)?).map(|(text, encoding, _)| (text, encoding))
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -252,7 +259,7 @@ impl DocumentSession {
             return false;
         }
         match Self::read_disk(path) {
-            Ok(text) if text == self.saved_text => {
+            Ok((text, encoding)) if text == self.saved_text && encoding == self.encoding => {
                 self.disk_stamp = Some(current);
                 false
             }
@@ -267,7 +274,7 @@ impl DocumentSession {
             return Ok(false);
         };
         match Self::read_disk(path) {
-            Ok(text) => Ok(text != self.saved_text),
+            Ok((text, encoding)) => Ok(text != self.saved_text || encoding != self.encoding),
             // Gone: saving recreates it. Not UTF-8 is a change. Any other failure (for example a
             // file another program holds open without read sharing) means the current bytes
             // cannot be inspected, which is no evidence that they are unchanged.
@@ -350,12 +357,52 @@ mod tests {
     }
 
     #[test]
-    fn a_mostly_lf_file_with_one_crlf_stays_lf() {
-        let (text, _, ending) = decode(b"a\nb\r\nc\nd\n").unwrap();
-        assert_eq!(ending, LineEnding::Lf);
-        assert_eq!(text, "a\nb\nc\nd\n");
+    fn only_purely_lf_or_purely_crlf_files_are_normalised() {
+        assert_eq!(decode(b"a\nb\n").unwrap().2, LineEnding::Lf);
+        assert_eq!(decode(b"a\r\nb\r\n").unwrap().2, LineEnding::CrLf);
         assert_eq!(decode(b"no newline").unwrap().2, LineEnding::Lf);
         assert_eq!(decode(b"").unwrap().0, "");
+        // Mixed, lone CR and `\r\r\n` are kept exactly as written.
+        for raw in [
+            &b"a\nb\r\nc\n"[..],
+            b"a\r\nb\nc\r\n",
+            b"x\r\r\n",
+            b"old\rmac\r",
+        ] {
+            let (text, _, ending) = decode(raw).unwrap();
+            assert_eq!(ending, LineEnding::Mixed, "{raw:?}");
+            assert_eq!(text.as_bytes(), raw);
+            assert_eq!(encode(&text, Encoding::Utf8, ending), raw, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn mixed_files_save_back_byte_for_byte() {
+        let path = test_path();
+        let raw = b"a\nb\r\nc\r\r\nd".to_vec();
+        fs::write(&path, &raw).unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&path).unwrap();
+        assert_eq!(document.line_ending(), LineEnding::Mixed);
+        document.text_mut().push('!');
+        document.save().unwrap();
+        let mut expected = raw;
+        expected.push(b'!');
+        assert_eq!(fs::read(&path).unwrap(), expected);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn a_rewrite_in_another_encoding_counts_as_an_outside_change() {
+        let path = test_path();
+        fs::write(&path, "same\n").unwrap();
+        let mut document = DocumentSession::default();
+        document.open(&path).unwrap();
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend("same\n".encode_utf16().flat_map(u16::to_le_bytes));
+        fs::write(&path, utf16).unwrap();
+        assert!(document.changed_on_disk());
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
