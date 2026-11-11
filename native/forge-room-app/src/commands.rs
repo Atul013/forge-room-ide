@@ -38,6 +38,7 @@ pub enum Command {
     GoToLine,
     QuickOpen,
     GitRefresh,
+    ToggleAutoSave,
     CopyPath,
     CopyRelativePath,
     RevealInExplorer,
@@ -144,6 +145,7 @@ pub const ALL: &[(Command, &str, &str)] = &[
     (Command::ToggleTerminal, "View: Toggle Terminal", "Ctrl+`"),
     (Command::ColorTheme, "Preferences: Color Theme", ""),
     (Command::GitRefresh, "Git: Refresh", ""),
+    (Command::ToggleAutoSave, "File: Toggle Auto Save", ""),
     (Command::CopyPath, "File: Copy Path of Active File", ""),
     (
         Command::CopyRelativePath,

@@ -14,6 +14,9 @@ pub struct Settings {
     /// Size of the editor text relative to the default (1.0). Missing or odd values mean 1.0.
     #[serde(default)]
     pub editor_scale: Option<f32>,
+    /// Save file tabs automatically once their text stops changing.
+    #[serde(default)]
+    pub auto_save: Option<bool>,
 }
 
 /// Smallest and largest editor text scale.

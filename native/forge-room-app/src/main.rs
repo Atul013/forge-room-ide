@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai_panel;
+mod autosave;
 mod background;
 mod brand;
 mod commands;
@@ -209,6 +210,9 @@ struct ForgeRoomApp {
     stash_count: usize,
     /// Editor text size relative to the default, kept in the settings.
     editor_scale: f32,
+    /// Save file tabs automatically once their text rests.
+    auto_save: bool,
+    auto_saves: autosave::Tracker,
     /// Unsaved text kept on disk so a crash does not lose it.
     recovery: recovery::Store,
     last_recovery: std::time::Instant,
@@ -327,6 +331,8 @@ impl ForgeRoomApp {
             history_name: None,
             stash_count: 0,
             editor_scale: settings::clean_scale(settings::load().editor_scale),
+            auto_save: settings::load().auto_save.unwrap_or(false),
+            auto_saves: autosave::Tracker::default(),
             recovery: recovery::Store::default_location(),
             last_recovery: std::time::Instant::now(),
             recovery_written: std::collections::HashMap::new(),
@@ -403,6 +409,47 @@ impl ForgeRoomApp {
         }
         self.last_recovery = std::time::Instant::now() - std::time::Duration::from_secs(10);
         self.autosave_recovery();
+    }
+
+    /// With Auto Save on, save the file tabs whose text has rested. Tabs without a file are never
+    /// saved here (that would need a dialog), and a file that changed on disk is left alone: the
+    /// user decides with the usual conflict prompt when saving by hand.
+    fn auto_save_tabs(&mut self) {
+        if !self.auto_save || self.pending.is_some() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let mut live = Vec::new();
+        let mut saved = None;
+        let mut failed = None;
+        for tab in &mut self.tabs.tabs {
+            if tab.readonly || !tab.doc.is_dirty() || tab.doc.path().is_none() {
+                continue;
+            }
+            live.push(tab.id);
+            let hash = recovery::text_hash(tab.doc.text());
+            if !self.auto_saves.due(tab.id, hash, now) {
+                continue;
+            }
+            match tab.doc.save() {
+                Ok(()) => saved = Some(tab.title()),
+                Err(error) => {
+                    self.auto_saves.failed(tab.id);
+                    failed = Some(format!("Auto Save skipped {}: {error}", tab.title()));
+                }
+            }
+        }
+        self.auto_saves.keep_only(&live);
+        if !live.is_empty() {
+            // Nothing else may wake the window while the user is not typing.
+            self.egui_ctx.request_repaint_after(autosave::DELAY / 2);
+        }
+        if let Some(message) = failed {
+            self.status = message;
+        } else if let Some(title) = saved {
+            self.status = format!("Auto-saved {title}");
+            self.refresh_git();
+        }
     }
 
     /// Every few seconds write the text of tabs with unsaved changes to the recovery folder, and
@@ -711,6 +758,16 @@ impl ForgeRoomApp {
             }
             Command::ColorTheme => self.gallery.open(),
             Command::GitRefresh => self.refresh_git(),
+            Command::ToggleAutoSave => {
+                self.auto_save = !self.auto_save;
+                let on = self.auto_save;
+                let _ = settings::update(|settings| settings.auto_save = on.then_some(true));
+                self.status = if on {
+                    "Auto Save on: files are saved when you stop typing".into()
+                } else {
+                    "Auto Save off".into()
+                };
+            }
             Command::CopyPath | Command::CopyRelativePath | Command::RevealInExplorer => {
                 let path = self
                     .tabs
@@ -3746,6 +3803,7 @@ impl eframe::App for ForgeRoomApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
+        self.auto_save_tabs();
         self.autosave_recovery();
         if context.input(|input| input.viewport().close_requested())
             && self.tabs.any_dirty()
