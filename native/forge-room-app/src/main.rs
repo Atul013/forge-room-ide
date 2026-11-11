@@ -617,6 +617,8 @@ impl ForgeRoomApp {
                 }
             }
             Command::SelectNextOccurrence
+            | Command::GoToMatchingBracket
+            | Command::SelectToMatchingBracket
             | Command::TransformUppercase
             | Command::TransformLowercase
             | Command::SortLinesAscending
@@ -627,6 +629,8 @@ impl ForgeRoomApp {
                 use transforms::Kind;
                 self.pending_edit = Some(match command {
                     Command::SelectNextOccurrence => Kind::SelectNextOccurrence,
+                    Command::GoToMatchingBracket => Kind::GoToMatchingBracket,
+                    Command::SelectToMatchingBracket => Kind::SelectToMatchingBracket,
                     Command::TransformUppercase => Kind::Uppercase,
                     Command::TransformLowercase => Kind::Lowercase,
                     Command::SortLinesAscending => Kind::SortAscending,

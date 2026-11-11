@@ -14,6 +14,8 @@ pub enum Command {
     ZoomOut,
     ZoomReset,
     SelectNextOccurrence,
+    GoToMatchingBracket,
+    SelectToMatchingBracket,
     TransformUppercase,
     TransformLowercase,
     SortLinesAscending,
@@ -74,6 +76,16 @@ pub const ALL: &[(Command, &str, &str)] = &[
         "Ctrl+-",
     ),
     (Command::ZoomReset, "View: Reset Editor Font Size", "Ctrl+0"),
+    (
+        Command::GoToMatchingBracket,
+        "Selection: Go to Matching Bracket",
+        "Ctrl+Shift+\\",
+    ),
+    (
+        Command::SelectToMatchingBracket,
+        "Selection: Select to Matching Bracket",
+        "",
+    ),
     (
         Command::SelectNextOccurrence,
         "Selection: Select Next Occurrence",

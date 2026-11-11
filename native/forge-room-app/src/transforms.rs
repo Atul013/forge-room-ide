@@ -16,6 +16,60 @@ pub enum Kind {
     TrimTrailingWhitespace,
     JoinLines,
     SelectNextOccurrence,
+    /// Move the caret to the bracket that pairs with the one at or before it.
+    GoToMatchingBracket,
+    /// Select from the caret's bracket to its partner, both included.
+    SelectToMatchingBracket,
+}
+
+/// The bracket pair that `at` (a byte index) touches and where its partner is: the bracket under the
+/// caret first, then the one just before it. Only the same kind of bracket is counted, so the
+/// `)` in `(a]` does not end the `(`; brackets inside strings and comments are counted like any
+/// other, because that needs a real parser. Returns the two bracket positions in text order.
+pub fn matching_bracket(text: &str, at: usize) -> Option<(usize, usize)> {
+    let at = editing::boundary(text, at);
+    let bracket_at = |index: usize| -> Option<(usize, char)> {
+        let c = text[index..].chars().next()?;
+        "()[]{}".contains(c).then_some((index, c))
+    };
+    let before = text[..at]
+        .char_indices()
+        .next_back()
+        .and_then(|(index, _)| bracket_at(index));
+    let (index, c) = bracket_at(at).or(before)?;
+    let (open, close, forward) = match c {
+        '(' => ('(', ')', true),
+        '[' => ('[', ']', true),
+        '{' => ('{', '}', true),
+        ')' => ('(', ')', false),
+        ']' => ('[', ']', false),
+        _ => ('{', '}', false),
+    };
+    let mut depth = 0usize;
+    if forward {
+        for (offset, ch) in text[index..].char_indices() {
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((index, index + offset));
+                }
+            }
+        }
+    } else {
+        for (offset, ch) in text[..index + 1].char_indices().rev() {
+            if ch == close {
+                depth += 1;
+            } else if ch == open {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((offset, index));
+                }
+            }
+        }
+    }
+    None
 }
 
 /// The first and last byte of the lines the selection touches (the end is before that line's
@@ -65,6 +119,21 @@ fn lines_with_breaks(text: &str) -> Vec<(&str, &str)> {
         .collect()
 }
 
+/// The index of the bracket the caret at `at` touches (under it, else just before it).
+fn bracket_touched(text: &str, at: usize) -> Option<usize> {
+    let is_bracket = |index: usize| {
+        text[index..]
+            .chars()
+            .next()
+            .is_some_and(|c| "()[]{}".contains(c))
+    };
+    if at < text.len() && is_bracket(at) {
+        return Some(at);
+    }
+    let (index, _) = text[..at].char_indices().next_back()?;
+    is_bracket(index).then_some(index)
+}
+
 /// Replace `first..last` and select the replacement.
 fn replace_selecting(first: usize, last: usize, replacement: String) -> Edit {
     let end = first + replacement.len();
@@ -85,6 +154,28 @@ pub fn apply(kind: Kind, text: &str, start: usize, end: usize) -> Option<Edit> {
     let (start, end) = (editing::boundary(text, start), editing::boundary(text, end));
     let (start, end) = (start.min(end), start.max(end));
     match kind {
+        Kind::GoToMatchingBracket | Kind::SelectToMatchingBracket => {
+            let (first, last) = matching_bracket(text, end)?;
+            // The caret sits at `end`: the partner is the other one of the two.
+            let touched = if bracket_touched(text, end) == Some(first) {
+                first
+            } else {
+                last
+            };
+            let partner = if touched == first { last } else { first };
+            let selection = if kind == Kind::SelectToMatchingBracket {
+                (first, last + 1)
+            } else if partner == first {
+                (partner, partner)
+            } else {
+                (partner + 1, partner + 1)
+            };
+            Some(Edit {
+                replace: end..end,
+                replacement: String::new(),
+                selection,
+            })
+        }
         Kind::Uppercase | Kind::Lowercase => {
             if start == end {
                 return None;
@@ -251,6 +342,44 @@ mod tests {
             result.replace_range(edit.replace.clone(), &edit.replacement);
             (result, edit.selection)
         })
+    }
+
+    #[test]
+    fn a_bracket_finds_its_partner_across_nesting_lines_and_other_kinds() {
+        let text = "f(a[0], {x: (1)})\nend";
+        // The caret before the first parenthesis, and just after the last one.
+        assert_eq!(matching_bracket(text, 1), Some((1, 16)));
+        assert_eq!(matching_bracket(text, 17), Some((1, 16)));
+        // Inner pairs are not confused with the outer ones.
+        assert_eq!(matching_bracket(text, 4), Some((3, 5)));
+        assert_eq!(matching_bracket(text, 14), Some((12, 14)));
+        // A different kind of bracket in between does not count.
+        assert_eq!(matching_bracket("(a]", 0), None);
+        assert_eq!(matching_bracket("(((", 0), None);
+        assert_eq!(matching_bracket("a b", 1), None);
+        // Across lines, and with multi-byte text in between.
+        assert_eq!(matching_bracket("{\n\u{e9}\n}", 0), Some((0, 5)));
+        assert_eq!(matching_bracket("{\n\u{e9}\n}", 6), Some((0, 5)));
+    }
+
+    #[test]
+    fn go_to_and_select_to_a_bracket_move_only_the_selection() {
+        let text = "f(ab) g";
+        // From before the opening bracket: the caret lands after the closing one.
+        assert_eq!(
+            go(Kind::GoToMatchingBracket, text, 1, 1),
+            Some((text.into(), (5, 5)))
+        );
+        // From after the closing bracket: back to before the opening one.
+        assert_eq!(
+            go(Kind::GoToMatchingBracket, text, 5, 5),
+            Some((text.into(), (1, 1)))
+        );
+        assert_eq!(
+            go(Kind::SelectToMatchingBracket, text, 1, 1),
+            Some((text.into(), (1, 5)))
+        );
+        assert_eq!(go(Kind::GoToMatchingBracket, text, 6, 6), None);
     }
 
     #[test]
