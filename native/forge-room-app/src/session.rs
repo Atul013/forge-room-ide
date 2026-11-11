@@ -19,7 +19,14 @@ pub struct Session {
     /// Index into `files` of the tab that was in front.
     #[serde(default)]
     pub active: Option<usize>,
+    /// How many terminals were open. Their programs cannot come back, but the same number of fresh
+    /// shells does, in the same folder.
+    #[serde(default)]
+    pub terminals: usize,
 }
+
+/// At most this many terminals are reopened.
+pub const MAX_TERMINALS: usize = 6;
 
 impl Session {
     /// The session without folders and files that no longer exist, and with `active` pointing at
@@ -38,6 +45,7 @@ impl Session {
             folder,
             files,
             active,
+            terminals: self.terminals.min(MAX_TERMINALS),
         }
     }
 }
@@ -87,6 +95,7 @@ mod tests {
             folder: Some(dir.display().to_string()),
             files: vec![gone.clone(), a.clone(), b.clone(), a.clone()],
             active: Some(2),
+            terminals: 99,
         };
         let file = dir.join("session.json");
         save_to(&file, &session).unwrap();
@@ -96,11 +105,13 @@ mod tests {
         let cleaned = loaded.clean();
         assert_eq!(cleaned.files, vec![a.clone(), b.clone()]);
         assert_eq!(cleaned.active, Some(1));
+        assert_eq!(cleaned.terminals, MAX_TERMINALS);
         // An active file that is gone leaves nothing active; a gone folder is dropped.
         let cleaned = Session {
             folder: Some(dir.join("nope").display().to_string()),
             files: vec![gone, a],
             active: Some(0),
+            terminals: 0,
         }
         .clean();
         assert_eq!((cleaned.folder, cleaned.active), (None, None));

@@ -446,6 +446,15 @@ impl ForgeRoomApp {
             self.open_path(PathBuf::from(file));
         }
         self.focus_editor = !session.files.is_empty();
+        // Fresh shells in place of the ones that were open.
+        for _ in 0..session.terminals {
+            self.spawn_terminal(true);
+        }
+        if session.terminals > 0 {
+            self.show_terminal = true;
+            self.terminal_focus_request = false;
+            self.active_terminal = 0;
+        }
         self.session_saved = self.current_session();
     }
 
@@ -465,6 +474,7 @@ impl ForgeRoomApp {
             }
         }
         session::Session {
+            terminals: self.terminals.len().min(session::MAX_TERMINALS),
             folder: self
                 .workspace
                 .as_ref()
@@ -1043,6 +1053,15 @@ impl ForgeRoomApp {
                 self.bottom_tab = BottomTab::Problems;
                 self.start_check();
             }
+            Command::CopyTerminalOutput => match self.terminals.get(self.active_terminal) {
+                Some(terminal) => {
+                    let text = terminal.all_text();
+                    let lines = text.lines().count();
+                    self.egui_ctx.copy_text(text);
+                    self.status = format!("Copied the whole terminal output ({lines} lines)");
+                }
+                None => self.status = "There is no terminal".into(),
+            },
             Command::NewTerminal => {
                 self.show_terminal = true;
                 self.bottom_tab = BottomTab::Terminal;
@@ -1488,7 +1507,7 @@ impl ForgeRoomApp {
                 ui.horizontal(|ui| {
                     ui.label("Current terminal screen");
                     if ui.button("Copy output").clicked() {
-                        ui.ctx().copy_text(text.clone());
+                        ui.ctx().copy_text(terminal.all_text());
                     }
                 });
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -4429,6 +4448,9 @@ impl eframe::App for ForgeRoomApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
+        for terminal in &self.terminals {
+            terminal.set_hidden();
+        }
         self.auto_save_tabs();
         self.poll_check();
         self.save_session(false);

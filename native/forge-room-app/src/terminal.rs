@@ -23,6 +23,9 @@ pub struct Terminal {
     snapshot: Option<String>,
     wheel_rows: f32,
     pub shell: String,
+    /// Whether this terminal was drawn this frame. A terminal nobody looks at does not need the
+    /// window redrawn for every chunk of its output.
+    visible: Arc<AtomicBool>,
     /// A file reference Ctrl+clicked in the output, waiting for the app to open it.
     link: Option<crate::path_links::PathRef>,
 }
@@ -82,9 +85,11 @@ impl Terminal {
             })?));
         let parser = Arc::new(Mutex::new(vt100::Parser::new(size.rows, size.cols, 6000)));
         let exited = Arc::new(AtomicBool::new(false));
+        let visible = Arc::new(AtomicBool::new(true));
         {
             let parser = parser.clone();
             let exited = exited.clone();
+            let visible = visible.clone();
             let writer = writer.clone();
             let context = context.clone();
             std::thread::spawn(move || {
@@ -107,7 +112,14 @@ impl Terminal {
                                 }
                             }
                             drop(parser);
-                            context.request_repaint();
+                            if visible.load(Ordering::Relaxed) {
+                                context.request_repaint();
+                            } else {
+                                // Hidden: a slow refresh is enough, and many terminals streaming
+                                // at once no longer redraw the whole window for every chunk.
+                                context
+                                    .request_repaint_after(std::time::Duration::from_millis(500));
+                            }
                         }
                     }
                 }
@@ -116,6 +128,7 @@ impl Terminal {
             });
         }
         Ok(Self {
+            visible,
             parser,
             writer,
             master: pair.master,
@@ -175,6 +188,19 @@ impl Terminal {
         self.snapshot.clone().or_else(|| self.live_selected_text())
     }
 
+    /// Forget that this terminal was drawn; [`Terminal::show`] marks it again.
+    pub fn set_hidden(&self) {
+        self.visible.store(false, Ordering::Relaxed);
+    }
+
+    /// Everything the terminal still remembers, from the oldest scrollback line to the screen, for
+    /// copying more than fits on one screen.
+    pub fn all_text(&self) -> String {
+        let mut parser = self.parser.lock().unwrap();
+        let (rows, cols) = (self.size.0, self.size.1);
+        all_text_of(&mut parser, rows, cols)
+    }
+
     /// The text currently on the screen, for noticing a dev server's address.
     pub fn screen_text(&self) -> String {
         self.parser.lock().unwrap().screen().contents()
@@ -226,6 +252,7 @@ impl Terminal {
 
     /// Draw the grid and forward keyboard input. Returns true while the terminal has focus.
     pub fn show(&mut self, ui: &mut egui::Ui, request_focus: bool) -> bool {
+        self.visible.store(true, Ordering::Relaxed);
         let font = egui::FontId::monospace(13.5);
         let (cell_height, cell_width) =
             ui.fonts_mut(|fonts| (fonts.row_height(&font), fonts.glyph_width(&font, 'M')));
@@ -654,6 +681,37 @@ pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
     }
 }
 
+/// The scrollback and the screen of `parser` as plain text, one line per row with trailing blanks
+/// and trailing empty lines removed. The view is put back where it was.
+fn all_text_of(parser: &mut vt100::Parser, rows: u16, cols: u16) -> String {
+    let rows = usize::from(rows).max(1);
+    let saved = parser.screen().scrollback();
+    parser.screen_mut().set_scrollback(usize::MAX);
+    let total = parser.screen().scrollback();
+    let mut lines: Vec<String> = Vec::new();
+    // At scrollback `offset` the screen shows lines `total - offset ..` of the whole history.
+    let mut offset = total;
+    let mut next_line: usize = 0;
+    loop {
+        parser.screen_mut().set_scrollback(offset);
+        let first = total - offset;
+        let skip = next_line.saturating_sub(first);
+        let chunk: Vec<String> = parser.screen().rows(0, cols).collect();
+        lines.extend(chunk.into_iter().skip(skip));
+        next_line = first + rows;
+        if offset == 0 {
+            break;
+        }
+        offset = offset.saturating_sub(rows);
+    }
+    parser.screen_mut().set_scrollback(saved);
+    let mut text: Vec<&str> = lines.iter().map(|line| line.trim_end()).collect();
+    while text.last().is_some_and(|line| line.is_empty()) {
+        text.pop();
+    }
+    text.join("\n")
+}
+
 /// Standard xterm colors; the first sixteen are softened to sit well on a dark or light editor.
 fn indexed(index: u8, dark: bool) -> Color32 {
     const BASE: [(u8, u8, u8); 16] = [
@@ -820,6 +878,29 @@ mod tests {
         assert_eq!(indexed(231, true), Color32::from_rgb(255, 255, 255));
         assert_eq!(indexed(232, true), Color32::from_rgb(8, 8, 8));
         assert_eq!(indexed(255, true), Color32::from_rgb(238, 238, 238));
+    }
+
+    #[test]
+    fn the_whole_history_is_copied_in_order_without_gaps_or_repeats() {
+        let mut parser = vt100::Parser::new(5, 20, 100);
+        for number in 1..=23 {
+            parser.process(format!("line {number}\r\n").as_bytes());
+        }
+        parser.process(b"last");
+        // Scroll the view away from the bottom: copying must not depend on, or disturb, it.
+        parser.screen_mut().set_scrollback(3);
+        let text = all_text_of(&mut parser, 5, 20);
+        let expected: Vec<String> = (1..=23)
+            .map(|number| format!("line {number}"))
+            .chain(std::iter::once("last".to_string()))
+            .collect();
+        assert_eq!(text, expected.join("\n"));
+        assert_eq!(parser.screen().scrollback(), 3);
+        // Less than a screen of text, and an empty terminal.
+        let mut small = vt100::Parser::new(5, 20, 100);
+        small.process(b"a\r\nb");
+        assert_eq!(all_text_of(&mut small, 5, 20), "a\nb");
+        assert_eq!(all_text_of(&mut vt100::Parser::new(5, 20, 100), 5, 20), "");
     }
 
     /// Needs a console session (ConPTY), so it is run by hand: `cargo test -- --ignored`.

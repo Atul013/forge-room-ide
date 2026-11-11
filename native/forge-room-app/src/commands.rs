@@ -59,6 +59,7 @@ pub enum Command {
     CheckProject,
     TrustFolder,
     NewTerminal,
+    CopyTerminalOutput,
 }
 
 /// (command, title shown in the palette, shortcut hint)
@@ -152,6 +153,7 @@ pub const ALL: &[(Command, &str, &str)] = &[
         "",
     ),
     (Command::TrustFolder, "Folder: Trust This Folder", ""),
+    (Command::CopyTerminalOutput, "Terminal: Copy All Output", ""),
     (
         Command::NewTerminal,
         "Terminal: New Terminal",
