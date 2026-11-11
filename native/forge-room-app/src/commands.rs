@@ -10,6 +10,9 @@ pub enum Command {
     CloseTab,
     ReopenClosedTab,
     GoToSymbol,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
     SelectNextOccurrence,
     TransformUppercase,
     TransformLowercase,
@@ -61,6 +64,13 @@ pub const ALL: &[(Command, &str, &str)] = &[
     ),
     (Command::CloseSavedTabs, "View: Close Saved Tabs", ""),
     (Command::GoToSymbol, "Go to Symbol in File…", "Ctrl+Shift+Y"),
+    (Command::ZoomIn, "View: Increase Editor Font Size", "Ctrl+="),
+    (
+        Command::ZoomOut,
+        "View: Decrease Editor Font Size",
+        "Ctrl+-",
+    ),
+    (Command::ZoomReset, "View: Reset Editor Font Size", "Ctrl+0"),
     (
         Command::SelectNextOccurrence,
         "Selection: Select Next Occurrence",

@@ -11,6 +11,28 @@ pub struct Settings {
     /// Folders opened most recently, newest first.
     #[serde(default)]
     pub recent_folders: Vec<String>,
+    /// Size of the editor text relative to the default (1.0). Missing or odd values mean 1.0.
+    #[serde(default)]
+    pub editor_scale: Option<f32>,
+}
+
+/// Smallest and largest editor text scale.
+pub const MIN_SCALE: f32 = 0.6;
+pub const MAX_SCALE: f32 = 2.5;
+
+/// A scale from a settings file: anything that is not a sane number falls back to 1.0.
+pub fn clean_scale(value: Option<f32>) -> f32 {
+    match value {
+        Some(scale) if scale.is_finite() => scale.clamp(MIN_SCALE, MAX_SCALE),
+        _ => 1.0,
+    }
+}
+
+/// The scale one step (`delta`, in tenths of the default size) from `current`, rounded to a tenth
+/// and kept inside the allowed range.
+pub fn step_scale(current: f32, delta: i32) -> f32 {
+    let tenths = (current * 10.0).round() as i32 + delta;
+    (tenths as f32 / 10.0).clamp(MIN_SCALE, MAX_SCALE)
 }
 
 /// How many recent folders are kept.
@@ -89,6 +111,31 @@ mod tests {
         assert!(text.contains("ink-ember"));
         // Settings written before recent folders existed still load.
         assert!(empty.recent_folders.is_empty());
+    }
+
+    #[test]
+    fn the_editor_scale_steps_by_tenths_inside_its_limits() {
+        assert_eq!(step_scale(1.0, 1), 1.1);
+        assert_eq!(step_scale(1.0, -1), 0.9);
+        assert_eq!(step_scale(1.0, 3), 1.3);
+        // Rounding: repeated float steps never drift.
+        let mut scale = 1.0;
+        for _ in 0..7 {
+            scale = step_scale(scale, 1);
+        }
+        assert_eq!(scale, 1.7);
+        // The ends hold.
+        assert_eq!(step_scale(MAX_SCALE, 1), MAX_SCALE);
+        assert_eq!(step_scale(MIN_SCALE, -1), MIN_SCALE);
+        // A settings file may hold anything.
+        assert_eq!(clean_scale(None), 1.0);
+        assert_eq!(clean_scale(Some(f32::NAN)), 1.0);
+        assert_eq!(clean_scale(Some(f32::INFINITY)), 1.0);
+        assert_eq!(clean_scale(Some(99.0)), MAX_SCALE);
+        assert_eq!(clean_scale(Some(-3.0)), MIN_SCALE);
+        assert_eq!(clean_scale(Some(1.4)), 1.4);
+        let parsed: Settings = serde_json::from_str(r#"{"editor_scale":1.5}"#).unwrap();
+        assert_eq!(parsed.editor_scale, Some(1.5));
     }
 
     #[test]

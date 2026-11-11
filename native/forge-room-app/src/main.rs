@@ -207,6 +207,8 @@ struct ForgeRoomApp {
     file_history: Vec<git::CommitInfo>,
     history_name: Option<String>,
     stash_count: usize,
+    /// Editor text size relative to the default, kept in the settings.
+    editor_scale: f32,
     /// Unsaved text kept on disk so a crash does not lose it.
     recovery: recovery::Store,
     last_recovery: std::time::Instant,
@@ -320,6 +322,7 @@ impl ForgeRoomApp {
             file_history: Vec::new(),
             history_name: None,
             stash_count: 0,
+            editor_scale: settings::clean_scale(settings::load().editor_scale),
             recovery: recovery::Store::default_location(),
             last_recovery: std::time::Instant::now(),
             recovery_written: std::collections::HashMap::new(),
@@ -627,6 +630,19 @@ impl ForgeRoomApp {
                     _ => Kind::JoinLines,
                 });
                 self.focus_editor = true;
+            }
+            Command::ZoomIn | Command::ZoomOut | Command::ZoomReset => {
+                let scale = match command {
+                    Command::ZoomIn => settings::step_scale(self.editor_scale, 1),
+                    Command::ZoomOut => settings::step_scale(self.editor_scale, -1),
+                    _ => 1.0,
+                };
+                self.editor_scale = scale;
+                // A convenience: failing to remember the size is not worth interrupting for.
+                let _ = settings::update(|settings| {
+                    settings.editor_scale = (scale != 1.0).then_some(scale);
+                });
+                self.status = format!("Editor font size {}%", (scale * 100.0).round());
             }
             Command::GoToSymbol => {
                 let outline =
@@ -1104,6 +1120,12 @@ impl ForgeRoomApp {
             self.run_command(Command::GoToLine, false);
         } else if shortcut(ui, command, Key::Backtick) {
             self.run_command(Command::ToggleTerminal, false);
+        } else if shortcut(ui, command, Key::Equals) || shortcut(ui, command, Key::Plus) {
+            self.run_command(Command::ZoomIn, false);
+        } else if shortcut(ui, command, Key::Minus) {
+            self.run_command(Command::ZoomOut, false);
+        } else if shortcut(ui, command, Key::Num0) {
+            self.run_command(Command::ZoomReset, false);
         } else if shortcut(ui, command, Key::S) {
             self.save_active(false);
         } else if shortcut(ui, command, Key::O) {
@@ -2511,7 +2533,8 @@ impl ForgeRoomApp {
 
     fn editor(&mut self, ui: &mut egui::Ui) {
         let focus = std::mem::take(&mut self.focus_editor);
-        let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        let mut font_id = egui::TextStyle::Monospace.resolve(ui.style());
+        font_id.size *= self.editor_scale;
         let (row_height, char_width) =
             ui.fonts_mut(|fonts| (fonts.row_height(&font_id), fonts.glyph_width(&font_id, '0')));
         let current_line = self.cursor.0 - 1;
