@@ -231,7 +231,9 @@ struct ForgeRoomApp {
     pending_discard: Option<Vec<git::Change>>,
     gallery: theme_gallery::Gallery,
     room: rooms::RoomView,
-    terminal: Option<terminal::Terminal>,
+    /// Every terminal, in tab order; `active_terminal` is the one shown.
+    terminals: Vec<terminal::Terminal>,
+    active_terminal: usize,
     show_terminal: bool,
     bottom_tab: BottomTab,
     show_right: bool,
@@ -350,7 +352,8 @@ impl ForgeRoomApp {
             pending_discard: None,
             gallery: theme_gallery::Gallery::default(),
             room: rooms::RoomView::default(),
-            terminal: None,
+            terminals: Vec::new(),
+            active_terminal: 0,
             show_terminal: true,
             bottom_tab: BottomTab::Terminal,
             show_right: true,
@@ -929,6 +932,11 @@ impl ForgeRoomApp {
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
+            Command::NewTerminal => {
+                self.show_terminal = true;
+                self.bottom_tab = BottomTab::Terminal;
+                self.spawn_terminal(true);
+            }
             Command::ToggleTerminal => {
                 if self.show_terminal && self.terminal_has_focus {
                     self.show_terminal = false;
@@ -944,27 +952,63 @@ impl ForgeRoomApp {
 
     /// Start a shell in the project folder when there is none running.
     fn ensure_terminal(&mut self) {
-        let running = self.terminal.as_ref().is_some_and(|t| !t.has_exited());
+        let running = self
+            .terminals
+            .get(self.active_terminal)
+            .is_some_and(|t| !t.has_exited());
         if running {
             return;
         }
+        self.spawn_terminal(false);
+    }
+
+    /// Start a shell in the project folder: as one more terminal, or in place of the active one.
+    fn spawn_terminal(&mut self, add: bool) {
         let root = self.repo_root();
         match terminal::Terminal::spawn(&self.egui_ctx, root.as_deref()) {
             Ok(terminal) => {
-                self.terminal = Some(terminal);
                 self.terminal_error = None;
+                if add || self.terminals.is_empty() {
+                    self.terminals.push(terminal);
+                    self.active_terminal = self.terminals.len() - 1;
+                } else {
+                    let index = self.active_terminal.min(self.terminals.len() - 1);
+                    self.terminals[index] = terminal;
+                    self.active_terminal = index;
+                }
             }
-            Err(error) => {
-                self.terminal = None;
-                self.terminal_error = Some(error);
-            }
+            Err(error) => self.terminal_error = Some(error),
+        }
+        self.terminal_focus_request = true;
+    }
+
+    /// Close the active terminal (its shell is ended); the one before it comes forward.
+    fn close_terminal(&mut self) {
+        if self.active_terminal < self.terminals.len() {
+            self.terminals.remove(self.active_terminal);
+        }
+        self.active_terminal = self
+            .active_terminal
+            .saturating_sub(1)
+            .min(self.terminals.len().saturating_sub(1));
+        self.terminal_focus_request = true;
+        if self.terminals.is_empty() {
+            self.show_terminal = false;
+            self.terminal_has_focus = false;
+            self.focus_editor = true;
         }
     }
 
     fn terminal_panel(&mut self, ui: &mut egui::Ui) {
-        let exited = self.terminal.as_ref().is_some_and(|t| t.has_exited());
+        let exited = self
+            .terminals
+            .get(self.active_terminal)
+            .is_some_and(|t| t.has_exited());
         let mut restart = false;
         let mut close = false;
+        let mut add_terminal = false;
+        let mut close_terminal = false;
+        let mut switch_to = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(12.0);
@@ -980,8 +1024,39 @@ impl ForgeRoomApp {
             for label in ["Debug Console", "Ports"] {
                 underline_tab(ui, label, false, false).on_hover_text("Adapter not connected");
             }
+            if self.bottom_tab == BottomTab::Terminal {
+                // One chip per terminal, a plus for another and a cross to end the shown one.
+                ui.add_space(6.0);
+                if self.terminals.len() > 1 {
+                    for index in 0..self.terminals.len() {
+                        let label = format!("{}", index + 1);
+                        if ui
+                            .selectable_label(index == self.active_terminal, label)
+                            .on_hover_text(format!("Terminal {}", index + 1))
+                            .clicked()
+                        {
+                            switch_to = Some(index);
+                        }
+                    }
+                }
+                if ui
+                    .small_button("+")
+                    .on_hover_text("New terminal (Ctrl+Shift+`)")
+                    .clicked()
+                {
+                    add_terminal = true;
+                }
+                if self.terminals.len() > 1
+                    && ui
+                        .small_button("\u{2715}")
+                        .on_hover_text("End this terminal")
+                        .clicked()
+                {
+                    close_terminal = true;
+                }
+            }
             if ui.available_width() > 760.0
-                && let Some(terminal) = &self.terminal
+                && let Some(terminal) = self.terminals.get(self.active_terminal)
             {
                 ui.add_space(10.0);
                 ui.label(
@@ -1003,7 +1078,7 @@ impl ForgeRoomApp {
                 if icons::icon_button(ui, "Hide terminal (Ctrl+`)", icons::close_cross).clicked() {
                     close = true;
                 }
-                if (exited || self.terminal.is_none()) && ui.small_button("Restart").clicked() {
+                if (exited || self.terminals.is_empty()) && ui.small_button("Restart").clicked() {
                     restart = true;
                 }
             });
@@ -1015,8 +1090,16 @@ impl ForgeRoomApp {
             return;
         }
         if restart {
-            self.terminal = None;
-            self.ensure_terminal();
+            self.spawn_terminal(false);
+        }
+        if add_terminal {
+            self.spawn_terminal(true);
+        }
+        if close_terminal {
+            self.close_terminal();
+        }
+        if let Some(index) = switch_to {
+            self.active_terminal = index;
             self.terminal_focus_request = true;
         }
         if ui.available_width() > 640.0
@@ -1081,7 +1164,8 @@ impl ForgeRoomApp {
         }
         let request = std::mem::take(&mut self.terminal_focus_request);
         let mut link = None;
-        match self.terminal.as_mut() {
+        let active = self.active_terminal;
+        match self.terminals.get_mut(active) {
             Some(terminal) => {
                 self.terminal_has_focus = terminal.show(ui, request);
                 link = terminal.take_link();
@@ -1131,7 +1215,7 @@ impl ForgeRoomApp {
     }
 
     fn terminal_output_view(&mut self, ui: &mut egui::Ui) {
-        let Some(terminal) = &self.terminal else {
+        let Some(terminal) = self.terminals.get(self.active_terminal) else {
             ui.label("Start the terminal to see local output.");
             return;
         };
@@ -1266,7 +1350,9 @@ impl ForgeRoomApp {
         let command_shift = Modifiers::COMMAND | Modifiers::SHIFT;
         if self.terminal_has_focus {
             // The shell owns plain Ctrl keys (Ctrl+C, Ctrl+W...); only app-level chords work here.
-            if shortcut(ui, command, Key::Backtick) {
+            if shortcut(ui, command_shift, Key::Backtick) {
+                self.run_command(Command::NewTerminal, false);
+            } else if shortcut(ui, command, Key::Backtick) {
                 self.run_command(Command::ToggleTerminal, false);
             } else if shortcut(ui, command_shift, Key::P) {
                 self.run_command(Command::GoToLine, true);
@@ -1301,6 +1387,8 @@ impl ForgeRoomApp {
             self.run_command(Command::Replace, false);
         } else if shortcut(ui, command, Key::G) {
             self.run_command(Command::GoToLine, false);
+        } else if shortcut(ui, command_shift, Key::Backtick) {
+            self.run_command(Command::NewTerminal, false);
         } else if shortcut(ui, command, Key::Backtick) {
             self.run_command(Command::ToggleTerminal, false);
         } else if shortcut(ui, command, Key::Equals) || shortcut(ui, command, Key::Plus) {
@@ -2522,7 +2610,8 @@ impl ForgeRoomApp {
                         self.show_terminal = true;
                         self.bottom_tab = BottomTab::Terminal;
                         self.ensure_terminal();
-                        if let Some(terminal) = &mut self.terminal {
+                        let active = self.active_terminal;
+                        if let Some(terminal) = self.terminals.get_mut(active) {
                             terminal.send(format!("{command}\r").as_bytes());
                             self.status = format!("Running {command} in terminal");
                         }
@@ -3906,7 +3995,7 @@ impl eframe::App for ForgeRoomApp {
         // Flat panels separated by hairline dividers, as in the reference.
         let card = |fill| egui::Frame::new().fill(fill);
 
-        if self.show_terminal && self.terminal.is_none() && self.terminal_error.is_none() {
+        if self.show_terminal && self.terminals.is_empty() && self.terminal_error.is_none() {
             self.ensure_terminal();
         }
 
@@ -3971,7 +4060,7 @@ impl eframe::App for ForgeRoomApp {
         }
 
         if self.show_preview && !self.show_lobby && ui.available_width() > 760.0 {
-            if let Some(terminal) = &self.terminal {
+            if let Some(terminal) = self.terminals.get(self.active_terminal) {
                 self.preview.detect(&terminal.screen_text());
             }
             let mut close = false;

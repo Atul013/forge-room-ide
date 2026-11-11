@@ -56,6 +56,7 @@ pub enum Command {
     GitStash,
     GitStashApply,
     ToggleTerminal,
+    NewTerminal,
 }
 
 /// (command, title shown in the palette, shortcut hint)
@@ -143,6 +144,11 @@ pub const ALL: &[(Command, &str, &str)] = &[
     (Command::TogglePreview, "View: Toggle Preview", ""),
     (Command::ToggleSidebar, "View: Toggle Sidebar", "Ctrl+B"),
     (Command::ToggleTerminal, "View: Toggle Terminal", "Ctrl+`"),
+    (
+        Command::NewTerminal,
+        "Terminal: New Terminal",
+        "Ctrl+Shift+`",
+    ),
     (Command::ColorTheme, "Preferences: Color Theme", ""),
     (Command::GitRefresh, "Git: Refresh", ""),
     (Command::ToggleAutoSave, "File: Toggle Auto Save", ""),
