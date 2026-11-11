@@ -2347,7 +2347,9 @@ impl ForgeRoomApp {
                     line,
                     column,
                     length,
-                } = self.search.show(ui, root.as_deref())
+                } = self
+                    .search
+                    .show(ui, root.as_deref(), &self.tabs.dirty_paths())
                 {
                     self.open_path(path);
                     if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
@@ -3840,6 +3842,11 @@ impl eframe::App for ForgeRoomApp {
             context.request_repaint_after(std::time::Duration::from_secs(3));
         }
 
+        if let Some(done) = self.search.take_replaced() {
+            self.status = replaced_status(&done);
+            self.reload_clean_tabs();
+            self.refresh_git();
+        }
         if self.search.poll() {
             context.request_repaint_after(std::time::Duration::from_millis(120));
         }
@@ -4035,6 +4042,32 @@ fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
 }
 
 /// Display name of the language for a file name, judged from its extension.
+/// What to tell the user after Replace All.
+fn replaced_status(done: &search::Replaced) -> String {
+    if let Some(error) = &done.error {
+        return format!("Replace failed: {}", error.lines().next().unwrap_or(""));
+    }
+    let mut text = format!(
+        "Replaced {} match{} in {} file{}",
+        done.replacements,
+        if done.replacements == 1 { "" } else { "es" },
+        done.files,
+        if done.files == 1 { "" } else { "s" }
+    );
+    if !done.skipped.is_empty() {
+        let (path, why) = &done.skipped[0];
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        text.push_str(&format!(
+            "; skipped {} (first: {name}, {why})",
+            done.skipped.len()
+        ));
+    }
+    text
+}
+
 /// The outcome of moving a file or folder to the Recycle Bin on a worker thread.
 struct Recycled {
     path: PathBuf,

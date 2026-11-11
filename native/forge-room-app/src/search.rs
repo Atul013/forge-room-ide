@@ -191,6 +191,96 @@ pub fn search(root: &Path, query: &str, mode: find::Mode, cancel: &AtomicBool) -
     results
 }
 
+/// What a replace across files did.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Replaced {
+    pub files: usize,
+    pub replacements: usize,
+    /// Files left alone, with the reason: open with unsaved changes, changed meanwhile, unwritable.
+    pub skipped: Vec<(PathBuf, String)>,
+    pub error: Option<String>,
+    pub cancelled: bool,
+}
+
+/// Replace every match of `query` in every text file under `root` with `replacement` (literal text:
+/// no capture groups). Each file keeps its encoding and line endings and is written atomically; a
+/// file in `protected` (open with unsaved changes) or one that changed on disk while this ran is
+/// left alone and listed. Lines are matched one at a time, as Search in Files shows them.
+pub fn replace_in_files(
+    root: &Path,
+    query: &str,
+    mode: find::Mode,
+    replacement: &str,
+    protected: &[PathBuf],
+    cancel: &AtomicBool,
+) -> Replaced {
+    let mut report = Replaced::default();
+    let matcher = match find::Matcher::new(query, mode) {
+        Ok(matcher) if !query.is_empty() => matcher,
+        Ok(_) => return report,
+        Err(error) => {
+            report.error = Some(error);
+            return report;
+        }
+    };
+    for path in collect(root, cancel) {
+        if cancel.load(Ordering::Relaxed) {
+            report.cancelled = true;
+            return report;
+        }
+        if fs::metadata(&path)
+            .map(|m| m.len() > MAX_FILE_BYTES)
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let mut session = crate::document::DocumentSession::default();
+        if session.open(&path).is_err() {
+            continue; // binary, not a supported encoding, or unreadable
+        }
+        let mut count = 0;
+        let mut gave_up = false;
+        let replaced: Vec<String> = session
+            .text()
+            .split('\n')
+            .map(|line| {
+                let (matches, stopped) = matcher.find_all_checked(line);
+                gave_up |= stopped;
+                if matches.is_empty() {
+                    return line.to_string();
+                }
+                count += matches.len();
+                find::replace_all(line, &matches, replacement)
+            })
+            .collect();
+        if count == 0 {
+            continue;
+        }
+        let canonical = crate::tabs::normalize(&path);
+        if protected.iter().any(|p| *p == canonical || *p == path) {
+            report
+                .skipped
+                .push((path, "it is open with unsaved changes".into()));
+            continue;
+        }
+        if gave_up {
+            report
+                .skipped
+                .push((path, "the pattern was too complex to run on it".into()));
+            continue;
+        }
+        *session.text_mut() = replaced.join("\n");
+        match session.save() {
+            Ok(()) => {
+                report.files += 1;
+                report.replacements += count;
+            }
+            Err(error) => report.skipped.push((path, error.to_string())),
+        }
+    }
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,6 +316,50 @@ mod tests {
         )
         .unwrap();
         root
+    }
+
+    #[test]
+    fn replacing_in_files_keeps_encoding_and_line_endings_and_skips_protected_files() {
+        let root = tree();
+        let crlf = root.join("crlf.txt");
+        fs::write(&crlf, "one TODO\r\ntwo\r\n").unwrap();
+        let utf16 = root.join("wide.txt");
+        let wide_bytes = |text: &str| {
+            let mut bytes = vec![0xFF, 0xFE];
+            for unit in text.encode_utf16() {
+                bytes.extend(unit.to_le_bytes());
+            }
+            bytes
+        };
+        fs::write(&utf16, wide_bytes("a TODO b\n")).unwrap();
+        let busy = root.join("busy.txt");
+        fs::write(&busy, "TODO busy\n").unwrap();
+        let protected = vec![crate::tabs::normalize(&busy)];
+        let never = AtomicBool::new(false);
+        let report = replace_in_files(&root, "TODO", exact(), "DONE", &protected, &never);
+        assert_eq!(fs::read(&crlf).unwrap(), b"one DONE\r\ntwo\r\n");
+        assert_eq!(fs::read(&utf16).unwrap(), wide_bytes("a DONE b\n"));
+        assert_eq!(fs::read_to_string(&busy).unwrap(), "TODO busy\n");
+        let source = fs::read_to_string(root.join("src/a.rs")).unwrap();
+        assert_eq!(
+            source.replace("\r\n", "\n"),
+            "fn main() {}\n// DONE: later\nlet todo = 1;\n"
+        );
+        // Build output is never touched.
+        let skipped = fs::read_to_string(root.join("target/skip.rs")).unwrap();
+        assert!(skipped.contains("TODO"));
+        assert_eq!((report.files, report.replacements), (3, 3));
+        assert_eq!(report.skipped.len(), 1);
+        let bad = find::Mode {
+            regex: true,
+            ..exact()
+        };
+        assert!(
+            replace_in_files(&root, "(", bad, "x", &[], &never)
+                .error
+                .is_some()
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

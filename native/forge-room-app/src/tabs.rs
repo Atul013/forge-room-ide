@@ -131,6 +131,15 @@ impl Tabs {
             .count()
     }
 
+    /// The files of tabs that hold unsaved changes.
+    pub fn dirty_paths(&self) -> Vec<PathBuf> {
+        self.tabs
+            .iter()
+            .filter(|tab| tab.doc.is_dirty())
+            .filter_map(|tab| tab.doc.path().map(Path::to_path_buf))
+            .collect()
+    }
+
     pub fn any_dirty(&self) -> bool {
         self.tabs.iter().any(|tab| tab.doc.is_dirty())
     }

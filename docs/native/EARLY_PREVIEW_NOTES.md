@@ -8,7 +8,7 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 
 - Files keep their line endings (LF, CRLF; mixed files are kept byte for byte), UTF-8 BOM and UTF-16 LE/BE encoding when saved, and the status bar shows the real encoding. Saves are atomic.
 - Editor typing: Enter keeps the indentation and opens bracket blocks, Tab and Shift+Tab indent and unindent, brackets and quotes are completed in pairs (not in prose files, and not a single quote in Rust), and Ctrl+/ comments lines, Alt+Up/Down moves them, Shift+Alt+Up/Down duplicates them, Ctrl+Shift+K deletes them.
-- Find and Search in Files: whole word and regular expressions; invalid patterns are reported.
+- Find and Search in Files: whole word and regular expressions; invalid patterns are reported. Search has a Replace with box and Replace All (literal text, with a confirmation): each file keeps its encoding and line endings, files open with unsaved changes are skipped and listed.
 - Quick Open and Search in Files follow `.gitignore` in a repository.
 - Explorer: rename files and folders; Delete… moves them to the Recycle Bin (fixed local drives only, never links, never the open folder; saved tabs close, tabs with unsaved changes stay). Tabs: Ctrl+Shift+T reopens the last closed tab; View: Close Saved Tabs. File > Open Recent.
 - Source Control: merge a branch, abort a merge, delete a branch, apply (and keep) or drop the latest stash, create and delete tags from the command palette; Changes and History pages; Git status is read on a worker thread.

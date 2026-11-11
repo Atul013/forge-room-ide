@@ -18,6 +18,14 @@ pub struct SearchView {
     receiver: Option<mpsc::Receiver<search::Results>>,
     dirty_since: Option<Instant>,
     focus: bool,
+    /// The text that replaces every match (Replace All).
+    pub replacement: String,
+    /// Replace All was clicked and waits for a second click.
+    confirming: bool,
+    /// Replace was clicked; it starts at the top of the next frame.
+    replace_requested: bool,
+    replacing: Option<mpsc::Receiver<search::Replaced>>,
+    replaced: Option<search::Replaced>,
 }
 
 impl Default for SearchView {
@@ -32,6 +40,11 @@ impl Default for SearchView {
             receiver: None,
             dirty_since: None,
             focus: false,
+            replacement: String::new(),
+            confirming: false,
+            replace_requested: false,
+            replacing: None,
+            replaced: None,
         }
     }
 }
@@ -81,6 +94,43 @@ impl SearchView {
         self.running = true;
     }
 
+    /// Replace every match of the query that was searched in every file, except the `protected`
+    /// ones (open with unsaved changes). It runs on a worker thread; `take_replaced` reports.
+    fn start_replace(&mut self, root: &Path, protected: Vec<PathBuf>) {
+        let (root, query, mode, replacement) = (
+            root.to_path_buf(),
+            self.searched_query.clone(),
+            self.mode,
+            self.replacement.clone(),
+        );
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let never = AtomicBool::new(false);
+            let _ = sender.send(search::replace_in_files(
+                &root,
+                &query,
+                mode,
+                &replacement,
+                &protected,
+                &never,
+            ));
+        });
+        self.replacing = Some(receiver);
+        self.confirming = false;
+    }
+
+    /// A finished Replace All, once; the results are searched again afterwards.
+    pub fn take_replaced(&mut self) -> Option<search::Replaced> {
+        if let Some(receiver) = &self.replacing
+            && let Ok(done) = receiver.try_recv()
+        {
+            self.replacing = None;
+            self.dirty_since = Some(Instant::now() - DEBOUNCE);
+            self.replaced = Some(done);
+        }
+        self.replaced.take()
+    }
+
     /// Pick up a finished search. True while work is still pending (caller should repaint soon).
     pub fn poll(&mut self) -> bool {
         if let Some(receiver) = &self.receiver
@@ -92,10 +142,15 @@ impl SearchView {
             self.running = false;
             self.receiver = None;
         }
-        self.running || self.dirty_since.is_some()
+        self.running || self.replacing.is_some() || self.dirty_since.is_some()
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, root: Option<&Path>) -> Action {
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        root: Option<&Path>,
+        protected: &[PathBuf],
+    ) -> Action {
         let mut action = Action::None;
         ui.add_space(10.0);
         ui.horizontal(|ui| {
@@ -118,6 +173,9 @@ impl SearchView {
             return action;
         };
 
+        if std::mem::take(&mut self.replace_requested) {
+            self.start_replace(root, protected.to_vec());
+        }
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(12, 0))
             .show(ui, |ui| {
@@ -150,6 +208,19 @@ impl SearchView {
                     }
                 });
             });
+        if !self.query.is_empty() {
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(12, 0))
+                .show(ui, |ui| {
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.replacement)
+                            .hint_text("Replace with")
+                            .desired_width(ui.available_width())
+                            .margin(egui::Margin::symmetric(10, 7)),
+                    );
+                });
+        }
         if let Some(since) = self.dirty_since
             && since.elapsed() >= DEBOUNCE
         {
@@ -158,6 +229,14 @@ impl SearchView {
         }
         ui.add_space(8.0);
 
+        if self.replacing.is_some() {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.spinner();
+                ui.label(RichText::new("Replacing…").color(theme::text_dim()));
+            });
+            return action;
+        }
         if self.running {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
@@ -200,6 +279,41 @@ impl SearchView {
             };
             ui.label(RichText::new(text).size(12.0).color(theme::text_dim()));
         });
+        let replaceable = results.error.is_none() && !results.hits.is_empty();
+        let (hits, truncated) = (results.hits.len(), results.truncated);
+        let files = {
+            let mut seen: Vec<&PathBuf> = results.hits.iter().map(|hit| &hit.path).collect();
+            seen.dedup();
+            seen.len()
+        };
+        if replaceable {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                if self.confirming {
+                    let text = if truncated {
+                        "Replace every match, including those not listed?".to_string()
+                    } else {
+                        format!("Replace {hits} results in {files} files?")
+                    };
+                    ui.label(RichText::new(text).size(12.0).color(theme::text()));
+                } else if ui.button("Replace All").clicked() {
+                    self.confirming = true;
+                }
+            });
+            if self.confirming {
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    if ui.button("Replace").clicked() {
+                        self.replace_requested = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.confirming = false;
+                    }
+                });
+            }
+        } else {
+            self.confirming = false;
+        }
         ui.add_space(4.0);
 
         egui::ScrollArea::vertical()
