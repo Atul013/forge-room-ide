@@ -28,6 +28,14 @@ pub struct State {
     focus_input: bool,
     provider: Provider,
     mode: Mode,
+    /// The model to use; empty is the provider's default.
+    model: String,
+    /// The model box is a free text field (a name that is not in the list).
+    model_custom: bool,
+    /// How hard to think; empty is the provider's default.
+    effort: String,
+    /// The choices as last written to the settings file.
+    saved: (String, String, String, String),
     /// The conversation the next message continues (Claude Code only).
     session: Option<String>,
     run: Option<agent::Run>,
@@ -45,6 +53,10 @@ impl Default for State {
             focus_input: false,
             provider: Provider::Claude,
             mode: Mode::Edit,
+            model: String::new(),
+            model_custom: false,
+            effort: String::new(),
+            saved: Default::default(),
             session: None,
             run: None,
             programs: None,
@@ -60,7 +72,62 @@ const QUICK_ACTIONS: [(&str, &str); 4] = [
     ("Find and fix issues", "Find and fix issues in "),
 ];
 
+const CLAUDE_MODELS: [(&str, &str); 5] = [
+    ("Default model", ""),
+    ("Fable", "fable"),
+    ("Opus", "opus"),
+    ("Sonnet", "sonnet"),
+    ("Haiku", "haiku"),
+];
+const CODEX_MODELS: [(&str, &str); 1] = [("Default model", "")];
+
 impl State {
+    /// The agent panel as the user left it (read from the settings file).
+    pub fn from_settings(settings: &crate::settings::Settings) -> Self {
+        let mut state = State::default();
+        if settings.ai_provider.as_deref() == Some("codex") {
+            state.provider = Provider::Codex;
+        }
+        let model = settings.ai_model.clone().unwrap_or_default();
+        if agent::valid_model(&model) {
+            state.model_custom = !presets(state.provider)
+                .iter()
+                .any(|(_, value)| *value == model);
+            state.model = model;
+        }
+        let effort = settings.ai_effort.clone().unwrap_or_default();
+        if agent::efforts(state.provider).contains(&effort.as_str()) {
+            state.effort = effort;
+        }
+        // Full access is never carried over to the next start.
+        state.mode = if settings.ai_mode.as_deref() == Some("read") {
+            Mode::ReadOnly
+        } else {
+            Mode::Edit
+        };
+        state.saved = state.choices();
+        state
+    }
+
+    fn choices(&self) -> (String, String, String, String) {
+        (
+            if self.provider == Provider::Codex {
+                "codex"
+            } else {
+                "claude"
+            }
+            .into(),
+            self.model.clone(),
+            self.effort.clone(),
+            if self.mode == Mode::ReadOnly {
+                "read"
+            } else {
+                "edit"
+            }
+            .into(),
+        )
+    }
+
     pub fn busy(&self) -> bool {
         self.run.is_some()
     }
@@ -116,6 +183,8 @@ impl State {
         };
         let request = agent::Request {
             provider,
+            model: self.model.clone(),
+            effort: self.effort.clone(),
             mode: self.mode,
             prompt: text,
             cwd: cwd.to_path_buf(),
@@ -265,6 +334,7 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
         ui.add_space(14.0);
         let busy = state.busy();
         ui.add_enabled_ui(!busy, |ui| {
+            let provider_before = state.provider;
             let installed: Vec<bool> = Provider::ALL
                 .iter()
                 .map(|provider| state.program(*provider).is_some())
@@ -279,6 +349,70 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
                             format!("{} (not installed)", provider.name())
                         };
                         ui.selectable_value(&mut state.provider, *provider, label);
+                    }
+                });
+            // Another provider has other models and effort levels.
+            if state.provider != provider_before {
+                state.model.clear();
+                state.model_custom = false;
+                state.session = None;
+                if !agent::efforts(state.provider).contains(&state.effort.as_str()) {
+                    state.effort.clear();
+                }
+            }
+            let shown = if state.model_custom {
+                "Custom model".to_string()
+            } else {
+                presets(state.provider)
+                    .iter()
+                    .find(|(_, value)| *value == state.model)
+                    .map_or("Default model".to_string(), |(label, _)| {
+                        (*label).to_string()
+                    })
+            };
+            egui::ComboBox::from_id_salt("ai-model")
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    for (label, value) in presets(state.provider) {
+                        let chosen = !state.model_custom && state.model == *value;
+                        if ui.selectable_label(chosen, *label).clicked() {
+                            state.model = (*value).to_string();
+                            state.model_custom = false;
+                        }
+                    }
+                    if ui.selectable_label(state.model_custom, "Custom…").clicked() {
+                        state.model_custom = true;
+                        state.model.clear();
+                    }
+                });
+            if state.model_custom {
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.model)
+                        .hint_text("model name")
+                        .desired_width(130.0),
+                )
+                .on_hover_text("For example claude-opus-4-1 or gpt-5-codex");
+            }
+            egui::ComboBox::from_id_salt("ai-effort")
+                .selected_text(if state.effort.is_empty() {
+                    "Default effort".to_string()
+                } else {
+                    format!("{} effort", state.effort)
+                })
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(state.effort.is_empty(), "Default effort")
+                        .clicked()
+                    {
+                        state.effort.clear();
+                    }
+                    for level in agent::efforts(state.provider) {
+                        if ui
+                            .selectable_label(state.effort == *level, *level)
+                            .clicked()
+                        {
+                            state.effort = (*level).to_string();
+                        }
                     }
                 });
             let before = state.mode;
@@ -306,6 +440,18 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
             }
         }
     });
+    // The choices are remembered for the next start.
+    let now = state.choices();
+    if now != state.saved {
+        let (provider, model, effort, mode) = now.clone();
+        let _ = crate::settings::update(|settings| {
+            settings.ai_provider = Some(provider);
+            settings.ai_model = Some(model);
+            settings.ai_effort = Some(effort);
+            settings.ai_mode = Some(mode);
+        });
+        state.saved = now;
+    }
     ui.horizontal(|ui| {
         ui.add_space(14.0);
         ui.label(
@@ -340,6 +486,13 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
                     }
                 });
             });
+    }
+}
+
+fn presets(provider: Provider) -> &'static [(&'static str, &'static str)] {
+    match provider {
+        Provider::Claude => &CLAUDE_MODELS,
+        Provider::Codex => &CODEX_MODELS,
     }
 }
 

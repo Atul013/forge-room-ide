@@ -95,8 +95,30 @@ impl Mode {
     }
 }
 
+/// The effort levels each provider accepts.
+pub fn efforts(provider: Provider) -> &'static [&'static str] {
+    match provider {
+        Provider::Claude => &["low", "medium", "high", "xhigh", "max"],
+        Provider::Codex => &["minimal", "low", "medium", "high"],
+    }
+}
+
+/// A model name is a plain token (`opus`, `claude-opus-4-1`, `gpt-5-codex`): anything else is not
+/// passed on, so a pasted sentence can never become extra arguments.
+pub fn valid_model(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '/' | '[' | ']')
+        })
+}
+
 pub struct Request {
     pub provider: Provider,
+    /// The model to use; empty is the provider's own default.
+    pub model: String,
+    /// How hard to think; empty is the provider's own default.
+    pub effort: String,
     pub mode: Mode,
     pub prompt: String,
     pub cwd: PathBuf,
@@ -136,6 +158,12 @@ pub fn arguments(request: &Request) -> Vec<String> {
                 Mode::Edit => args.extend(["--permission-mode".into(), "acceptEdits".into()]),
                 Mode::Full => args.push("--dangerously-skip-permissions".into()),
             }
+            if valid_model(&request.model) {
+                args.extend(["--model".into(), request.model.clone()]);
+            }
+            if efforts(Provider::Claude).contains(&request.effort.as_str()) {
+                args.extend(["--effort".into(), request.effort.clone()]);
+            }
             // A session id is a plain token; anything else is not passed on.
             if let Some(id) = request.session.as_deref().filter(|id| clean_id(id)) {
                 args.extend(["--resume".into(), id.to_string()]);
@@ -153,6 +181,15 @@ pub fn arguments(request: &Request) -> Vec<String> {
                 Mode::Full => "danger-full-access",
             };
             args.extend(["--sandbox".into(), sandbox.into()]);
+            if valid_model(&request.model) {
+                args.extend(["--model".into(), request.model.clone()]);
+            }
+            if efforts(Provider::Codex).contains(&request.effort.as_str()) {
+                args.extend([
+                    "-c".into(),
+                    format!("model_reasoning_effort={}", request.effort),
+                ]);
+            }
             // The prompt is read from standard input.
             args.push("-".into());
         }
@@ -446,6 +483,8 @@ mod tests {
     fn request(provider: Provider, mode: Mode, session: Option<&str>) -> Request {
         Request {
             provider,
+            model: String::new(),
+            effort: String::new(),
             mode,
             prompt: "hello".into(),
             cwd: PathBuf::from("."),
@@ -471,6 +510,37 @@ mod tests {
         assert!(!odd.iter().any(|a| a == "--resume"));
         // The prompt is never an argument.
         assert!(!edit.iter().any(|a| a == "hello"));
+    }
+
+    #[test]
+    fn model_and_effort_are_passed_only_when_they_are_plain_known_values() {
+        let mut claude = request(Provider::Claude, Mode::Edit, None);
+        claude.model = "opus".into();
+        claude.effort = "high".into();
+        let args = arguments(&claude);
+        assert!(args.windows(2).any(|w| w == ["--model", "opus"]));
+        assert!(args.windows(2).any(|w| w == ["--effort", "high"]));
+        // Defaults add nothing; odd values are dropped, never passed on.
+        let plain = arguments(&request(Provider::Claude, Mode::Edit, None));
+        assert!(!plain.iter().any(|a| a == "--model" || a == "--effort"));
+        claude.model = "opus --dangerously-skip-permissions".into();
+        claude.effort = "maximum-overdrive".into();
+        let odd = arguments(&claude);
+        assert!(!odd.iter().any(|a| a == "--model" || a == "--effort"));
+        assert!(!odd.iter().any(|a| a == "--dangerously-skip-permissions"));
+        let mut codex = request(Provider::Codex, Mode::Edit, None);
+        codex.model = "gpt-5-codex".into();
+        codex.effort = "minimal".into();
+        let args = arguments(&codex);
+        assert!(args.windows(2).any(|w| w == ["--model", "gpt-5-codex"]));
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["-c", "model_reasoning_effort=minimal"])
+        );
+        assert_eq!(args.last().map(String::as_str), Some("-"));
+        // Claude's top levels are not Codex's.
+        codex.effort = "xhigh".into();
+        assert!(!arguments(&codex).iter().any(|a| a == "-c"));
     }
 
     #[test]
@@ -581,6 +651,8 @@ mod tests {
         .unwrap();
         let request = Request {
             provider: Provider::Claude,
+            model: String::new(),
+            effort: String::new(),
             mode: Mode::ReadOnly,
             prompt: "say hi".into(),
             cwd: dir.clone(),

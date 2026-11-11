@@ -20,6 +20,16 @@ pub struct Settings {
     /// Folders the user trusts: Git and project tools only run in these (or below them).
     #[serde(default)]
     pub trusted_folders: Vec<String>,
+    /// The agent panel's choices: provider ("claude" or "codex"), model, effort and mode ("read" or
+    /// "edit"; full access is never remembered).
+    #[serde(default)]
+    pub ai_provider: Option<String>,
+    #[serde(default)]
+    pub ai_model: Option<String>,
+    #[serde(default)]
+    pub ai_effort: Option<String>,
+    #[serde(default)]
+    pub ai_mode: Option<String>,
 }
 
 fn trust_key(path: &str) -> String {

@@ -212,6 +212,7 @@ struct ForgeRoomApp {
     checked_folders: std::collections::HashSet<PathBuf>,
     auto_checked: std::time::Instant,
     recovery_warned: bool,
+    ai_was_busy: bool,
     /// Sidebar width, right dock width and terminal height as last drawn, in points.
     panel_sizes: (u16, u16, u16),
     /// The terminal panel fills most of the window.
@@ -363,6 +364,7 @@ impl ForgeRoomApp {
             checked_folders: std::collections::HashSet::new(),
             auto_checked: std::time::Instant::now(),
             recovery_warned: false,
+            ai_was_busy: false,
             panel_sizes: (250, 364, 200),
             terminal_maximized: false,
             split_pair: None,
@@ -402,7 +404,7 @@ impl ForgeRoomApp {
             show_preview: true,
             lobby_close_warned: false,
             preview: preview::Preview::default(),
-            ai: ai_panel::State::default(),
+            ai: ai_panel::State::from_settings(&settings::load()),
             right_tab: RightTab::Room,
             terminal_focus_request: false,
             terminal_has_focus: false,
@@ -4682,7 +4684,20 @@ impl eframe::App for ForgeRoomApp {
         }
         // An agent that was started from the AI panel: show what it says, and when it ends look at
         // the files again (it may have edited some).
-        if self.ai.poll() {
+        let finished = self.ai.poll();
+        let busy = self.ai.busy();
+        // The answer is shown in the AI panel, so it is brought up when an agent starts and when it
+        // ends, whatever the dock was doing before.
+        if (busy && !self.ai_was_busy) || finished {
+            self.show_right = true;
+            self.right_tab = RightTab::Ai;
+            self.show_lobby = false;
+        }
+        if busy && !self.ai_was_busy {
+            self.status = "The agent is working: see the AI panel".into();
+        }
+        self.ai_was_busy = busy;
+        if finished {
             self.reload_clean_tabs();
             self.refresh_git();
             self.status = "The agent finished".into();
