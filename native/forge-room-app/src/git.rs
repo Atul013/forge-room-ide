@@ -858,12 +858,7 @@ mod tests {
         assert!(merge_abort(&dir).is_err(), "nothing left to abort");
 
         // Uncommitted changes to tracked files: the merge is refused before it starts.
-        fs::write(
-            dir.join("a.txt"),
-            "dirty
-",
-        )
-        .unwrap();
+        fs::write(dir.join("a.txt"), "dirty\n").unwrap();
         assert!(
             merge(&dir, "feature")
                 .unwrap_err()
