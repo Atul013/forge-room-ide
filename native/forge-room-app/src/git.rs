@@ -115,6 +115,45 @@ pub fn is_repo(root: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Everything the Source Control view shows about one repository, read in one go. Gathering it takes
+/// several Git processes, so the app runs [`snapshot`] on a worker thread.
+pub struct Snapshot {
+    pub root: std::path::PathBuf,
+    pub is_repo: bool,
+    pub merging: bool,
+    pub status: Result<Status, String>,
+    pub branch: Option<String>,
+    pub commits: Vec<CommitInfo>,
+    pub stashes: usize,
+}
+
+pub fn snapshot(root: &Path) -> Snapshot {
+    let mut snapshot = Snapshot {
+        root: root.to_path_buf(),
+        is_repo: is_repo(root),
+        merging: false,
+        status: Err("not a repository".into()),
+        branch: None,
+        commits: Vec::new(),
+        stashes: 0,
+    };
+    if !snapshot.is_repo {
+        return snapshot;
+    }
+    snapshot.merging = is_merging(root);
+    snapshot.status = status(root);
+    snapshot.branch = match &snapshot.status {
+        Ok(status) => status
+            .branch
+            .clone()
+            .or_else(|| crate::workspace::git_branch(root)),
+        Err(_) => crate::workspace::git_branch(root),
+    };
+    snapshot.commits = log_all(root, 80).unwrap_or_default();
+    snapshot.stashes = stash_list(root).len();
+    snapshot
+}
+
 pub fn status(root: &Path) -> Result<Status, String> {
     let output = run(
         root,
@@ -813,6 +852,34 @@ mod tests {
         ];
         full.extend_from_slice(args);
         run(dir, &full).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+    }
+
+    #[test]
+    fn a_snapshot_gathers_everything_in_one_call() {
+        if !git_available() {
+            return;
+        }
+        let (dir, main) = merge_fixture();
+        fs::write(dir.join("b.txt"), "new\n").unwrap();
+        g(&dir, &["stash", "push", "--include-untracked", "-q"]);
+        fs::write(dir.join("a.txt"), "edited\n").unwrap();
+        let shot = snapshot(&dir);
+        assert!(shot.is_repo && !shot.merging);
+        assert_eq!(shot.branch.as_deref(), Some(main.as_str()));
+        // `log_all` walks every ref, so the stash commits are in the list as well.
+        assert!(shot.commits.iter().any(|commit| commit.subject == "base"));
+        assert_eq!(shot.stashes, 1);
+        assert!(
+            shot.status
+                .as_ref()
+                .unwrap()
+                .changes
+                .iter()
+                .any(|c| c.path == "a.txt")
+        );
+        assert_eq!(shot.root, dir);
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -47,6 +47,8 @@ pub struct View<'a> {
 
 pub enum Repo<'a> {
     NoFolder,
+    /// The first read of the repository is still running.
+    Loading,
     NoRepository,
     Error(&'a str),
     Ready(View<'a>),
@@ -169,6 +171,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo, compact: bool) -> 
             "No folder open",
             "Open a folder from the Explorer to see its changes here.",
         ),
+        Repo::Loading => empty_state(ui, "Reading the repository…", "This takes a moment."),
         Repo::Error(message) => empty_state(ui, "Git is unavailable", message),
         Repo::NoRepository => {
             empty_state(

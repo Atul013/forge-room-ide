@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai_panel;
+mod background;
 mod brand;
 mod commands;
 mod document;
@@ -202,6 +203,8 @@ struct ForgeRoomApp {
     file_history: Vec<git::CommitInfo>,
     history_name: Option<String>,
     stash_count: usize,
+    /// The repository snapshot being read on a worker thread.
+    git_refresh: background::Latest<git::Snapshot>,
     merging: bool,
     blame: Vec<git::BlameLine>,
     blame_enabled: bool,
@@ -306,6 +309,7 @@ impl ForgeRoomApp {
             file_history: Vec::new(),
             history_name: None,
             stash_count: 0,
+            git_refresh: background::Latest::default(),
             merging: false,
             blame: Vec::new(),
             blame_enabled: true,
@@ -360,6 +364,7 @@ impl ForgeRoomApp {
             });
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
+            self.clear_git_state();
             self.refresh_git();
             let root = self.repo_root();
             self.room.load_for(root.as_deref());
@@ -1612,42 +1617,57 @@ impl ForgeRoomApp {
     }
 
     /// Re-read `git status` and the change markers for the active file.
+    /// Forget everything shown about the repository (a different folder was opened).
+    fn clear_git_state(&mut self) {
+        self.git_status = None;
+        self.merging = false;
+        self.is_repo = false;
+        self.branch = None;
+        self.hunks.clear();
+        self.graph_commits.clear();
+        self.graph_rows.clear();
+        self.file_history.clear();
+        self.history_name = None;
+        self.stash_count = 0;
+    }
+
+    /// Ask for a fresh read of the repository. It runs on a worker thread, so a slow `git status`
+    /// in a big repository never freezes the window; [`Self::poll_git_refresh`] applies the result.
     fn refresh_git(&mut self) {
         self.last_git = std::time::Instant::now();
         let Some(root) = self.repo_root() else {
-            self.git_status = None;
-            self.merging = false;
-            self.is_repo = false;
-            self.branch = None;
-            self.hunks.clear();
-            self.graph_commits.clear();
-            self.graph_rows.clear();
-            self.file_history.clear();
-            self.history_name = None;
+            self.clear_git_state();
+            self.git_refresh.discard();
             return;
         };
-        self.is_repo = git::is_repo(&root);
-        if !self.is_repo {
-            self.merging = false;
-            self.git_status = Some(Err("not a repository".into()));
-            self.branch = None;
-            self.hunks.clear();
+        let context = self.egui_ctx.clone();
+        self.git_refresh
+            .request(&context, move || git::snapshot(&root));
+    }
+
+    /// Take a finished repository read, if any, and start another when one was asked for meanwhile.
+    fn poll_git_refresh(&mut self) {
+        let Some(snapshot) = self.git_refresh.poll() else {
             return;
+        };
+        // The result of a read for a folder that is no longer open is dropped.
+        if self.repo_root().as_deref() == Some(snapshot.root.as_path()) {
+            self.is_repo = snapshot.is_repo;
+            self.merging = snapshot.merging;
+            self.branch = snapshot.branch;
+            self.git_status = Some(snapshot.status);
+            if self.is_repo {
+                self.graph_commits = snapshot.commits;
+                self.graph_rows = graph::layout(&self.graph_commits);
+                self.stash_count = snapshot.stashes;
+            } else {
+                self.hunks.clear();
+            }
+            self.refresh_hunks();
         }
-        self.merging = git::is_merging(&root);
-        let result = git::status(&root);
-        self.branch = match &result {
-            Ok(status) => status
-                .branch
-                .clone()
-                .or_else(|| workspace::git_branch(&root)),
-            Err(_) => workspace::git_branch(&root),
-        };
-        self.git_status = Some(result);
-        self.graph_commits = git::log_all(&root, 80).unwrap_or_default();
-        self.graph_rows = graph::layout(&self.graph_commits);
-        self.stash_count = git::stash_list(&root).len();
-        self.refresh_hunks();
+        if self.git_refresh.take_again() {
+            self.refresh_git();
+        }
     }
 
     fn refresh_hunks(&mut self) {
@@ -2049,6 +2069,8 @@ impl ForgeRoomApp {
     fn source_control_view(&mut self, ui: &mut egui::Ui, compact: bool) {
         let repo = if self.workspace.is_none() {
             source_control::Repo::NoFolder
+        } else if self.git_status.is_none() && self.git_refresh.busy() {
+            source_control::Repo::Loading
         } else if !self.is_repo {
             source_control::Repo::NoRepository
         } else {
@@ -3471,6 +3493,7 @@ impl eframe::App for ForgeRoomApp {
         }
 
         self.poll_git_job(&context);
+        self.poll_git_refresh();
         self.discard_dialog(&context);
         self.pending_dialog(&context);
         self.update_title(&context);
