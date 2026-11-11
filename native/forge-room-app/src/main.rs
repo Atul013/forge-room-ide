@@ -504,6 +504,22 @@ impl ForgeRoomApp {
                     self.request_close(self.tabs.active);
                 }
             }
+            Command::ReopenClosedTab => match self.tabs.reopen_closed() {
+                Ok(Some(path)) => {
+                    self.status = format!("Reopened {}", path.display());
+                    self.focus_editor = true;
+                }
+                Ok(None) => self.status = "No closed tab to reopen".into(),
+                Err(error) => self.status = format!("Cannot reopen: {error}"),
+            },
+            Command::CloseSavedTabs => {
+                let closed = self.tabs.close_saved();
+                self.status = match closed {
+                    0 => "Every open tab has unsaved changes".into(),
+                    1 => "Closed 1 saved tab".into(),
+                    count => format!("Closed {count} saved tabs"),
+                };
+            }
             Command::NextTab => {
                 self.tabs.next();
                 self.focus_editor = true;
@@ -892,6 +908,8 @@ impl ForgeRoomApp {
             self.switch_view(SidebarView::Room);
         } else if shortcut(ui, command_shift, Key::O) {
             self.open_folder_dialog();
+        } else if shortcut(ui, command_shift, Key::T) {
+            self.run_command(Command::ReopenClosedTab, false);
         } else if shortcut(ui, command, Key::P) {
             self.run_command(Command::QuickOpen, false);
         } else if shortcut(ui, command, Key::F) {
@@ -2060,9 +2078,12 @@ impl ForgeRoomApp {
                 cancel = true;
             }
             if confirm && error.is_none() {
+                // The tabs hold canonical paths, and the old path can only be made canonical
+                // while it still exists.
+                let old_path = tabs::normalize(&path);
                 match file_ops::rename(&path, &name) {
                     Ok(new_path) => {
-                        self.tabs.path_moved(&path, &new_path);
+                        self.tabs.path_moved(&old_path, &new_path);
                         if let Some(workspace) = &mut self.workspace {
                             workspace.refresh();
                         }
