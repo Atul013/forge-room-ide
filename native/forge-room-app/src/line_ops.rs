@@ -35,6 +35,22 @@ pub fn comment_prefix(extension: &str) -> Option<&'static str> {
     })
 }
 
+/// The length of the comment marker at the start of `rest`, when there is one. A marker made of
+/// letters (`REM`) must be a whole word and may be written in any case; symbol markers match as
+/// they are.
+fn marker_len(rest: &str, prefix: &str) -> Option<usize> {
+    let head = rest.get(..prefix.len())?;
+    if prefix.chars().all(char::is_alphabetic) {
+        let whole_word = rest[prefix.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        (head.eq_ignore_ascii_case(prefix) && whole_word).then_some(prefix.len())
+    } else {
+        (head == prefix).then_some(prefix.len())
+    }
+}
+
 /// Comment every selected line with `prefix`, or remove the comments when all of them already
 /// have one. The marker goes at the shallowest indentation so the block stays aligned; blank lines
 /// are left alone. The selection follows its text.
@@ -56,7 +72,7 @@ pub fn toggle_comment(text: &str, start: usize, end: usize, prefix: &str) -> Edi
     }
     let remove = content
         .iter()
-        .all(|line| line[indent_of(line)..].starts_with(prefix));
+        .all(|line| marker_len(&line[indent_of(line)..], prefix).is_some());
     let column = content
         .iter()
         .map(|line| indent_of(line))
@@ -77,7 +93,8 @@ pub fn toggle_comment(text: &str, start: usize, end: usize, prefix: &str) -> Edi
         } else if remove {
             let at = indent_of(line);
             let rest = &line[at..];
-            let marker = prefix.len() + usize::from(rest[prefix.len()..].starts_with(' '));
+            let marker = marker_len(rest, prefix).unwrap_or(0)
+                + usize::from(rest[marker_len(rest, prefix).unwrap_or(0)..].starts_with(' '));
             replacement.push_str(&line[..at]);
             replacement.push_str(&rest[marker..]);
             (at, -(marker as isize))
@@ -158,8 +175,9 @@ pub fn move_lines(text: &str, start: usize, end: usize, up: bool) -> Option<Edit
     }
 }
 
-/// Copy the selected lines above or below themselves. The selection stays on the original lines
-/// when copying up and moves to the copy when copying down, like VS Code.
+/// Copy the selected lines above or below themselves. The selection ends up on the upper copy
+/// when copying up (it keeps its line numbers) and on the lower copy when copying down, like VS
+/// Code.
 pub fn duplicate_lines(text: &str, start: usize, end: usize, down: bool) -> Edit {
     let (first, last) = line_span(text, start, end);
     let (a, b) = (start.min(end), start.max(end));
@@ -194,7 +212,9 @@ pub fn delete_lines(text: &str, start: usize, end: usize) -> Edit {
 /// `id`. Returns true when the text or caret changed.
 pub fn handle(ui: &egui::Ui, id: egui::Id, text: &mut String, extension: &str) -> bool {
     use egui::{Key, Modifiers};
-    if !ui.memory(|memory| memory.has_focus(id)) {
+    // Mixed line endings (a stray CR in the buffer) would make line moves unsafe: leave the keys
+    // to egui there.
+    if !ui.memory(|memory| memory.has_focus(id)) || text.contains('\r') {
         return false;
     }
     enum Command {
@@ -203,7 +223,6 @@ pub fn handle(ui: &egui::Ui, id: egui::Id, text: &mut String, extension: &str) -
         Duplicate(bool),
         Delete,
     }
-    // Specific chords first: matching ignores an extra Shift or Alt.
     let chords = [
         (
             Modifiers::ALT | Modifiers::SHIFT,
@@ -224,10 +243,10 @@ pub fn handle(ui: &egui::Ui, id: egui::Id, text: &mut String, extension: &str) -
         (Modifiers::ALT, Key::ArrowDown, Command::Move(false)),
         (Modifiers::COMMAND, Key::Slash, Command::Comment),
     ];
-    let Some((_, _, command)) = chords
-        .into_iter()
-        .find(|(modifiers, key, _)| ui.input_mut(|input| input.consume_key(*modifiers, *key)))
-    else {
+    // The exact chord: a pattern's extra Shift or Alt must not be ignored.
+    let Some((modifiers, key, command)) = chords.into_iter().find(|(modifiers, key, _)| {
+        ui.input(|input| input.key_pressed(*key) && input.modifiers.matches_exact(*modifiers))
+    }) else {
         return false;
     };
     let Some((start, end)) = editing::selection_bytes(ui, id, text) else {
@@ -241,7 +260,9 @@ pub fn handle(ui: &egui::Ui, id: egui::Id, text: &mut String, extension: &str) -
         Command::Duplicate(down) => Some(duplicate_lines(text, start, end, down)),
         Command::Delete => Some(delete_lines(text, start, end)),
     };
+    // The key is only taken when the command did something.
     let Some(edit) = edit else { return false };
+    ui.input_mut(|input| input.consume_key(modifiers, key));
     text.replace_range(edit.replace.clone(), &edit.replacement);
     editing::place_caret(ui, id, text, edit.selection.0, edit.selection.1);
     true
@@ -301,6 +322,19 @@ mod tests {
         let text = "  x";
         let (_, (a, _)) = apply(text, &toggle_comment(text, 1, 1, "//"));
         assert_eq!(a, 1);
+    }
+
+    #[test]
+    fn rem_is_a_whole_word_in_any_case() {
+        let text = "REMOVE x\nREM y";
+        let (result, _) = apply(text, &toggle_comment(text, 0, text.len(), "REM"));
+        assert_eq!(result, "REM REMOVE x\nREM REM y", "REMOVE is not a comment");
+        let text = "rem a\nRem b\nREM";
+        let (result, _) = apply(text, &toggle_comment(text, 0, text.len(), "REM"));
+        assert_eq!(result, "a\nb\n");
+        // A symbol marker still matches as written.
+        assert_eq!(marker_len("// x", "//"), Some(2));
+        assert_eq!(marker_len("/ x", "//"), None);
     }
 
     #[test]
@@ -434,5 +468,28 @@ mod tests {
         assert!(!handled);
         assert_eq!(same, text);
         assert!(!press(text, 2, Key::ArrowUp, Modifiers::NONE, "rs").1);
+        // Extra modifiers do not turn one chord into another.
+        assert!(
+            !press(
+                text,
+                2,
+                Key::Slash,
+                Modifiers::COMMAND | Modifiers::SHIFT,
+                "rs"
+            )
+            .1
+        );
+        assert!(
+            !press(
+                text,
+                2,
+                Key::K,
+                Modifiers::COMMAND | Modifiers::SHIFT | Modifiers::ALT,
+                "rs"
+            )
+            .1
+        );
+        // A buffer with a stray CR is not touched.
+        assert!(!press("a\r\nb", 3, Key::ArrowUp, Modifiers::ALT, "rs").1);
     }
 }
