@@ -94,6 +94,8 @@ impl Terminal {
             let context = context.clone();
             std::thread::spawn(move || {
                 let mut buffer = [0_u8; 8192];
+                // The last bytes of the previous read: a request may be split between two reads.
+                let mut tail: Vec<u8> = Vec::new();
                 loop {
                     match reader.read(&mut buffer) {
                         Ok(0) | Err(_) => break,
@@ -103,7 +105,11 @@ impl Terminal {
                             parser.process(chunk);
                             // Windows' pseudo-console asks "where is the cursor?" (ESC [ 6 n) and
                             // withholds all output until it is answered.
-                            if chunk.windows(4).any(|window| window == b"[6n") {
+                            let mut joined = std::mem::take(&mut tail);
+                            joined.extend_from_slice(chunk);
+                            let asked = joined.windows(4).any(|window| window == b"\x1b[6n");
+                            tail = joined[joined.len().saturating_sub(3)..].to_vec();
+                            if asked {
                                 let (row, column) = parser.screen().cursor_position();
                                 let reply = format!("[{};{}R", row + 1, column + 1);
                                 if let Ok(mut writer) = writer.lock() {
@@ -616,6 +622,10 @@ pub fn key_bytes(key: Key, modifiers: Modifiers) -> Option<Vec<u8>> {
         Key::Enter if modifiers.shift || modifiers.alt => b"\x1b\r".to_vec(),
         Key::Enter => b"\r".to_vec(),
         Key::Backspace if modifiers.ctrl => vec![0x17],
+        Key::Space if modifiers.ctrl && !modifiers.alt => vec![0x00],
+        Key::OpenBracket if modifiers.ctrl && !modifiers.alt => vec![0x1b],
+        Key::Backslash if modifiers.ctrl && !modifiers.alt => vec![0x1c],
+        Key::CloseBracket if modifiers.ctrl && !modifiers.alt => vec![0x1d],
         Key::Backspace if modifiers.alt => b"\x1b\x7f".to_vec(),
         Key::Backspace => b"\x7f".to_vec(),
         Key::Tab if modifiers.shift => b"\x1b[Z".to_vec(),
@@ -670,7 +680,14 @@ pub fn key_bytes(key: Key, modifiers: Modifiers) -> Option<Vec<u8>> {
 /// between `ESC [ 200 ~` and `ESC [ 201 ~`, so a pasted newline is text and not Enter; for any other
 /// program the line breaks become carriage returns, which is what Enter sends.
 pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
-    let text = text.replace("\r\n", "\n");
+    // Control characters (escape, Ctrl+C ...) are removed from what is pasted: the end marker of a
+    // bracketed paste inside it would end the paste early and run the rest as typed keys, and any
+    // other escape sequence would be read by the program as a command rather than as text.
+    let text: String = text
+        .replace("\r\n", "\n")
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t' | '\r'))
+        .collect();
     if bracketed {
         let mut bytes = b"\x1b[200~".to_vec();
         bytes.extend_from_slice(text.as_bytes());
@@ -688,7 +705,8 @@ fn all_text_of(parser: &mut vt100::Parser, rows: u16, cols: u16) -> String {
     let saved = parser.screen().scrollback();
     parser.screen_mut().set_scrollback(usize::MAX);
     let total = parser.screen().scrollback();
-    let mut lines: Vec<String> = Vec::new();
+    // Each row of text, and whether it continues on the next row (a long line that wrapped).
+    let mut lines: Vec<(String, bool)> = Vec::new();
     // At scrollback `offset` the screen shows lines `total - offset ..` of the whole history.
     let mut offset = total;
     let mut next_line: usize = 0;
@@ -696,7 +714,12 @@ fn all_text_of(parser: &mut vt100::Parser, rows: u16, cols: u16) -> String {
         parser.screen_mut().set_scrollback(offset);
         let first = total - offset;
         let skip = next_line.saturating_sub(first);
-        let chunk: Vec<String> = parser.screen().rows(0, cols).collect();
+        let chunk: Vec<(String, bool)> = parser
+            .screen()
+            .rows(0, cols)
+            .enumerate()
+            .map(|(row, text)| (text, parser.screen().row_wrapped(row as u16)))
+            .collect();
         lines.extend(chunk.into_iter().skip(skip));
         next_line = first + rows;
         if offset == 0 {
@@ -705,11 +728,17 @@ fn all_text_of(parser: &mut vt100::Parser, rows: u16, cols: u16) -> String {
         offset = offset.saturating_sub(rows);
     }
     parser.screen_mut().set_scrollback(saved);
-    let mut text: Vec<&str> = lines.iter().map(|line| line.trim_end()).collect();
-    while text.last().is_some_and(|line| line.is_empty()) {
-        text.pop();
+    // A row that wraps onto the next is joined to it as it was typed; the others end a line.
+    let mut text = String::new();
+    for (row, wrapped) in &lines {
+        if *wrapped {
+            text.push_str(row);
+        } else {
+            text.push_str(row.trim_end());
+            text.push('\n');
+        }
     }
-    text.join("\n")
+    text.trim_end_matches(['\n', ' ']).to_string()
 }
 
 /// Standard xterm colors; the first sixteen are softened to sit well on a dark or light editor.
@@ -1023,5 +1052,42 @@ mod tests {
         terminal.resize(10, 20);
         assert_eq!(terminal.selection, None);
         assert_eq!(terminal.selected_text(), None);
+    }
+
+    #[test]
+    fn pasted_text_cannot_end_a_bracketed_paste_early_or_carry_escape_sequences() {
+        let hostile = "ok\u{1b}[201~\ncalc\n\u{1b}[201~\u{3}";
+        let bytes = paste_bytes(hostile, true);
+        let ends = bytes.windows(6).filter(|w| *w == b"\x1b[201~").count();
+        assert_eq!(ends, 1, "{bytes:?}");
+        assert!(bytes.ends_with(b"\x1b[201~"));
+        let plain = paste_bytes(hostile, false);
+        assert!(
+            !plain.contains(&0x1b) && !plain.contains(&0x03),
+            "{plain:?}"
+        );
+        // Text, tabs and line breaks stay.
+        assert_eq!(paste_bytes("a\tb\nc", false), b"a\tb\rc".to_vec());
+    }
+
+    #[test]
+    fn copying_everything_joins_a_wrapped_line_and_ctrl_punctuation_keys_are_sent() {
+        let mut parser = vt100::Parser::new(5, 20, 100);
+        parser.process("x".repeat(50).as_bytes());
+        parser.process(b"\r\nnext");
+        assert_eq!(
+            all_text_of(&mut parser, 5, 20),
+            format!("{}\nnext", "x".repeat(50))
+        );
+        assert_eq!(key_bytes(Key::Space, Modifiers::CTRL), Some(vec![0x00]));
+        assert_eq!(
+            key_bytes(Key::OpenBracket, Modifiers::CTRL),
+            Some(vec![0x1b])
+        );
+        assert_eq!(key_bytes(Key::Backslash, Modifiers::CTRL), Some(vec![0x1c]));
+        assert_eq!(
+            key_bytes(Key::CloseBracket, Modifiers::CTRL),
+            Some(vec![0x1d])
+        );
     }
 }

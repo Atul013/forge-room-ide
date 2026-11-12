@@ -23,7 +23,7 @@ impl fmt::Display for DocumentError {
             Self::ChangedOnDisk => write!(formatter, "the file changed on disk"),
             Self::TooLarge(bytes) => write!(
                 formatter,
-                "file is too large for this preview ({:.1} MB, limit {} MB)",
+                "file is too large for this preview ({:.2} MB; the limit is {} MB)",
                 *bytes as f64 / 1_048_576.0,
                 MAX_FILE_BYTES / 1_048_576
             ),

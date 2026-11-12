@@ -92,7 +92,11 @@ fn looks_like_a_file(path: &str) -> bool {
 /// Checking such a path makes Windows contact the named machine, which can hand an attacker's
 /// server a login, so terminal output must never cause it.
 fn is_network_or_device_path(path: &str) -> bool {
-    path.starts_with(r"\\") || path.starts_with("//")
+    // Windows reads either kind of slash (and a mix of them) as the start of a network or device
+    // path: `\\host`, `//host`, `\/host`, `/\host`, `\\?\`, `\\.\`.
+    let mut start = path.chars();
+    let is_slash = |c: char| c == '\\' || c == '/';
+    matches!((start.next(), start.next()), (Some(a), Some(b)) if is_slash(a) && is_slash(b))
 }
 
 /// The file a reference points at: an absolute local path as it is, or a relative one inside
@@ -289,5 +293,25 @@ mod tests {
         // CRLF: the carriage return is not part of the line.
         assert_eq!(locate("ab\r\ncd", 1, 99), 2);
         assert_eq!(locate("ab\r\ncd", 2, 2), 5);
+    }
+
+    #[test]
+    fn a_network_path_is_refused_whatever_mix_of_slashes_it_starts_with() {
+        let root = std::env::temp_dir();
+        for path in [
+            r"\\host\share\a.rs",
+            "//host/share/a.rs",
+            r"\/host/share/a.rs",
+            r"/\host\share\a.rs",
+            r"\\?\C:\a.rs",
+            r"\\.\pipe\x",
+        ] {
+            let reference = PathRef {
+                path: path.into(),
+                line: None,
+                column: None,
+            };
+            assert_eq!(resolve(&reference, &root), None, "{path}");
+        }
     }
 }

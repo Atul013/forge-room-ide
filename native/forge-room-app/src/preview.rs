@@ -111,6 +111,14 @@ fn is_web_url(url: &str) -> bool {
 /// with `https://` put in front. Any other explicit scheme is refused.
 pub fn web_url(text: &str) -> Option<String> {
     let text = text.trim();
+    // One address and nothing else: no quotes, spaces or control characters that another program
+    // could read as the end of the address.
+    if text
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || "\"'<>\\^`|{}".contains(c))
+    {
+        return None;
+    }
     if text.contains("://") {
         return is_web_url(text).then(|| text.to_string());
     }
@@ -360,5 +368,20 @@ mod tests {
         assert!(!is_web_url("http://user@host/"));
         assert!(!is_web_url("http://"));
         assert!(!is_web_url("localhost:3000"));
+    }
+
+    #[test]
+    fn a_web_address_is_one_address_and_nothing_else() {
+        for text in [
+            "https://example.com\" & calc & \"",
+            "https://example.com/a b",
+            "https://example.com/\n--flag",
+            "https://exa'mple.com",
+            "https://example.com/<x>",
+        ] {
+            assert_eq!(web_url(text), None, "{text:?}");
+        }
+        assert!(web_url("https://example.com/a?b=1&c=2").is_some());
+        assert!(web_url("localhost:5173").is_some());
     }
 }

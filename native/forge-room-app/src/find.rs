@@ -79,7 +79,12 @@ impl Matcher {
                 needle,
                 case_sensitive,
                 whole_word,
-            } => (literal(text, needle, *case_sensitive, *whole_word), false),
+            } => {
+                let found = literal(text, needle, *case_sensitive, *whole_word);
+                // At the limit the list may be cut short: callers that change text must know.
+                let capped = found.len() >= MAX_MATCHES;
+                (found, capped)
+            }
             Kind::Pattern(regex) => {
                 let mut bytes: Vec<Range<usize>> = Vec::new();
                 let mut gave_up = false;
@@ -93,6 +98,7 @@ impl Matcher {
                         bytes.push(found.start()..found.end());
                     }
                     if bytes.len() >= MAX_MATCHES {
+                        gave_up = true;
                         break;
                     }
                 }

@@ -260,6 +260,13 @@ impl SearchView {
                     if replacement.changed() {
                         self.confirming = false;
                     }
+                    if self.mode.regex {
+                        ui.label(
+                            RichText::new("The replacement is plain text: $1 is not a group.")
+                                .size(12.0)
+                                .color(theme::text_dim()),
+                        );
+                    }
                 });
         }
         if let Some(since) = self.dirty_since
