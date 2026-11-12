@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-12 Codex: Generated twelve native Forge Room UI concept images in `docs/design/concept-images/2026-11-12/` covering the workspace, lobby, chat, tasks, Git, run/tests/debug, Studio, Ship Mode, first run, activity, extensions, and Pocket. User redirected current effort away from in-app AI work; the open upstream AI-heavy PR was not integrated. Concepts are visual references, not runtime claims.
+
 - 2026-11-09 Codex: PR #29 local Room decisions passed Windows core and graphical CI and merged. PRs #27-#29 now provide local Chat, task links, and decisions; desktop and two-client acceptance remain open. No open PRs remain on the main repository.
 
 - 2026-11-09 Codex: PR #28 task-linked local Chat passed Windows CI and merged. Started local decision markers and a decisions-only Chat filter; compatibility with old messages is checked in core. Network sync and desktop acceptance remain open.
