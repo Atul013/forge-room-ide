@@ -26,6 +26,11 @@ fn is_delimiter(c: char) -> bool {
 /// path whose last component has a short alphanumeric extension, optionally followed by
 /// `:line` or `:line:column`. URLs and plain numbers are not references.
 pub fn ref_at(line: &str, column: usize) -> Option<PathRef> {
+    // A Windows path may hold spaces (`C:\Users\Jane Doe\my proj\run.ps1:3`): look for one around
+    // the cell first, since the word-by-word reading below would cut it at the first space.
+    if let Some(found) = spaced_windows_path(line, column) {
+        return Some(found);
+    }
     let chars: Vec<char> = line.chars().collect();
     if column >= chars.len() || is_delimiter(chars[column]) {
         return None;
@@ -40,6 +45,44 @@ pub fn ref_at(line: &str, column: usize) -> Option<PathRef> {
     }
     let word: String = chars[start..end].iter().collect();
     parse(word.trim_end_matches(['.', ':', '!', '?']))
+}
+
+/// A drive-letter path with spaces in it that covers character `column` of `line`, with an optional
+/// `:line` and `:column`. The file name must end in an extension that is followed by a delimiter, so
+/// `Jane.Doe` in a folder name does not end the path.
+fn spaced_windows_path(line: &str, column: usize) -> Option<PathRef> {
+    use std::sync::OnceLock;
+    static PATTERN: OnceLock<fancy_regex::Regex> = OnceLock::new();
+    let pattern = PATTERN.get_or_init(|| {
+        fancy_regex::Regex::new(
+            r#"[A-Za-z]:[\\/][^:"<>|*?\r\n]*?\.[A-Za-z0-9]{1,8}(?::(\d+))?(?::(\d+))?(?=[\s"'\)\],;]|$)"#,
+        )
+        .expect("the pattern is valid")
+    });
+    // Character index of each byte offset, to compare with the clicked cell.
+    let at = |byte: usize| line[..byte].chars().count();
+    for found in pattern.captures_iter(line).flatten() {
+        let whole = found.get(0)?;
+        if !whole.as_str().contains(' ') {
+            continue; // no space: the ordinary reading handles it
+        }
+        if at(whole.start()) <= column && column < at(whole.end()) {
+            let number = |group: usize| {
+                found
+                    .get(group)
+                    .and_then(|m| m.as_str().parse::<usize>().ok())
+            };
+            let path_end = found
+                .get(1)
+                .map_or(whole.end(), |m| m.start().saturating_sub(1));
+            return Some(PathRef {
+                path: line[whole.start()..path_end].to_string(),
+                line: number(1),
+                column: number(2),
+            });
+        }
+    }
+    None
 }
 
 fn parse(word: &str) -> Option<PathRef> {
@@ -313,5 +356,22 @@ mod tests {
             };
             assert_eq!(resolve(&reference, &root), None, "{path}");
         }
+    }
+
+    #[test]
+    fn a_windows_path_with_spaces_is_one_reference() {
+        let text = r"At C:\Users\Jane Doe\my proj\run.ps1:3 char:1";
+        let found = ref_at(text, 20).expect("a reference");
+        assert_eq!(found.path, r"C:\Users\Jane Doe\my proj\run.ps1");
+        assert_eq!((found.line, found.column), (Some(3), None));
+        let text = r"error: C:\Users\Jane Doe\src\main.rs:3:1 expected";
+        let found = ref_at(text, 30).expect("a reference");
+        assert_eq!(found.path, r"C:\Users\Jane Doe\src\main.rs");
+        assert_eq!((found.line, found.column), (Some(3), Some(1)));
+        // A path without spaces still reads as before, and a dot in a folder name is not the end.
+        let found = ref_at(r"C:\Users\Jane.Doe\a b\x.rs:7", 3).expect("a reference");
+        assert_eq!(found.path, r"C:\Users\Jane.Doe\a b\x.rs");
+        assert_eq!(found.line, Some(7));
+        assert_eq!(ref_at(r"nothing here", 3), None);
     }
 }

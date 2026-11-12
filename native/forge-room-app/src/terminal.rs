@@ -5,7 +5,7 @@ use crate::theme;
 use eframe::egui::{self, Color32, Event, EventFilter, Key, Modifiers, Sense};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -13,7 +13,8 @@ pub struct Terminal {
     parser: Arc<Mutex<vt100::Parser>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Box<dyn MasterPty + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    /// Behind a lock so that `has_exited` (which only borrows) can ask the process.
+    child: Mutex<Box<dyn Child + Send + Sync>>,
     exited: Arc<AtomicBool>,
     size: (u16, u16),
     /// Dragged selection over the visible grid: (row, column) of both ends.
@@ -138,7 +139,7 @@ impl Terminal {
             parser,
             writer,
             master: pair.master,
-            child,
+            child: Mutex::new(child),
             exited,
             size: (size.rows, size.cols),
             selection: None,
@@ -224,7 +225,18 @@ impl Terminal {
     }
 
     pub fn has_exited(&self) -> bool {
-        self.exited.load(Ordering::Relaxed)
+        if self.exited.load(Ordering::Relaxed) {
+            return true;
+        }
+        // On Windows the output pipe stays open after the shell has ended (`exit`), so the reader
+        // never sees the end: the process itself is asked.
+        if let Ok(mut child) = self.child.lock()
+            && matches!(child.try_wait(), Ok(Some(_)))
+        {
+            self.exited.store(true, Ordering::Relaxed);
+            return true;
+        }
+        false
     }
 
     pub fn send(&mut self, bytes: &[u8]) {
@@ -526,7 +538,27 @@ impl Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        if let Ok(mut child) = self.child.lock() {
+            // The shell's whole tree (a dev server it started, a ping): killing only the shell can
+            // leave those running with nothing to show their output.
+            #[cfg(windows)]
+            if let Some(pid) = child.process_id() {
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new(
+                    std::env::var_os("SystemRoot")
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+                        .join("System32")
+                        .join("taskkill.exe"),
+                )
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .creation_flags(0x0800_0000)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            }
+            let _ = child.kill();
+        }
     }
 }
 
@@ -1089,5 +1121,25 @@ mod tests {
             key_bytes(Key::CloseBracket, Modifiers::CTRL),
             Some(vec![0x1d])
         );
+    }
+
+    /// Needs a console session (ConPTY), so it is run by hand: `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_shell_that_was_exited_is_noticed() {
+        let context = egui::Context::default();
+        let mut terminal = Terminal::spawn(&context, None).expect("spawn shell");
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        assert!(!terminal.has_exited());
+        terminal.send(b"exit\r");
+        let mut noticed = false;
+        for _ in 0..60 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if terminal.has_exited() {
+                noticed = true;
+                break;
+            }
+        }
+        assert!(noticed, "the shell ended but has_exited stayed false");
     }
 }
