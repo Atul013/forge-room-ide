@@ -49,6 +49,8 @@ pub struct State {
     login_requested: Option<&'static str>,
     /// Full access was picked and waits for the user's confirmation.
     confirm_full: bool,
+    /// The note that Codex does not remember earlier messages was shown in this chat.
+    noted_fresh_sessions: bool,
 }
 
 impl Default for State {
@@ -69,6 +71,7 @@ impl Default for State {
             programs: None,
             login_requested: None,
             confirm_full: false,
+            noted_fresh_sessions: false,
         }
     }
 }
@@ -131,7 +134,11 @@ impl State {
                 Provider::LmStudio => "lmstudio",
             }
             .into(),
-            self.model.clone(),
+            if agent::valid_model(&self.model) {
+                self.model.clone()
+            } else {
+                String::new()
+            },
             self.effort.clone(),
             if self.mode == Mode::ReadOnly {
                 "read"
@@ -191,6 +198,25 @@ impl State {
             return;
         }
         let provider = self.provider;
+        // A model name that is not a plain word is not passed on: say so instead of quietly using
+        // the default.
+        if !self.model.is_empty() && !agent::valid_model(&self.model) {
+            self.note(format!(
+                "\"{}\" is not a valid model name (letters, digits and . - _ : / [ ]), so the default                  model is used.",
+                self.model
+            ));
+        }
+        // Codex has no conversation to continue from here: say it once, so a follow-up that needs
+        // the earlier messages is not a surprise.
+        if provider.uses_codex()
+            && !self.noted_fresh_sessions
+            && self.messages.iter().any(|m| m.author == Author::Assistant)
+        {
+            self.noted_fresh_sessions = true;
+            self.note(
+                "Codex starts a new conversation for every message here: it does not remember the                  earlier ones, so include what it needs.",
+            );
+        }
         // Installed since the panel last looked? Look again before saying it is missing.
         if self.program(provider).is_none() {
             self.programs = None;
@@ -269,7 +295,16 @@ impl State {
                     finished = true;
                     match error {
                         Some(error) if error == "Stopped" => self.note("Stopped"),
-                        Some(error) => self.fail(error),
+                        Some(error) => {
+                            self.fail(error);
+                            // A conversation that failed (an expired or unknown session) is not
+                            // continued by the next message: that would fail the same way for ever.
+                            if self.session.take().is_some() {
+                                self.note(
+                                    "The conversation could not be continued; your next message                                      starts a new one.",
+                                );
+                            }
+                        }
                         None => {
                             if let Some(cost) = cost {
                                 self.note(format!("Done (cost ${cost:.3})"));
@@ -300,6 +335,7 @@ impl State {
         self.started = None;
         self.messages.clear();
         self.session = None;
+        self.noted_fresh_sessions = false;
         self.confirm_full = false;
     }
 
@@ -621,7 +657,8 @@ enum Block {
 fn blocks(text: &str) -> Vec<Block> {
     let mut result = Vec::new();
     let mut paragraph: Vec<&str> = Vec::new();
-    let mut code: Option<Vec<&str>> = None;
+    // The length of the opening fence and the lines inside it.
+    let mut code: Option<(usize, Vec<&str>)> = None;
     let flush = |paragraph: &mut Vec<&str>, result: &mut Vec<Block>| {
         if !paragraph.is_empty() {
             result.push(Block::Paragraph(paragraph.join("\n")));
@@ -629,8 +666,10 @@ fn blocks(text: &str) -> Vec<Block> {
         }
     };
     for line in text.lines() {
-        if let Some(lines) = &mut code {
-            if line.trim_start().starts_with("```") {
+        if let Some((length, lines)) = &mut code {
+            // Only a line of nothing but backticks, at least as many as opened it, closes the block.
+            let closing = line.trim();
+            if closing.len() >= *length && closing.chars().all(|c| c == '`') {
                 result.push(Block::Code(lines.join("\n")));
                 code = None;
             } else {
@@ -639,10 +678,15 @@ fn blocks(text: &str) -> Vec<Block> {
             continue;
         }
         let trimmed = line.trim_start();
-        let indent = line.len() - trimmed.len();
-        if trimmed.starts_with("```") {
+        // A tab counts as two spaces; a level is two spaces.
+        let depth = line[..line.len() - trimmed.len()]
+            .chars()
+            .map(|c| if c == '\t' { 2 } else { 1 })
+            .sum::<usize>()
+            / 2;
+        if let Some(length) = fence_length(trimmed) {
             flush(&mut paragraph, &mut result);
-            code = Some(Vec::new());
+            code = Some((length, Vec::new()));
         } else if trimmed.is_empty() {
             flush(&mut paragraph, &mut result);
         } else if let Some(heading) = trimmed
@@ -663,15 +707,17 @@ fn blocks(text: &str) -> Vec<Block> {
             .or_else(|| trimmed.strip_prefix("+ "))
         {
             flush(&mut paragraph, &mut result);
-            result.push(Block::Item(indent / 2, "•".into(), item.trim().to_string()));
-        } else if let Some((number, rest)) = trimmed.split_once(". ")
+            result.push(Block::Item(depth, "•".into(), item.trim().to_string()));
+        } else if let Some((number, rest)) = trimmed
+            .split_once(". ")
+            .or_else(|| trimmed.split_once(") "))
             && !number.is_empty()
             && number.len() <= 3
             && number.chars().all(|c| c.is_ascii_digit())
         {
             flush(&mut paragraph, &mut result);
             result.push(Block::Item(
-                indent / 2,
+                depth,
                 format!("{number}."),
                 rest.trim().to_string(),
             ));
@@ -680,11 +726,18 @@ fn blocks(text: &str) -> Vec<Block> {
         }
     }
     // An unclosed fence is still shown as code.
-    if let Some(lines) = code {
+    if let Some((_, lines)) = code {
         result.push(Block::Code(lines.join("\n")));
     }
     flush(&mut paragraph, &mut result);
     result
+}
+
+/// The length of the backtick fence that opens a code block on this line, when it is one: three or
+/// more backticks and an info string without backticks (so "```npm install```" is not a fence).
+fn fence_length(trimmed: &str) -> Option<usize> {
+    let length = trimmed.chars().take_while(|c| *c == '`').count();
+    (length >= 3 && !trimmed[length..].contains('`')).then_some(length)
 }
 
 /// How a span of inline text is drawn.
@@ -692,6 +745,25 @@ fn blocks(text: &str) -> Vec<Block> {
 struct Span {
     bold: bool,
     code: bool,
+}
+
+/// Where the `**` that closes a bold span in `after` is: the first one that follows a character that
+/// is not a space (and is not the very start).
+fn closing_stars(after: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(found) = after[from..].find("**") {
+        let at = from + found;
+        if at > 0
+            && after[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| !c.is_whitespace())
+        {
+            return Some(at);
+        }
+        from = at + 2;
+    }
+    None
 }
 
 /// `text` split at `**bold**` and `` `code` `` markers. A marker that is never closed stays as
@@ -705,10 +777,14 @@ fn spans(text: &str) -> Vec<(String, Span)> {
             result.push((std::mem::take(plain), Span::default()));
         }
     };
+    // The character before `rest`, to tell an opening `**` from a stray one (`src/**/*.rs`).
+    let mut previous: Option<char> = None;
     while !rest.is_empty() {
-        if let Some(after) = rest.strip_prefix("**")
-            && let Some(end) = after.find("**")
-            && end > 0
+        let may_open = previous.is_none_or(|c| c.is_whitespace() || "([{\"'".contains(c));
+        if may_open
+            && let Some(after) = rest.strip_prefix("**")
+            && after.chars().next().is_some_and(|c| !c.is_whitespace())
+            && let Some(end) = closing_stars(after)
         {
             push(&mut result, &mut plain);
             result.push((
@@ -719,6 +795,7 @@ fn spans(text: &str) -> Vec<(String, Span)> {
                 },
             ));
             rest = &after[end + 2..];
+            previous = None;
         } else if let Some(after) = rest.strip_prefix('`')
             && let Some(end) = after.find('`')
             && end > 0
@@ -732,10 +809,12 @@ fn spans(text: &str) -> Vec<(String, Span)> {
                 },
             ));
             rest = &after[end + 1..];
+            previous = None;
         } else {
             let mut chars = rest.chars();
             if let Some(c) = chars.next() {
                 plain.push(c);
+                previous = Some(c);
             }
             rest = chars.as_str();
         }
@@ -1230,6 +1309,51 @@ mod tests {
         assert!(
             widths.iter().all(|w| (*w - 364.0).abs() < 2.0),
             "{widths:?}"
+        );
+    }
+
+    #[test]
+    fn fences_follow_their_length_and_stray_markers_stay_as_written() {
+        // A longer fence holds a shorter one; a line that only mentions a fence does not close it.
+        assert_eq!(
+            blocks("Example:\n````\n```\n# Title\n```\nmore\n````\nafter"),
+            vec![
+                Block::Paragraph("Example:".into()),
+                Block::Code("```\n# Title\n```\nmore".into()),
+                Block::Paragraph("after".into()),
+            ]
+        );
+        assert_eq!(
+            blocks("```\nline one\n```rust is mentioned here\nline three\n```\nafter"),
+            vec![
+                Block::Code("line one\n```rust is mentioned here\nline three".into()),
+                Block::Paragraph("after".into()),
+            ]
+        );
+        // A one-line triple-backtick span is text, not a fence that swallows the rest.
+        assert_eq!(
+            blocks("```npm install```\n\nThen run it.\n\n- one"),
+            vec![
+                Block::Paragraph("```npm install```".into()),
+                Block::Paragraph("Then run it.".into()),
+                Block::Item(0, "•".into(), "one".into()),
+            ]
+        );
+        // `**` needs text right inside it and a word break before it.
+        let plain = |text: &str| spans(text).iter().all(|(_, span)| !span.bold);
+        assert!(plain("compute 2 ** 3 and 4 ** 5"));
+        assert!(plain("src/**/*.rs and tests/**/*.rs"));
+        assert!(!plain("a **bold** word"));
+        assert!(!plain("(**bold**)"));
+        // Tabs nest lists, and `1)` is a numbered list too.
+        assert_eq!(
+            blocks("- a\n\t- b\n\t\t- c\n1) step"),
+            vec![
+                Block::Item(0, "•".into(), "a".into()),
+                Block::Item(1, "•".into(), "b".into()),
+                Block::Item(2, "•".into(), "c".into()),
+                Block::Item(0, "1.".into(), "step".into()),
+            ]
         );
     }
 }
