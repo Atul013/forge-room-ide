@@ -2911,6 +2911,10 @@ impl ForgeRoomApp {
             self.confirm = Some(Confirm::AbortOperation);
             return;
         }
+        if matches!(action, Action::Amend) && upstream && ahead == 0 {
+            self.confirm = Some(Confirm::AmendPushed);
+            return;
+        }
         let outcome: Result<String, String> = match action {
             Action::None | Action::Trust => return,
             Action::Refresh => {
@@ -3445,6 +3449,14 @@ impl ForgeRoomApp {
                         "Run cargo check",
                     )
                 }
+                Confirm::AmendPushed => (
+                    "Amend a pushed commit",
+                    "The last commit is already on the remote. Amending replaces it, so the next \
+                     push is refused until the branch is force-pushed, and a pull would merge the \
+                     old and the new commit. Amend anyway?"
+                        .to_string(),
+                    "Amend anyway",
+                ),
                 Confirm::EndTerminal => (
                     "End terminal",
                     format!(
@@ -3477,6 +3489,19 @@ impl ForgeRoomApp {
                                 Ok(text) => format!(
                                     "{text}. To bring it back: git stash store <that commit>"
                                 ),
+                                Err(error) => format!("Git: {error}"),
+                            };
+                            self.refresh_git();
+                        }
+                    }
+                    Confirm::AmendPushed => {
+                        if let Some(root) = self.git_root() {
+                            let message = self.sc.message.trim().to_string();
+                            self.status = match git::amend(&root, &message) {
+                                Ok(hash) => {
+                                    self.sc.message.clear();
+                                    format!("Amended commit {hash}")
+                                }
                                 Err(error) => format!("Git: {error}"),
                             };
                             self.refresh_git();
@@ -5276,6 +5301,9 @@ enum Confirm {
     RestartTerminal,
     /// Abort the merge, cherry-pick, revert or rebase in progress.
     AbortOperation,
+    /// Amend a last commit that is already on the remote: the next push is refused until the
+    /// branch is force-pushed, and a pull would merge the old and the new commit.
+    AmendPushed,
     /// Quit while shells are still running.
     QuitWithTerminals,
 }
