@@ -12,6 +12,7 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 - Find and Search in Files: whole word and regular expressions; invalid patterns are reported. Search has a Replace with box and Replace All (literal text, with a confirmation): each file keeps its encoding and line endings, files open with unsaved changes are skipped and listed.
 - Quick Open and Search in Files follow `.gitignore` in a repository.
 - File: Toggle Auto Save (off by default) saves file tabs once you stop typing for a moment; a file that changed on disk is left for the usual conflict prompt.
+- Explorer keyboard: Ctrl+Shift+E or a click gives the tree the keyboard; Up, Down, Home, End move, Right opens a folder and steps into it, Left closes it and steps out, Enter opens a file or toggles a folder, F2 renames and Delete moves to the Recycle Bin (after the usual question).
 - Explorer: Copy relative path and Reveal in File Explorer (also palette commands for the active file); rename files and folders; Delete… moves them to the Recycle Bin (fixed local drives only, never links, never the open folder; saved tabs close, tabs with unsaved changes stay). Tabs: Ctrl+Shift+T reopens the last closed tab; View: Close Saved Tabs. File > Open Recent.
 - Source Control: merge a branch, abort a merge, delete a branch, apply (and keep) or drop the latest stash, create and delete tags from the command palette; Changes and History pages; Git status is read on a worker thread.
 - Syntax colours for TypeScript, JSX, TOML, INI and dotenv files (borrowed from the closest bundled syntax).
@@ -42,7 +43,7 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 - Run/Debug, Extensions, Debug Console and Ports are placeholders (Problems lists cargo check output only).
 - AI features (model-backed chat, editor actions), LSP and DAP, extensions, a task runner.
 - Rebase, line history, minimap, multi-cursor and split editors.
-- Keyboard control of the Explorer tree (rows are mouse-only; F2 and Delete do not work yet).
+- Explorer rows still cannot be reached with Tab (the arrow keys work once the tree is clicked or opened with Ctrl+Shift+E).
 - Realtime room transport, invitations, encryption and reconnect.
 - Theme/profile import, accessibility and high-DPI acceptance.
 - A signed release.

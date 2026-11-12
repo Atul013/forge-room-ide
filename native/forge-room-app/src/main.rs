@@ -215,6 +215,8 @@ struct ForgeRoomApp {
     ai_was_busy: bool,
     /// Sidebar width, right dock width and terminal height as last drawn, in points.
     panel_sizes: (u16, u16, u16),
+    /// Where the keyboard is in the Explorer tree.
+    explorer_state: explorer::State,
     /// Bumped by View: Reset Layout: the panels get new ids, so they forget their remembered size.
     layout_generation: u32,
     /// The terminal panel fills most of the window.
@@ -368,6 +370,7 @@ impl ForgeRoomApp {
             recovery_warned: false,
             ai_was_busy: false,
             panel_sizes: (250, 364, 200),
+            explorer_state: explorer::State::default(),
             layout_generation: 0,
             terminal_maximized: false,
             split_pair: None,
@@ -2311,6 +2314,10 @@ impl ForgeRoomApp {
             if view == SidebarView::SourceControl {
                 self.refresh_git();
             }
+            // Ctrl+Shift+E hands the keyboard to the tree, so the arrows work at once.
+            if view == SidebarView::Explorer {
+                self.explorer_state.focus();
+            }
         }
     }
 
@@ -3229,7 +3236,24 @@ impl ForgeRoomApp {
 
     fn explorer_view(&mut self, ui: &mut egui::Ui) {
         let active = self.tabs.active_path().map(|path| path.to_path_buf());
-        match explorer::show(ui, &mut self.workspace, active.as_deref()) {
+        // The tree reads the keyboard only when nothing else wants it: no dialog, no text box, no
+        // terminal.
+        let keys_enabled = self.pending.is_none()
+            && !self.terminal_has_focus
+            && self.delete.is_none()
+            && self.rename.is_none()
+            && self.new_folder_parent.is_none()
+            && self.confirm.is_none()
+            && self.trust_prompt.is_none()
+            && !self.palette.open
+            && !self.egui_ctx.text_edit_focused();
+        match explorer::show(
+            ui,
+            &mut self.workspace,
+            active.as_deref(),
+            &mut self.explorer_state,
+            keys_enabled,
+        ) {
             explorer::Action::None => {}
             explorer::Action::OpenFile(path) => self.open_path(path),
             explorer::Action::OpenFolder => self.open_folder_dialog(),
