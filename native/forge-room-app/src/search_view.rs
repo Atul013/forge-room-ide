@@ -311,7 +311,13 @@ impl SearchView {
                 seen.dedup();
                 seen.len()
             };
-            let text = if let Some(error) = &results.error {
+            let text = if results.files_cut && results.hits.is_empty() && results.error.is_none() {
+                format!(
+                    "No results in {} files (only the first {} files of this folder are searched)",
+                    results.files_scanned,
+                    search::MAX_LISTED
+                )
+            } else if let Some(error) = &results.error {
                 format!("Invalid pattern: {}", error.lines().next().unwrap_or(""))
             } else if results.hits.is_empty() {
                 format!("No results in {} files", results.files_scanned)

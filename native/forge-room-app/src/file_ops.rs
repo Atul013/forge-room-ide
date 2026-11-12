@@ -5,9 +5,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const RESERVED: [&str; 22] = [
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+const RESERVED: [&str; 24] = [
+    "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "COM1", "COM2", "COM3", "COM4", "COM5",
+    "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+    "LPT9",
 ];
 
 /// Whether `path` itself is a symbolic link or a junction (a reparse point).
@@ -493,5 +494,12 @@ mod tests {
         // Remove the junction itself first, so cleaning up cannot follow it.
         let _ = fs::remove_dir(project.join("link"));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_console_device_names_are_reserved_too() {
+        assert!(valid_name("CONIN$").is_err());
+        assert!(valid_name("CONOUT$").is_err());
+        assert!(valid_name("conin$.txt").is_err());
     }
 }

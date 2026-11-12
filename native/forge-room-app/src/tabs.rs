@@ -184,16 +184,24 @@ impl Tabs {
         self.active = self.tabs.len() - 1;
     }
 
+    /// Whether two paths name the same file: equal, or (on Windows) equal apart from letter case, as
+    /// after a file was renamed from `a.txt` to `A.txt` outside the editor.
+    fn same_path(a: &Path, b: &Path) -> bool {
+        a == b
+            || (cfg!(windows)
+                && a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase())
+    }
+
     /// Open `path`, or just activate its tab when it is already open.
     pub fn open_file(&mut self, path: &Path) -> Result<(), DocumentError> {
         let path = normalize(path);
         // A file that is open again is no longer a closed tab to bring back.
         self.closed.retain(|known| known != &path);
-        if let Some(index) = self
-            .tabs
-            .iter()
-            .position(|tab| tab.doc.path() == Some(path.as_path()))
-        {
+        if let Some(index) = self.tabs.iter().position(|tab| {
+            tab.doc
+                .path()
+                .is_some_and(|open| Self::same_path(open, &path))
+        }) {
             self.active = index;
             return Ok(());
         }

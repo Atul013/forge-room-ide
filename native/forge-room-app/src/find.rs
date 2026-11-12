@@ -46,6 +46,12 @@ impl Matcher {
                 },
             });
         }
+        // The pattern alone must be a valid one: inside the whole-word wrapper `a)|(b` would close
+        // the wrapper's group and be accepted as something else.
+        fancy_regex::RegexBuilder::new(query)
+            .backtrack_limit(200_000)
+            .build()
+            .map_err(|error| error.to_string())?;
         let mut pattern = query.to_string();
         if mode.whole_word {
             // No word character right before or after the match, whatever the pattern's own
@@ -410,5 +416,21 @@ mod tests {
         assert_eq!(next_match(&matches, 5), Some(1));
         assert_eq!(next_match(&matches, 13), Some(0));
         assert_eq!(next_match(&[], 0), None);
+    }
+
+    #[test]
+    fn a_pattern_that_is_not_valid_alone_is_not_accepted_inside_the_whole_word_wrapper() {
+        let plain = Mode {
+            regex: true,
+            ..Mode::default()
+        };
+        let whole = Mode {
+            regex: true,
+            whole_word: true,
+            ..Mode::default()
+        };
+        assert!(Matcher::new("a)|(b", plain).is_err());
+        assert!(Matcher::new("a)|(b", whole).is_err());
+        assert!(Matcher::new("a|b", whole).is_ok());
     }
 }
