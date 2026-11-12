@@ -4256,6 +4256,15 @@ impl ForgeRoomApp {
                     cwd.as_deref(),
                     self.trusted,
                 );
+                // "Sign in" in the panel opens a terminal that runs the provider's own login.
+                if let Some(command) = self.ai.take_login_request() {
+                    self.show_terminal = true;
+                    self.bottom_tab = BottomTab::Terminal;
+                    self.spawn_terminal(true);
+                    if let Some(terminal) = self.terminals.get_mut(self.active_terminal) {
+                        terminal.send(format!("{command}\r").as_bytes());
+                    }
+                }
             }
         }
     }

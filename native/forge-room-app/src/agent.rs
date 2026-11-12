@@ -14,22 +14,44 @@ use std::sync::{Arc, Mutex, mpsc};
 pub enum Provider {
     Claude,
     Codex,
+    /// Codex running a model on this computer through Ollama.
+    Ollama,
+    /// Codex running a model on this computer through LM Studio.
+    LmStudio,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 2] = [Provider::Claude, Provider::Codex];
+    pub const ALL: [Provider; 4] = [
+        Provider::Claude,
+        Provider::Codex,
+        Provider::Ollama,
+        Provider::LmStudio,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Provider::Claude => "Claude Code",
             Provider::Codex => "Codex",
+            Provider::Ollama => "Ollama (local)",
+            Provider::LmStudio => "LM Studio (local)",
         }
     }
 
+    /// Whether the Codex program runs it (and its JSON events are read).
+    pub fn uses_codex(self) -> bool {
+        self != Provider::Claude
+    }
+
     fn program(self) -> &'static str {
+        if self.uses_codex() { "codex" } else { "claude" }
+    }
+
+    /// The command that signs in to the provider, typed into a terminal by the panel's button.
+    pub fn login_command(self) -> Option<&'static str> {
         match self {
-            Provider::Claude => "claude",
-            Provider::Codex => "codex",
+            Provider::Claude => Some("claude auth login"),
+            Provider::Codex => Some("codex login"),
+            Provider::Ollama | Provider::LmStudio => None,
         }
     }
 
@@ -109,9 +131,10 @@ impl Mode {
 
 /// The effort levels each provider accepts.
 pub fn efforts(provider: Provider) -> &'static [&'static str] {
-    match provider {
-        Provider::Claude => &["low", "medium", "high", "xhigh", "max"],
-        Provider::Codex => &["minimal", "low", "medium", "high"],
+    if provider.uses_codex() {
+        &["minimal", "low", "medium", "high"]
+    } else {
+        &["low", "medium", "high", "xhigh", "max"]
     }
 }
 
@@ -189,12 +212,21 @@ pub fn arguments(request: &Request) -> Vec<String> {
                 args.extend(["--resume".into(), id.to_string()]);
             }
         }
-        Provider::Codex => {
+        Provider::Codex | Provider::Ollama | Provider::LmStudio => {
             args.extend([
                 "exec".into(),
                 "--json".into(),
                 "--skip-git-repo-check".into(),
             ]);
+            // A model that runs on this computer, through Ollama or LM Studio.
+            let local = match request.provider {
+                Provider::Ollama => Some("ollama"),
+                Provider::LmStudio => Some("lmstudio"),
+                _ => None,
+            };
+            if let Some(local) = local {
+                args.extend(["--oss".into(), "--local-provider".into(), local.into()]);
+            }
             let sandbox = match request.mode {
                 Mode::ReadOnly => "read-only",
                 Mode::Edit => "workspace-write",
@@ -204,7 +236,7 @@ pub fn arguments(request: &Request) -> Vec<String> {
             if valid_model(&request.model) {
                 args.extend(["--model".into(), request.model.clone()]);
             }
-            if efforts(Provider::Codex).contains(&request.effort.as_str()) {
+            if efforts(request.provider).contains(&request.effort.as_str()) {
                 args.extend([
                     "-c".into(),
                     format!("model_reasoning_effort={}", request.effort),
@@ -525,9 +557,10 @@ pub fn start(
                     }
                     let text = String::from_utf8_lossy(&line);
                     let text = text.trim_end();
-                    let events = match provider {
-                        Provider::Claude => parse_claude(text),
-                        Provider::Codex => parse_codex(text),
+                    let events = if provider.uses_codex() {
+                        parse_codex(text)
+                    } else {
+                        parse_claude(text)
                     };
                     for event in events {
                         finished |= matches!(event, Event::Done { .. });

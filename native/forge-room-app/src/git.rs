@@ -1165,6 +1165,8 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         run(&dir, &["init", "-q"]).unwrap();
+        // Byte-exact fixtures must not inherit a Windows-wide autocrlf setting.
+        run(&dir, &["config", "core.autocrlf", "false"]).unwrap();
         dir
     }
 
@@ -1320,24 +1322,11 @@ mod tests {
             return;
         }
         let (dir, _main) = merge_fixture();
-        fs::write(
-            dir.join("a.txt"),
-            "changed
-",
-        )
-        .unwrap();
+        fs::write(dir.join("a.txt"), "changed\n").unwrap();
         stash_push(&dir, "work").unwrap();
         assert_eq!(stash_list(&dir).len(), 1);
         stash_apply(&dir, 0).unwrap();
-        assert_eq!(
-            fs::read_to_string(dir.join("a.txt")).unwrap().replace(
-                "
-", "
-"
-            ),
-            "changed
-"
-        );
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "changed\n");
         // Applied, not popped: still in the list.
         assert_eq!(stash_list(&dir).len(), 1);
         stash_drop(&dir, 0).unwrap();

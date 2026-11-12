@@ -43,8 +43,10 @@ pub struct State {
     run: Option<agent::Run>,
     /// When the running agent was started.
     started: Option<std::time::Instant>,
-    /// Where each provider's program was found, looked up once.
+    /// Where each program was found (Claude Code's, Codex's), looked up once.
     programs: Option<[Option<PathBuf>; 2]>,
+    /// "Sign in" was clicked: the command for the terminal to run.
+    login_requested: Option<&'static str>,
     /// Full access was picked and waits for the user's confirmation.
     confirm_full: bool,
 }
@@ -65,6 +67,7 @@ impl Default for State {
             run: None,
             started: None,
             programs: None,
+            login_requested: None,
             confirm_full: false,
         }
     }
@@ -89,10 +92,15 @@ const CODEX_MODELS: [(&str, &str); 1] = [("Default model", "")];
 impl State {
     /// The agent panel as the user left it (read from the settings file).
     pub fn from_settings(settings: &crate::settings::Settings) -> Self {
-        let mut state = State::default();
-        if settings.ai_provider.as_deref() == Some("codex") {
-            state.provider = Provider::Codex;
-        }
+        let mut state = State {
+            provider: match settings.ai_provider.as_deref() {
+                Some("codex") => Provider::Codex,
+                Some("ollama") => Provider::Ollama,
+                Some("lmstudio") => Provider::LmStudio,
+                _ => Provider::Claude,
+            },
+            ..State::default()
+        };
         let model = settings.ai_model.clone().unwrap_or_default();
         if agent::valid_model(&model) {
             state.model_custom = !presets(state.provider)
@@ -116,10 +124,11 @@ impl State {
 
     fn choices(&self) -> (String, String, String, String) {
         (
-            if self.provider == Provider::Codex {
-                "codex"
-            } else {
-                "claude"
+            match self.provider {
+                Provider::Claude => "claude",
+                Provider::Codex => "codex",
+                Provider::Ollama => "ollama",
+                Provider::LmStudio => "lmstudio",
             }
             .into(),
             self.model.clone(),
@@ -131,6 +140,11 @@ impl State {
             }
             .into(),
         )
+    }
+
+    /// The sign-in command the user asked for with the panel's button, once.
+    pub fn take_login_request(&mut self) -> Option<&'static str> {
+        self.login_requested.take()
     }
 
     pub fn busy(&self) -> bool {
@@ -155,7 +169,7 @@ impl State {
         let found = self
             .programs
             .get_or_insert_with(|| [Provider::Claude.find(), Provider::Codex.find()]);
-        found[usize::from(provider == Provider::Codex)].clone()
+        found[usize::from(provider.uses_codex())].clone()
     }
 
     /// Send the typed message to the agent, in `cwd`, when that is allowed. A message that is
@@ -186,7 +200,9 @@ impl State {
                 Provider::Claude => {
                     "Install it with: npm install -g @anthropic-ai/claude-code (or the native installer)"
                 }
-                Provider::Codex => "Install it with: npm install -g @openai/codex",
+                Provider::Codex | Provider::Ollama | Provider::LmStudio => {
+                    "Install it with: npm install -g @openai/codex (it also runs local models)"
+                }
             };
             self.fail(format!(
                 "{} was not found on this computer (looked on PATH and where installers put it). {how}",
@@ -488,6 +504,14 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
             if ui.button("New chat").clicked() {
                 state.new_chat();
             }
+            if let Some(command) = state.provider.login_command()
+                && ui
+                    .button("Sign in")
+                    .on_hover_text(format!("Opens a terminal and runs `{command}`"))
+                    .clicked()
+            {
+                state.login_requested = Some(command);
+            }
         });
     });
     // The choices are remembered for the next start.
@@ -542,7 +566,7 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
 fn presets(provider: Provider) -> &'static [(&'static str, &'static str)] {
     match provider {
         Provider::Claude => &CLAUDE_MODELS,
-        Provider::Codex => &CODEX_MODELS,
+        Provider::Codex | Provider::Ollama | Provider::LmStudio => &CODEX_MODELS,
     }
 }
 
@@ -1088,12 +1112,14 @@ mod tests {
         }
         let mut widths = Vec::new();
         for frame in 0..6 {
-            let mut input = egui::RawInput::default();
-            input.screen_rect = Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1400.0, 900.0),
-            ));
-            input.time = Some(f64::from(frame) * 0.1);
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1400.0, 900.0),
+                )),
+                time: Some(f64::from(frame) * 0.1),
+                ..egui::RawInput::default()
+            };
             let mut output = context.run_ui(input, |ui| {
                 let drawn = egui::Panel::right("test-dock")
                     .default_size(364.0)

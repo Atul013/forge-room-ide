@@ -20,6 +20,9 @@
 
 **9 November communication result:** PR #29 passed Windows core and graphical formatting, checks, tests, and Clippy and merged. PRs #27-#29 are source and CI complete. A visible desktop Chat trial, network transport, DM privacy, reconnect, and two-machine acceptance remain open; R03 is not complete.
 
+**11 November integration:** Fetched both remotes. `origin/main` through PR #31 was fast-forwarded, then `atul/native-rust-ide` at `d10c9bc` was merged with an explicit merge commit. The incoming native work covers editor transforms, file search/replace, Git and file operations, session/recovery, diagnostics, and terminal layout. Git found no merge conflicts or whitespace errors. This is source integration; local Rust compilation and desktop behavior remain unverified in this shell.
+
+**11 November AI follow-on (source pending verification):** The native AI panel now has a first read-only Ask path through an installed Codex CLI, with Codex/OpenAI, Ollama and LM Studio choices and an optional model ID. It requires an open trusted folder. A setup button opens `codex login` in a new integrated terminal. It has no native account management, Plan/Build, approval UI or continuous streaming. Rust CI and desktop/provider acceptance remain open.
 This is the current project status, assignment, and next-action document. Historical documents remain available for requirements and evidence, but their older Code OSS status statements do not describe the native app. **Done** means code or an action is complete; **CI passed** means automated checks passed; **Needs hands-on check** means actual product behavior remains unverified; **Planned** means it is not implemented.
 
 ### Navigate this document

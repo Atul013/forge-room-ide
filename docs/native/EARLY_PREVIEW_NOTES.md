@@ -6,6 +6,7 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 
 ## Since alpha.2 (source only, not in a release yet)
 
+- AI Assistant Ask can run the installed Codex CLI against the trusted open folder in read-only mode. The panel offers Codex/OpenAI, Ollama and LM Studio through Codex CLI and an optional model ID. Its sign-in button opens a new integrated terminal and runs `codex login`; Codex handles the browser login. This is a one-shot Ask path; Plan, Build, approval UI, streaming and provider-native account management are still to be built.
 - Files keep their line endings (LF, CRLF; mixed files are kept byte for byte), UTF-8 BOM and UTF-16 LE/BE encoding when saved, and the status bar shows the real encoding. Saves are atomic.
 - Editor typing: Enter keeps the indentation and opens bracket blocks, Tab and Shift+Tab indent and unindent, brackets and quotes are completed in pairs (not in prose files, and not a single quote in Rust), and Ctrl+/ comments lines, Alt+Up/Down moves them, Shift+Alt+Up/Down duplicates them, Ctrl+Shift+K deletes them.
 - Find and Search in Files: whole word and regular expressions; invalid patterns are reported. Search has a Replace with box and Replace All (literal text, with a confirmation): each file keeps its encoding and line endings, files open with unsaved changes are skipped and listed.
