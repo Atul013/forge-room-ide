@@ -1,6 +1,6 @@
 # Forge Room — progress and complete working plan
 
-**Updated:** 6 November 2026. **Active product:** native Rust IDE, Developer Preview `0.110.0-alpha.2`, Windows 11 x64. **Current phase:** Phase 1, visible Windows baseline. **Owners:** @ZayedBH and @Atul013.
+**Updated:** 12 November 2026. **Active product:** native Rust IDE, Developer Preview `0.110.0-alpha.3`, Windows 11 x64. **Current phase:** Phase 1, visible Windows baseline. **Owners:** @ZayedBH and @Atul013.
 
 **9 November local feature slice:** The native left rail now opens Workflows, Models, Run & Debug, Tests, Extensions, Settings, and Accessibility panels. Rust, Node, and Python marker files expose a small set of explicit project commands; pressing a command sends it to the integrated terminal. Debugger adapters, AI model providers, and extension execution remain unavailable and are labelled as such. Source inspection complete; this shell has no `cargo` command, so Rust compilation and desktop acceptance are pending.
 
