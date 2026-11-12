@@ -177,11 +177,41 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     // A short name that does not depend on the file's own (possibly very long) name, unique per
     // call and per running app.
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let temporary = path.with_file_name(format!(
-        ".forge-{}-{}.tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
+    // The temporary file must be a file this call made: `create_new` fails on any name that already
+    // exists, so a link or hard link planted at a guessable name (a hostile folder) is never written
+    // through to wherever it points. The name also carries the time in nanoseconds.
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(windows)]
+    if let Some(existing) = &existing {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        const HIDDEN_AND_SYSTEM: u32 = 0x2 | 0x4;
+        options.attributes(existing.file_attributes() & HIDDEN_AND_SYSTEM);
+    }
+    let mut opened: Option<(PathBuf, fs::File)> = None;
+    for _ in 0..16 {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let candidate = path.with_file_name(format!(
+            ".forge-{}-{}-{nanos}.tmp",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        match options.open(&candidate) {
+            Ok(file) => {
+                opened = Some((candidate, file));
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(_) => break,
+        }
+    }
+    // A temporary file that could not be made (a folder that cannot be written to while the file
+    // itself can) falls back to writing in place.
+    let Some((temporary, mut file)) = opened else {
+        return fs::write(path, bytes);
+    };
     let remove_temporary = || {
         if let Ok(metadata) = fs::metadata(&temporary) {
             let mut permissions = metadata.permissions();
@@ -191,32 +221,16 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         }
         let _ = fs::remove_file(&temporary);
     };
-    // Only a temporary file that could not even be created (a folder that cannot be written to
-    // while the file itself can) falls back to writing in place. Once the new content is being
-    // written beside the file, a failure (a full disk) is reported and the original stays as it was:
-    // writing over it would truncate it first.
-    let mut created = false;
+    // Once the new content is being written beside the file, a failure (a full disk) is reported
+    // and the original stays as it was: writing over it would truncate it first.
     let written = (|| {
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(windows)]
-        if let Some(existing) = &existing {
-            use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-            const HIDDEN_AND_SYSTEM: u32 = 0x2 | 0x4;
-            options.attributes(existing.file_attributes() & HIDDEN_AND_SYSTEM);
-        }
-        let mut file = options.open(&temporary)?;
-        created = true;
         file.write_all(bytes)?;
         file.sync_all()
     })();
+    drop(file);
     if let Err(error) = written {
         remove_temporary();
-        return if created {
-            Err(error)
-        } else {
-            fs::write(path, bytes)
-        };
+        return Err(error);
     }
     match fs::rename(&temporary, path) {
         Ok(()) => Ok(()),
@@ -987,5 +1001,26 @@ edit
         assert_eq!(document.path(), Some(path.as_path()));
         assert_eq!(fs::read_to_string(&path).unwrap(), "preview");
         fs::remove_file(path).unwrap();
+    }
+
+    /// A hard link planted at the old guessable temporary names must not take the save with it.
+    #[test]
+    fn a_planted_temporary_name_cannot_redirect_a_save_outside_the_folder() {
+        let dir = test_path().with_extension("planted");
+        fs::create_dir_all(&dir).unwrap();
+        let outside = dir.join("outside-secret.txt");
+        fs::write(&outside, "outside original\n").unwrap();
+        let inside = dir.join("work");
+        fs::create_dir_all(&inside).unwrap();
+        let target = inside.join("file.txt");
+        fs::write(&target, "old\n").unwrap();
+        for counter in 0..64 {
+            let planted = inside.join(format!(".forge-{}-{counter}.tmp", std::process::id()));
+            let _ = fs::hard_link(&outside, planted);
+        }
+        write_atomic(&target, b"NEW CONTENT\n").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "NEW CONTENT\n");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "outside original\n");
+        let _ = fs::remove_dir_all(dir);
     }
 }

@@ -10,6 +10,21 @@ const RESERVED: [&str; 22] = [
     "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
+/// Whether `path` itself is a symbolic link or a junction (a reparse point).
+pub(crate) fn is_link(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
+}
+
 /// Windows PowerShell by its full path, so a copy planted in the folder Forge was started from is
 /// never the one that runs.
 #[cfg(windows)]
@@ -148,6 +163,18 @@ pub fn recycle(path: &Path) -> Result<(), String> {
         const REPARSE_POINT: u32 = 0x400;
         if attributes & DIRECTORY != 0 && attributes & REPARSE_POINT != 0 {
             return Err("That folder is a link: remove the link itself in File Explorer".into());
+        }
+        // A folder on the way to it that is a link would make this delete something that lives
+        // somewhere else.
+        if path
+            .ancestors()
+            .skip(1)
+            .take_while(|folder| folder.parent().is_some())
+            .any(is_link)
+        {
+            return Err(
+                "A folder on the way to it is a link: delete it from where it really is".into(),
+            );
         }
         let method = if path.is_dir() {
             "DeleteDirectory"
@@ -429,6 +456,42 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["README.md".to_string()]);
         assert!(renamed.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A junction `link` -> `target` (no privilege needed on Windows); None when it cannot be made.
+    #[cfg(windows)]
+    fn junction(link: &Path, target: &Path) -> Option<()> {
+        use std::os::windows::process::CommandExt;
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .creation_flags(0x0800_0000)
+            .output()
+            .ok()?;
+        made.status.success().then_some(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_reached_through_a_junction_is_not_recycled() {
+        let dir = folder("junction-recycle");
+        let outside = dir.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let victim = outside.join("victim.txt");
+        fs::write(&victim, "keep me").unwrap();
+        let project = dir.join("project");
+        fs::create_dir_all(&project).unwrap();
+        if junction(&project.join("link"), &outside).is_none() {
+            fs::remove_dir_all(dir).unwrap();
+            return; // junctions cannot be made here
+        }
+        let result = recycle(&project.join("link").join("victim.txt"));
+        assert!(result.is_err(), "recycled through a junction: {result:?}");
+        assert!(victim.exists(), "the file outside the folder is gone");
+        // Remove the junction itself first, so cleaning up cannot follow it.
+        let _ = fs::remove_dir(project.join("link"));
         fs::remove_dir_all(dir).unwrap();
     }
 }

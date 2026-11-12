@@ -93,13 +93,14 @@ pub fn save_to(path: &Path, session: &Session) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    // Beside the target and renamed over it, so a crash never leaves half a file.
-    let temporary = path.with_extension("json.tmp");
-    fs::write(
-        &temporary,
-        serde_json::to_string_pretty(session).map_err(io::Error::other)?,
-    )?;
-    fs::rename(temporary, path)
+    // Beside the target and renamed over it (a name nobody planted), so a crash never leaves half a
+    // file and a link at a guessable name is never written through.
+    crate::document::write_atomic(
+        path,
+        serde_json::to_string_pretty(session)
+            .map_err(io::Error::other)?
+            .as_bytes(),
+    )
 }
 
 #[cfg(test)]
@@ -158,6 +159,20 @@ mod tests {
         fs::write(&file, "{ not json").unwrap();
         assert_eq!(load_from(&file), Session::default());
         fs::write(&file, "{}").unwrap();
+        assert_eq!(load_from(&file), Session::default());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_planted_temporary_file_cannot_redirect_the_session_save() {
+        let dir = std::env::temp_dir().join(format!("forge-session-plant-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let outside = dir.join("outside.txt");
+        fs::write(&outside, "outside original\n").unwrap();
+        let file = dir.join("session.json");
+        let _ = fs::hard_link(&outside, dir.join("session.json.tmp"));
+        save_to(&file, &Session::default()).unwrap();
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "outside original\n");
         assert_eq!(load_from(&file), Session::default());
         fs::remove_dir_all(dir).unwrap();
     }

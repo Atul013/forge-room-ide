@@ -120,7 +120,9 @@ impl Store {
         let mut found = Vec::new();
         for folder in folders.flatten() {
             let path = folder.path();
-            if !path.is_dir() || path == self.mine {
+            // A link (a junction someone planted) is not an instance's folder: following it would
+            // read and delete files wherever it points.
+            if crate::file_ops::is_link(&path) || !path.is_dir() || path == self.mine {
                 continue;
             }
             // The lock can only be deleted when no instance holds it open. A folder without a lock
@@ -354,6 +356,54 @@ mod tests {
         store.clear();
         let next = Store::new(dir.clone(), 10);
         assert_eq!(next.take_orphans(), vec![entry(Some("old.rs"), "old work")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A junction `link` -> `target` (no privilege needed on Windows); None when it cannot be made.
+    #[cfg(windows)]
+    fn junction(link: &std::path::Path, target: &std::path::Path) -> Option<()> {
+        use std::os::windows::process::CommandExt;
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .creation_flags(0x0800_0000)
+            .output()
+            .ok()?;
+        made.status.success().then_some(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_in_the_recovery_folder_is_not_followed_or_emptied() {
+        let dir = root("junction");
+        fs::create_dir_all(&dir).unwrap();
+        let outside = dir.join("outside-folder");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(
+            outside.join("tab-1.json"),
+            serde_json::to_vec(&entry(None, "outside")).unwrap(),
+        )
+        .unwrap();
+        fs::write(outside.join(LOCK), "").unwrap();
+        let recovery = dir.join("recovery");
+        fs::create_dir_all(&recovery).unwrap();
+        if junction(&recovery.join("77"), &outside).is_none() {
+            let _ = fs::remove_dir_all(dir);
+            return; // junctions cannot be made here
+        }
+        let store = Store::new(recovery.clone(), 5);
+        let taken = store.take_orphans();
+        assert!(
+            taken.is_empty(),
+            "the outside folder's text was taken: {taken:?}"
+        );
+        assert!(
+            outside.join("tab-1.json").exists(),
+            "a file outside was deleted"
+        );
+        assert!(outside.join(LOCK).exists(), "a file outside was deleted");
+        drop(store);
         let _ = fs::remove_dir_all(dir);
     }
 }

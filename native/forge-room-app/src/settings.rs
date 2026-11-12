@@ -134,13 +134,14 @@ pub fn save(settings: &Settings) -> io::Result<()> {
     if let Some(parent) = file.parent() {
         fs::create_dir_all(parent)?;
     }
-    // Write beside the target and rename, so a crash never leaves half a file.
-    let temporary = file.with_extension("json.tmp");
-    fs::write(
-        &temporary,
-        serde_json::to_string_pretty(settings).map_err(io::Error::other)?,
-    )?;
-    fs::rename(temporary, file)
+    // Beside the target and renamed over it (a name nobody planted), so a crash never leaves half a
+    // file and a link at a guessable name is never written through.
+    crate::document::write_atomic(
+        &file,
+        serde_json::to_string_pretty(settings)
+            .map_err(io::Error::other)?
+            .as_bytes(),
+    )
 }
 
 #[cfg(test)]
