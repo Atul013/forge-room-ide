@@ -642,7 +642,10 @@ fn blocks(text: &str) -> Vec<Block> {
             code = Some(Vec::new());
         } else if trimmed.is_empty() {
             flush(&mut paragraph, &mut result);
-        } else if let Some(heading) = trimmed.strip_prefix('#') {
+        } else if let Some(heading) = trimmed
+            .strip_prefix('#')
+            .filter(|rest| rest.trim_start_matches('#').starts_with(' '))
+        {
             flush(&mut paragraph, &mut result);
             let level = 1 + heading.chars().take_while(|c| *c == '#').count();
             let title = heading.trim_start_matches('#').trim();

@@ -477,12 +477,12 @@ impl ForgeRoomApp {
             };
             // A width near the limit is almost always a panel that grew by itself (an old bug),
             // not a choice: it starts at the default size instead.
-            let right = if layout.right_width > 520 {
+            let right = if layout.right_width >= 640 {
                 364
             } else {
                 layout.right_width
             };
-            let side = if layout.sidebar_width > 460 {
+            let side = if layout.sidebar_width >= 560 {
                 250
             } else {
                 layout.sidebar_width
@@ -712,6 +712,7 @@ impl ForgeRoomApp {
                 );
             });
             let previous = self.repo_root();
+            self.explorer_state = explorer::State::default();
             if previous.as_ref().is_some_and(|old| *old != folder) {
                 // The agent's conversation belongs to the folder it ran in.
                 self.ai.new_chat();
@@ -907,6 +908,8 @@ impl ForgeRoomApp {
     /// Run any palette/menu/shortcut command. `palette_mode` only matters for `GoToLine`, where
     /// the bool selects the command palette instead of the "Go to line" prompt.
     fn run_command(&mut self, command: Command, palette_mode: bool) {
+        // Whatever the command does, the tree no longer has the keyboard.
+        self.explorer_state.unfocus();
         match command {
             Command::NewFile => self.new_file(),
             Command::OpenFile => self.open_file_dialog(),
@@ -1188,7 +1191,7 @@ impl ForgeRoomApp {
     }
 
     /// Start a shell in the project folder: as one more terminal, or in place of the active one.
-    fn spawn_terminal(&mut self, add: bool) {
+    fn spawn_terminal(&mut self, add: bool) -> bool {
         let root = self.repo_root();
         match terminal::Terminal::spawn(&self.egui_ctx, root.as_deref()) {
             Ok(terminal) => {
@@ -1202,9 +1205,14 @@ impl ForgeRoomApp {
                     self.active_terminal = index;
                 }
             }
-            Err(error) => self.terminal_error = Some(error),
+            Err(error) => {
+                self.terminal_error = Some(error);
+                self.terminal_focus_request = true;
+                return false;
+            }
         }
         self.terminal_focus_request = true;
+        true
     }
 
     /// Run `cargo check` for the open folder on a worker thread.
@@ -3177,6 +3185,9 @@ impl ForgeRoomApp {
             SidebarView::Project(page) => {
                 let root = self.repo_root();
                 match project_tools::show(ui, page, root.as_deref(), &self.runtimes) {
+                    Some(project_tools::Selected::Command(_)) if !self.trusted => {
+                        self.status = "Trust this folder first (Folder: Trust This Folder): project commands run its build scripts".into();
+                    }
                     Some(project_tools::Selected::Command(command)) => {
                         self.show_terminal = true;
                         self.bottom_tab = BottomTab::Terminal;
@@ -3245,6 +3256,7 @@ impl ForgeRoomApp {
             && self.new_folder_parent.is_none()
             && self.confirm.is_none()
             && self.trust_prompt.is_none()
+            && self.pending_discard.is_none()
             && !self.palette.open
             && !self.egui_ctx.text_edit_focused();
         match explorer::show(
@@ -4284,8 +4296,10 @@ impl ForgeRoomApp {
                 if let Some(command) = self.ai.take_login_request() {
                     self.show_terminal = true;
                     self.bottom_tab = BottomTab::Terminal;
-                    self.spawn_terminal(true);
-                    if let Some(terminal) = self.terminals.get_mut(self.active_terminal) {
+                    // Typed only into the terminal that was just made: never into one that is busy.
+                    if self.spawn_terminal(true)
+                        && let Some(terminal) = self.terminals.get_mut(self.active_terminal)
+                    {
                         terminal.send(format!("{command}\r").as_bytes());
                     }
                 }

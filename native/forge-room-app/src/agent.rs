@@ -81,7 +81,9 @@ impl Provider {
         } else {
             &[""]
         };
-        for folder in folders {
+        // An empty or relative PATH entry means "the current folder": never a place to take a program
+        // that runs with the user's rights from.
+        for folder in folders.into_iter().filter(|folder| folder.is_absolute()) {
             for extension in names {
                 let file = if extension.is_empty() {
                     self.program().to_string()
@@ -431,6 +433,17 @@ pub fn parse_codex(line: &str) -> Vec<Event> {
     events
 }
 
+/// A program of Windows itself by its full path, so a copy planted in the folder Forge was started
+/// from is never the one that runs.
+#[cfg(windows)]
+fn system32(name: &str) -> PathBuf {
+    std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join(name)
+}
+
 /// A run in progress.
 pub struct Run {
     receiver: mpsc::Receiver<Event>,
@@ -463,7 +476,7 @@ impl Run {
                 use std::os::windows::process::CommandExt;
                 // The whole tree (/T), without asking (/F). The process handle is still open, so
                 // the number cannot belong to anything else yet.
-                let _ = Command::new("taskkill")
+                let _ = Command::new(system32("taskkill.exe"))
                     .args(["/PID", &child.id().to_string(), "/T", "/F"])
                     .creation_flags(0x0800_0000)
                     .stdout(Stdio::null())

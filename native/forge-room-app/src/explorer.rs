@@ -18,6 +18,11 @@ impl State {
     pub fn focus(&mut self) {
         self.focused = true;
     }
+
+    /// Take the keyboard away from the tree.
+    pub fn unfocus(&mut self) {
+        self.focused = false;
+    }
 }
 
 /// A key that moves through the tree.
@@ -252,7 +257,38 @@ impl Marked {
 
 /// Arrow keys, Home, End, Enter, F2 and Delete in the tree.
 fn keyboard(ui: &mut egui::Ui, workspace: &mut Workspace, state: &mut State, action: &mut Action) {
+    // Only when a key that matters is pressed: the rows are not rebuilt every frame.
+    let relevant = ui.input(|input| {
+        [
+            Key::ArrowUp,
+            Key::ArrowDown,
+            Key::ArrowLeft,
+            Key::ArrowRight,
+            Key::Home,
+            Key::End,
+            Key::Enter,
+            Key::F2,
+            Key::Delete,
+            Key::Escape,
+        ]
+        .iter()
+        .any(|key| input.key_pressed(*key))
+    });
+    if !relevant {
+        return;
+    }
+    if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+        state.focused = false;
+        return;
+    }
     let rows = visible_rows(workspace);
+    if state
+        .selected
+        .as_ref()
+        .is_some_and(|path| !rows.iter().any(|(row, _)| row == path))
+    {
+        state.selected = None;
+    }
     for (key, nav) in [
         (Key::ArrowUp, Nav::Up),
         (Key::ArrowDown, Nav::Down),

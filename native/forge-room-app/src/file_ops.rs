@@ -10,6 +10,19 @@ const RESERVED: [&str; 22] = [
     "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
+/// Windows PowerShell by its full path, so a copy planted in the folder Forge was started from is
+/// never the one that runs.
+#[cfg(windows)]
+fn powershell_path() -> std::path::PathBuf {
+    std::env::var_os("SystemRoot")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe")
+}
+
 /// `path` relative to `root` for copying (`src\\main.rs` on Windows); the full path when it is not
 /// inside `root`. Both are compared in their normal form, so a `\\?\` prefix does not matter.
 pub fn relative_display(root: &Path, path: &Path) -> String {
@@ -38,11 +51,16 @@ pub fn reveal(path: &Path) -> Result<(), String> {
         } else {
             format!("/select,\"{}\"", path.display())
         };
-        std::process::Command::new("explorer.exe")
-            .raw_arg(argument)
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| format!("Could not open File Explorer: {error}"))
+        std::process::Command::new(
+            std::env::var_os("SystemRoot")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"))
+                .join("explorer.exe"),
+        )
+        .raw_arg(argument)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open File Explorer: {error}"))
     }
     #[cfg(not(windows))]
     {
@@ -148,7 +166,7 @@ pub fn recycle(path: &Path) -> Result<(), String> {
              [Microsoft.VisualBasic.FileIO.FileSystem]::{method}($env:FORGE_RECYCLE, \
              'OnlyErrorDialogs', 'SendToRecycleBin')"
         );
-        let mut child = std::process::Command::new("powershell.exe")
+        let mut child = std::process::Command::new(powershell_path())
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .env("FORGE_RECYCLE", path)
             .creation_flags(0x0800_0000)
@@ -288,7 +306,7 @@ mod tests {
              $found = $true; if ($env:PURGE -eq '1') { \
              Remove-Item -LiteralPath $item.Path -Recurse -Force -ErrorAction SilentlyContinue } } }; \
              if ($found) { exit 0 } else { exit 1 }";
-        std::process::Command::new("powershell.exe")
+        std::process::Command::new(powershell_path())
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .env("NEEDLE", needle)
             .env("PURGE", if purge { "1" } else { "0" })
