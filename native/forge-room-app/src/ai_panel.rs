@@ -268,6 +268,7 @@ impl State {
                 agent::Event::Done { cost, error } => {
                     finished = true;
                     match error {
+                        Some(error) if error == "Stopped" => self.note("Stopped"),
                         Some(error) => self.fail(error),
                         None => {
                             if let Some(cost) = cost {
@@ -294,7 +295,9 @@ impl State {
 
     /// Forget the conversation (and stop the agent): the next message starts fresh.
     pub fn new_chat(&mut self) {
-        self.stop();
+        // Dropping the run stops the agent and its events no longer reach the new chat.
+        self.run = None;
+        self.started = None;
         self.messages.clear();
         self.session = None;
         self.confirm_full = false;
@@ -788,7 +791,6 @@ fn markdown(ui: &mut egui::Ui, text: &str) {
 fn inline(ui: &mut egui::Ui, text: &str, size: f32, heading: bool, lead: &str) {
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = ui.available_width();
-    job.wrap.break_anywhere = true;
     let normal = |bold: bool| {
         let family = if bold || heading {
             fonts::semibold()
@@ -828,7 +830,6 @@ fn wrapped(ui: &mut egui::Ui, text: &str, size: f32, color: Color32) {
         egui::TextFormat::simple(FontId::proportional(size), color),
     );
     job.wrap.max_width = ui.available_width();
-    job.wrap.break_anywhere = true;
     ui.label(job);
 }
 

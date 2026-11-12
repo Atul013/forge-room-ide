@@ -47,6 +47,8 @@ pub struct View<'a> {
 
 pub enum Repo<'a> {
     NoFolder,
+    /// The folder is not trusted: Git is not run in it.
+    Restricted,
     /// The first read of the repository is still running.
     Loading,
     NoRepository,
@@ -58,6 +60,8 @@ pub enum Action {
     None,
     Refresh,
     Init,
+    /// Ask whether to trust the open folder.
+    Trust,
     Commit,
     CommitAndPush,
     Amend,
@@ -65,8 +69,14 @@ pub enum Action {
     Stage(Vec<String>),
     Unstage(Vec<String>),
     DiscardAsk(Vec<git::Change>),
-    Resolve { path: String, side: git::Side },
-    ShowDiff { path: String, staged: bool },
+    Resolve {
+        path: String,
+        side: git::Side,
+    },
+    ShowDiff {
+        path: String,
+        staged: bool,
+    },
     OpenFile(String),
     Sync,
     Publish,
@@ -189,6 +199,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo, compact: bool) -> 
             "No folder open",
             "Open a folder from the Explorer to see its changes here.",
         ),
+        Repo::Restricted => {
+            empty_state(
+                ui,
+                "Restricted mode",
+                "Git is off in a folder you have not trusted: its settings could start programs.",
+            );
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                if ui.button("Trust this folder").clicked() {
+                    action = Action::Trust;
+                }
+            });
+        }
         Repo::Loading => empty_state(ui, "Reading the repository…", "This takes a moment."),
         Repo::Error(message) => empty_state(ui, "Git is unavailable", message),
         Repo::NoRepository => {

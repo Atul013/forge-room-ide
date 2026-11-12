@@ -713,6 +713,7 @@ impl ForgeRoomApp {
             });
             let previous = self.repo_root();
             self.explorer_state = explorer::State::default();
+            self.problems = None;
             if previous.as_ref().is_some_and(|old| *old != folder) {
                 // The agent's conversation belongs to the folder it ran in.
                 self.ai.new_chat();
@@ -723,7 +724,7 @@ impl ForgeRoomApp {
             // Tabs of the folder that was left would otherwise sit among the new project's files, and
             // a shell would go on working in the old one.
             let mut moved = String::new();
-            if previous.as_ref().is_some_and(|old| *old != folder) {
+            if previous.as_ref().is_none_or(|old| *old != folder) {
                 let closed = self.tabs.close_clean_outside(&folder);
                 if closed > 0 {
                     moved.push_str(&format!(
@@ -1192,7 +1193,11 @@ impl ForgeRoomApp {
 
     /// Start a shell in the project folder: as one more terminal, or in place of the active one.
     fn spawn_terminal(&mut self, add: bool) -> bool {
-        let root = self.repo_root();
+        let root = self.repo_root().or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(PathBuf::from)
+        });
         match terminal::Terminal::spawn(&self.egui_ctx, root.as_deref()) {
             Ok(terminal) => {
                 self.terminal_error = None;
@@ -1462,7 +1467,15 @@ impl ForgeRoomApp {
             }
         }
         if restart {
-            self.spawn_terminal(false);
+            let running = self
+                .terminals
+                .get(self.active_terminal)
+                .is_some_and(|t| !t.has_exited());
+            if running {
+                self.confirm = Some(Confirm::RestartTerminal);
+            } else {
+                self.spawn_terminal(false);
+            }
         }
         if add_terminal {
             self.spawn_terminal(true);
@@ -2325,6 +2338,11 @@ impl ForgeRoomApp {
             // Ctrl+Shift+E hands the keyboard to the tree, so the arrows work at once.
             if view == SidebarView::Explorer {
                 self.explorer_state.focus();
+                // A text box that still has the focus would keep the arrow keys for itself.
+                if let Some(id) = self.egui_ctx.memory(|memory| memory.focused()) {
+                    self.egui_ctx
+                        .memory_mut(|memory| memory.surrender_focus(id));
+                }
             }
         }
     }
@@ -2881,6 +2899,10 @@ impl ForgeRoomApp {
             Some(Ok(status)) => (status.ahead, status.behind),
             _ => (0, 0),
         };
+        if matches!(action, Action::Trust) {
+            self.trust_prompt = self.repo_root();
+            return;
+        }
         if matches!(action, Action::StashDrop) {
             self.confirm = Some(Confirm::DropStash);
             return;
@@ -2890,7 +2912,7 @@ impl ForgeRoomApp {
             return;
         }
         let outcome: Result<String, String> = match action {
-            Action::None => return,
+            Action::None | Action::Trust => return,
             Action::Refresh => {
                 self.refresh_git();
                 return;
@@ -3221,6 +3243,8 @@ impl ForgeRoomApp {
     fn source_control_view(&mut self, ui: &mut egui::Ui, compact: bool) {
         let repo = if self.workspace.is_none() {
             source_control::Repo::NoFolder
+        } else if !self.trusted {
+            source_control::Repo::Restricted
         } else if self.git_status.is_none() && self.git_refresh.busy() {
             source_control::Repo::Loading
         } else if !self.is_repo {
@@ -3303,6 +3327,12 @@ impl ForgeRoomApp {
                 self.refresh_git();
             }
         }
+    }
+
+    /// The questions that wait for an answer (trust, confirmations, delete, rename, new folder).
+    /// They are drawn on every frame whatever the sidebar shows: a prompt hidden behind another view
+    /// would leave the window refusing to close with no explanation.
+    fn question_dialogs(&mut self) {
         if let Some(folder) = self.trust_prompt.take() {
             let (mut trust, mut restricted) = (false, false);
             egui::Window::new("Trust this folder?")
@@ -3359,6 +3389,21 @@ impl ForgeRoomApp {
                         "Drop stash",
                     )
                 }
+                Confirm::RevertChange(_) => (
+                    "Revert change",
+                    "Throw away this change in the open file and put the committed lines back? \
+                     This cannot be undone."
+                        .to_string(),
+                    "Revert change",
+                ),
+                Confirm::RestartTerminal => (
+                    "Restart terminal",
+                    format!(
+                        "Restart terminal {}? A program still running in it is stopped.",
+                        self.active_terminal + 1
+                    ),
+                    "Restart",
+                ),
                 Confirm::AbortOperation => (
                     "Abort",
                     format!(
@@ -3438,6 +3483,10 @@ impl ForgeRoomApp {
                         }
                     }
                     Confirm::EndTerminal => self.close_terminal(),
+                    Confirm::RevertChange(line) => self.change_at_line(false, line),
+                    Confirm::RestartTerminal => {
+                        self.spawn_terminal(false);
+                    }
                     Confirm::AbortOperation => {
                         if let Some(root) = self.git_root() {
                             self.status = match git::abort_operation(&root) {
@@ -4050,7 +4099,12 @@ impl ForgeRoomApp {
             self.git_action(source_control::Action::ShowCommit(hash));
         }
         if let Some((stage, line)) = hunk_choice {
-            self.change_at_line(stage, line);
+            if stage {
+                self.change_at_line(true, line);
+            } else {
+                // Reverting is not undoable (and with Auto Save the edits are already on disk).
+                self.confirm = Some(Confirm::RevertChange(line));
+            }
         }
         if let (Some(index), Some(tab)) = (cursor_index, self.tabs.tabs.get(self.tabs.active)) {
             self.cursor = position::line_col(tab.doc.text(), index);
@@ -4766,6 +4820,11 @@ impl eframe::App for ForgeRoomApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
+        // A terminal that is not on screen cannot have the keyboard; a stale flag would swallow every
+        // shortcut (Ctrl+S, Ctrl+P ...) after it was hidden.
+        if !self.show_terminal || self.show_lobby || self.bottom_tab != BottomTab::Terminal {
+            self.terminal_has_focus = false;
+        }
         for terminal in &self.terminals {
             terminal.set_hidden();
         }
@@ -4780,6 +4839,9 @@ impl eframe::App for ForgeRoomApp {
         }
         self.ai_was_busy = busy;
         if finished {
+            if let Some(workspace) = &mut self.workspace {
+                workspace.refresh();
+            }
             self.checked_folders.clear();
             self.reload_clean_tabs();
             self.refresh_git();
@@ -5055,6 +5117,7 @@ impl eframe::App for ForgeRoomApp {
         self.poll_recycling();
         self.discard_dialog(&context);
         self.pending_dialog(&context);
+        self.question_dialogs();
         self.update_title(&context);
     }
 }
@@ -5207,6 +5270,10 @@ enum Confirm {
     EndTerminal,
     /// `cargo check` runs the folder's build scripts and macros.
     RunCheck,
+    /// Throw away one change of the open file (from the gutter's menu); the line it was chosen on.
+    RevertChange(usize),
+    /// Replace the shown terminal with a new shell.
+    RestartTerminal,
     /// Abort the merge, cherry-pick, revert or rebase in progress.
     AbortOperation,
     /// Quit while shells are still running.
