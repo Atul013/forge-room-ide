@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod ai_backend;
+mod agent;
 mod ai_panel;
 mod autosave;
 mod background;
@@ -212,8 +212,13 @@ struct ForgeRoomApp {
     checked_folders: std::collections::HashSet<PathBuf>,
     auto_checked: std::time::Instant,
     recovery_warned: bool,
+    ai_was_busy: bool,
     /// Sidebar width, right dock width and terminal height as last drawn, in points.
     panel_sizes: (u16, u16, u16),
+    /// Where the keyboard is in the Explorer tree.
+    explorer_state: explorer::State,
+    /// Bumped by View: Reset Layout: the panels get new ids, so they forget their remembered size.
+    layout_generation: u32,
     /// The terminal panel fills most of the window.
     terminal_maximized: bool,
     /// Two terminals shown side by side: their indexes.
@@ -363,7 +368,10 @@ impl ForgeRoomApp {
             checked_folders: std::collections::HashSet::new(),
             auto_checked: std::time::Instant::now(),
             recovery_warned: false,
+            ai_was_busy: false,
             panel_sizes: (250, 364, 200),
+            explorer_state: explorer::State::default(),
+            layout_generation: 0,
             terminal_maximized: false,
             split_pair: None,
             trusted: true,
@@ -402,8 +410,8 @@ impl ForgeRoomApp {
             show_preview: true,
             lobby_close_warned: false,
             preview: preview::Preview::default(),
-            ai: ai_panel::State::default(),
-            right_tab: RightTab::Room,
+            ai: ai_panel::State::from_settings(&settings::load()),
+            right_tab: RightTab::Ai,
             terminal_focus_request: false,
             terminal_has_focus: false,
             terminal_error: None,
@@ -467,11 +475,19 @@ impl ForgeRoomApp {
                 2 => BottomTab::Problems,
                 _ => BottomTab::Terminal,
             };
-            self.panel_sizes = (
-                layout.sidebar_width,
-                layout.right_width,
-                layout.terminal_height,
-            );
+            // A width near the limit is almost always a panel that grew by itself (an old bug),
+            // not a choice: it starts at the default size instead.
+            let right = if layout.right_width >= 640 {
+                364
+            } else {
+                layout.right_width
+            };
+            let side = if layout.sidebar_width >= 560 {
+                250
+            } else {
+                layout.sidebar_width
+            };
+            self.panel_sizes = (side, right, layout.terminal_height);
         }
         // Fresh shells in place of the ones that were open.
         for _ in 0..session.terminals {
@@ -695,14 +711,20 @@ impl ForgeRoomApp {
                     &folder.display().to_string(),
                 );
             });
-            let previous = self.git_root();
+            let previous = self.repo_root();
+            self.explorer_state = explorer::State::default();
+            self.problems = None;
+            if previous.as_ref().is_some_and(|old| *old != folder) {
+                // The agent's conversation belongs to the folder it ran in.
+                self.ai.new_chat();
+            }
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
             self.clear_git_state();
             // Tabs of the folder that was left would otherwise sit among the new project's files, and
             // a shell would go on working in the old one.
             let mut moved = String::new();
-            if previous.as_ref().is_some_and(|old| *old != folder) {
+            if previous.as_ref().is_none_or(|old| *old != folder) {
                 let closed = self.tabs.close_clean_outside(&folder);
                 if closed > 0 {
                     moved.push_str(&format!(
@@ -887,6 +909,8 @@ impl ForgeRoomApp {
     /// Run any palette/menu/shortcut command. `palette_mode` only matters for `GoToLine`, where
     /// the bool selects the command palette instead of the "Go to line" prompt.
     fn run_command(&mut self, command: Command, palette_mode: bool) {
+        // Whatever the command does, the tree no longer has the keyboard.
+        self.explorer_state.unfocus();
         match command {
             Command::NewFile => self.new_file(),
             Command::OpenFile => self.open_file_dialog(),
@@ -1099,6 +1123,19 @@ impl ForgeRoomApp {
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
+            Command::ResetLayout => {
+                self.panel_sizes = (250, 364, 200);
+                self.layout_generation += 1;
+                self.show_sidebar = true;
+                self.show_right = true;
+                self.show_terminal = true;
+                self.terminal_maximized = false;
+                self.status = "Layout reset".into();
+            }
+            Command::OpenAgent => {
+                self.show_right = true;
+                self.right_tab = RightTab::Ai;
+            }
             Command::TrustFolder => {
                 if let Some(root) = self.repo_root() {
                     if self.trusted {
@@ -1155,8 +1192,12 @@ impl ForgeRoomApp {
     }
 
     /// Start a shell in the project folder: as one more terminal, or in place of the active one.
-    fn spawn_terminal(&mut self, add: bool) {
-        let root = self.repo_root();
+    fn spawn_terminal(&mut self, add: bool) -> bool {
+        let root = self.repo_root().or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .or_else(|| std::env::var_os("HOME"))
+                .map(PathBuf::from)
+        });
         match terminal::Terminal::spawn(&self.egui_ctx, root.as_deref()) {
             Ok(terminal) => {
                 self.terminal_error = None;
@@ -1169,9 +1210,14 @@ impl ForgeRoomApp {
                     self.active_terminal = index;
                 }
             }
-            Err(error) => self.terminal_error = Some(error),
+            Err(error) => {
+                self.terminal_error = Some(error);
+                self.terminal_focus_request = true;
+                return false;
+            }
         }
         self.terminal_focus_request = true;
+        true
     }
 
     /// Run `cargo check` for the open folder on a worker thread.
@@ -1421,7 +1467,15 @@ impl ForgeRoomApp {
             }
         }
         if restart {
-            self.spawn_terminal(false);
+            let running = self
+                .terminals
+                .get(self.active_terminal)
+                .is_some_and(|t| !t.has_exited());
+            if running {
+                self.confirm = Some(Confirm::RestartTerminal);
+            } else {
+                self.spawn_terminal(false);
+            }
         }
         if add_terminal {
             self.spawn_terminal(true);
@@ -1807,6 +1861,8 @@ impl ForgeRoomApp {
             // The shell owns plain Ctrl keys (Ctrl+C, Ctrl+W...); only app-level chords work here.
             if shortcut(ui, command_shift, Key::Backtick) {
                 self.run_command(Command::NewTerminal, false);
+            } else if shortcut(ui, command_shift, Key::A) {
+                self.run_command(Command::OpenAgent, false);
             } else if shortcut(ui, command, Key::Backtick) {
                 self.run_command(Command::ToggleTerminal, false);
             } else if shortcut(ui, command_shift, Key::P) {
@@ -1830,6 +1886,8 @@ impl ForgeRoomApp {
             self.switch_view(SidebarView::Room);
         } else if shortcut(ui, command_shift, Key::O) {
             self.open_folder_dialog();
+        } else if shortcut(ui, command_shift, Key::A) {
+            self.run_command(Command::OpenAgent, false);
         } else if shortcut(ui, command_shift, Key::Y) {
             self.run_command(Command::GoToSymbol, false);
         } else if shortcut(ui, command_shift, Key::T) {
@@ -1954,7 +2012,11 @@ impl ForgeRoomApp {
                 }
                 ui.add_space(10.0);
                 for (icon, tip, command) in [
-                    ("panel-right", "Toggle side panel", Command::ShowRoom),
+                    (
+                        "panel-right",
+                        "Side panel: AI agent, team, chat",
+                        Command::ShowRoom,
+                    ),
                     ("panel-bottom", "Toggle terminal", Command::ToggleTerminal),
                     ("panel-left", "Toggle sidebar", Command::ToggleSidebar),
                 ] {
@@ -2273,6 +2335,15 @@ impl ForgeRoomApp {
             if view == SidebarView::SourceControl {
                 self.refresh_git();
             }
+            // Ctrl+Shift+E hands the keyboard to the tree, so the arrows work at once.
+            if view == SidebarView::Explorer {
+                self.explorer_state.focus();
+                // A text box that still has the focus would keep the arrow keys for itself.
+                if let Some(id) = self.egui_ctx.memory(|memory| memory.focused()) {
+                    self.egui_ctx
+                        .memory_mut(|memory| memory.surrender_focus(id));
+                }
+            }
         }
     }
 
@@ -2291,6 +2362,8 @@ impl ForgeRoomApp {
         // (item, icon, label, tooltip); `None` is a divider.
         type Entry = Option<(Rail, &'static str, &'static str, &'static str)>;
         let top: [Entry; 13] = [
+            Some((Rail::Ai, "ai", "AI Agent", "AI Agent (Ctrl+Shift+A)")),
+            None,
             Some((
                 Rail::View(SidebarView::Explorer),
                 "code",
@@ -2342,8 +2415,6 @@ impl ForgeRoomApp {
                 "Extensions",
                 "Extension support status",
             )),
-            None,
-            Some((Rail::Ai, "ai", "AI Assistant", "AI Assistant")),
         ];
         for entry in top {
             match entry {
@@ -2516,8 +2587,10 @@ impl ForgeRoomApp {
                 }
                 Rail::Room => self.show_lobby = !self.show_lobby,
                 Rail::Ai => {
+                    // Open only: a click while the answer is arriving must not hide it.
                     self.show_lobby = false;
-                    self.show_dock(RightTab::Ai);
+                    self.show_right = true;
+                    self.right_tab = RightTab::Ai;
                 }
                 Rail::Studio => self.gallery.open(),
                 Rail::Project(page) => {
@@ -2826,6 +2899,10 @@ impl ForgeRoomApp {
             Some(Ok(status)) => (status.ahead, status.behind),
             _ => (0, 0),
         };
+        if matches!(action, Action::Trust) {
+            self.trust_prompt = self.repo_root();
+            return;
+        }
         if matches!(action, Action::StashDrop) {
             self.confirm = Some(Confirm::DropStash);
             return;
@@ -2835,7 +2912,7 @@ impl ForgeRoomApp {
             return;
         }
         let outcome: Result<String, String> = match action {
-            Action::None => return,
+            Action::None | Action::Trust => return,
             Action::Refresh => {
                 self.refresh_git();
                 return;
@@ -3130,6 +3207,9 @@ impl ForgeRoomApp {
             SidebarView::Project(page) => {
                 let root = self.repo_root();
                 match project_tools::show(ui, page, root.as_deref(), &self.runtimes) {
+                    Some(project_tools::Selected::Command(_)) if !self.trusted => {
+                        self.status = "Trust this folder first (Folder: Trust This Folder): project commands run its build scripts".into();
+                    }
                     Some(project_tools::Selected::Command(command)) => {
                         self.show_terminal = true;
                         self.bottom_tab = BottomTab::Terminal;
@@ -3163,6 +3243,8 @@ impl ForgeRoomApp {
     fn source_control_view(&mut self, ui: &mut egui::Ui, compact: bool) {
         let repo = if self.workspace.is_none() {
             source_control::Repo::NoFolder
+        } else if !self.trusted {
+            source_control::Repo::Restricted
         } else if self.git_status.is_none() && self.git_refresh.busy() {
             source_control::Repo::Loading
         } else if !self.is_repo {
@@ -3189,7 +3271,25 @@ impl ForgeRoomApp {
 
     fn explorer_view(&mut self, ui: &mut egui::Ui) {
         let active = self.tabs.active_path().map(|path| path.to_path_buf());
-        match explorer::show(ui, &mut self.workspace, active.as_deref()) {
+        // The tree reads the keyboard only when nothing else wants it: no dialog, no text box, no
+        // terminal.
+        let keys_enabled = self.pending.is_none()
+            && !self.terminal_has_focus
+            && self.delete.is_none()
+            && self.rename.is_none()
+            && self.new_folder_parent.is_none()
+            && self.confirm.is_none()
+            && self.trust_prompt.is_none()
+            && self.pending_discard.is_none()
+            && !self.palette.open
+            && !self.egui_ctx.text_edit_focused();
+        match explorer::show(
+            ui,
+            &mut self.workspace,
+            active.as_deref(),
+            &mut self.explorer_state,
+            keys_enabled,
+        ) {
             explorer::Action::None => {}
             explorer::Action::OpenFile(path) => self.open_path(path),
             explorer::Action::OpenFolder => self.open_folder_dialog(),
@@ -3227,6 +3327,12 @@ impl ForgeRoomApp {
                 self.refresh_git();
             }
         }
+    }
+
+    /// The questions that wait for an answer (trust, confirmations, delete, rename, new folder).
+    /// They are drawn on every frame whatever the sidebar shows: a prompt hidden behind another view
+    /// would leave the window refusing to close with no explanation.
+    fn question_dialogs(&mut self) {
         if let Some(folder) = self.trust_prompt.take() {
             let (mut trust, mut restricted) = (false, false);
             egui::Window::new("Trust this folder?")
@@ -3237,9 +3343,10 @@ impl ForgeRoomApp {
                     ui.label(format!("{}", folder.display()));
                     ui.add_space(4.0);
                     ui.label(
-                        "Forge Room runs Git and your project's tools in this folder. A folder from \
-                         someone you do not trust can carry settings that make them start \
-                         programs. Trust it only if you know where it came from.",
+                        "Forge Room runs Git, your project's tools and the AI agent in this folder. \
+                         A folder from someone you do not trust can carry settings that make them \
+                         start programs. Trust it only if you know where it came from. Trusting a \
+                         folder also trusts the folders inside it.",
                     );
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -3282,6 +3389,21 @@ impl ForgeRoomApp {
                         "Drop stash",
                     )
                 }
+                Confirm::RevertChange(_) => (
+                    "Revert change",
+                    "Throw away this change in the open file and put the committed lines back? \
+                     This cannot be undone."
+                        .to_string(),
+                    "Revert change",
+                ),
+                Confirm::RestartTerminal => (
+                    "Restart terminal",
+                    format!(
+                        "Restart terminal {}? A program still running in it is stopped.",
+                        self.active_terminal + 1
+                    ),
+                    "Restart",
+                ),
                 Confirm::AbortOperation => (
                     "Abort",
                     format!(
@@ -3297,9 +3419,14 @@ impl ForgeRoomApp {
                 Confirm::QuitWithTerminals => (
                     "Quit",
                     format!(
-                        "{} terminal(s) are still running. Quitting stops the programs in them \
+                        "{} terminal(s) are still running{}. Quitting stops the programs in them \
                          (coding agents, dev servers).",
-                        self.terminals.iter().filter(|t| !t.has_exited()).count()
+                        self.terminals.iter().filter(|t| !t.has_exited()).count(),
+                        if self.ai.busy() {
+                            " and the AI panel's agent is working"
+                        } else {
+                            ""
+                        }
                     ),
                     "Quit anyway",
                 ),
@@ -3356,6 +3483,10 @@ impl ForgeRoomApp {
                         }
                     }
                     Confirm::EndTerminal => self.close_terminal(),
+                    Confirm::RevertChange(line) => self.change_at_line(false, line),
+                    Confirm::RestartTerminal => {
+                        self.spawn_terminal(false);
+                    }
                     Confirm::AbortOperation => {
                         if let Some(root) = self.git_root() {
                             self.status = match git::abort_operation(&root) {
@@ -3968,7 +4099,12 @@ impl ForgeRoomApp {
             self.git_action(source_control::Action::ShowCommit(hash));
         }
         if let Some((stage, line)) = hunk_choice {
-            self.change_at_line(stage, line);
+            if stage {
+                self.change_at_line(true, line);
+            } else {
+                // Reverting is not undoable (and with Auto Save the edits are already on disk).
+                self.confirm = Some(Confirm::RevertChange(line));
+            }
         }
         if let (Some(index), Some(tab)) = (cursor_index, self.tabs.tabs.get(self.tabs.active)) {
             self.cursor = position::line_col(tab.doc.text(), index);
@@ -4095,13 +4231,15 @@ impl ForgeRoomApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
+                                // The AI agent comes first: it is the tab people open most, and the
+                                // last tabs are the ones a narrow dock cuts off.
                                 for (tab, label) in [
+                                    (RightTab::Ai, "AI"),
                                     (RightTab::Room, "Team"),
                                     (RightTab::Chat, "Chat"),
                                     (RightTab::Agents, "Agents"),
                                     (RightTab::Tasks, "Tasks"),
                                     (RightTab::Activity, "Activity"),
-                                    (RightTab::Ai, "AI"),
                                 ] {
                                     if underline_tab_padded(
                                         ui,
@@ -4200,18 +4338,23 @@ impl ForgeRoomApp {
             }
             RightTab::Ai => {
                 let name = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.title());
-                let root = self
-                    .workspace
-                    .as_ref()
-                    .filter(|_| self.trusted)
-                    .map(|workspace| workspace.root.as_path());
-                ai_panel::show(ui, &mut self.ai, name.as_deref(), root);
-                if self.ai.take_login_request() {
-                    self.spawn_terminal(true);
-                    if let Some(terminal) = self.terminals.get_mut(self.active_terminal) {
-                        terminal.send(b"codex login\r");
-                        self.show_terminal = true;
-                        self.bottom_tab = BottomTab::Terminal;
+                let cwd = self.repo_root();
+                ai_panel::show(
+                    ui,
+                    &mut self.ai,
+                    name.as_deref(),
+                    cwd.as_deref(),
+                    self.trusted,
+                );
+                // "Sign in" in the panel opens a terminal that runs the provider's own login.
+                if let Some(command) = self.ai.take_login_request() {
+                    self.show_terminal = true;
+                    self.bottom_tab = BottomTab::Terminal;
+                    // Typed only into the terminal that was just made: never into one that is busy.
+                    if self.spawn_terminal(true)
+                        && let Some(terminal) = self.terminals.get_mut(self.active_terminal)
+                    {
+                        terminal.send(format!("{command}\r").as_bytes());
                     }
                 }
             }
@@ -4677,8 +4820,32 @@ impl eframe::App for ForgeRoomApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
+        // A terminal that is not on screen cannot have the keyboard; a stale flag would swallow every
+        // shortcut (Ctrl+S, Ctrl+P ...) after it was hidden.
+        if !self.show_terminal || self.show_lobby || self.bottom_tab != BottomTab::Terminal {
+            self.terminal_has_focus = false;
+        }
         for terminal in &self.terminals {
             terminal.set_hidden();
+        }
+        // An agent that was started from the AI panel: show what it says, and when it ends look at
+        // the files again (it may have edited some).
+        let finished = self.ai.poll();
+        let busy = self.ai.busy();
+        // A run is started from the AI panel, so it is already in front; it is not pulled up again
+        // when the run ends (the user may have gone elsewhere meanwhile).
+        if busy && !self.ai_was_busy {
+            self.status = "The agent is working: see the AI panel".into();
+        }
+        self.ai_was_busy = busy;
+        if finished {
+            if let Some(workspace) = &mut self.workspace {
+                workspace.refresh();
+            }
+            self.checked_folders.clear();
+            self.reload_clean_tabs();
+            self.refresh_git();
+            self.status = "The agent finished".into();
         }
         self.auto_save_tabs();
         self.poll_check();
@@ -4696,7 +4863,7 @@ impl eframe::App for ForgeRoomApp {
             && !self.allow_close
             && !self.terminals_confirmed
             && self.pending.is_none()
-            && self.terminals.iter().any(|t| !t.has_exited())
+            && (self.ai.busy() || self.terminals.iter().any(|t| !t.has_exited()))
         {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.confirm = Some(Confirm::QuitWithTerminals);
@@ -4761,7 +4928,7 @@ impl eframe::App for ForgeRoomApp {
         }
 
         if self.show_sidebar && !self.show_lobby {
-            let drawn = egui::Panel::left("sidebar")
+            let drawn = egui::Panel::left(("sidebar", self.layout_generation))
                 .default_size(f32::from(self.panel_sizes.0))
                 .size_range(180.0..=560.0)
                 .resizable(true)
@@ -4771,7 +4938,7 @@ impl eframe::App for ForgeRoomApp {
         }
 
         if self.show_right && !self.show_lobby {
-            let drawn = egui::Panel::right("right-dock")
+            let drawn = egui::Panel::right(("right-dock", self.layout_generation))
                 .default_size(f32::from(self.panel_sizes.1))
                 .size_range(280.0..=640.0)
                 .resizable(true)
@@ -4783,10 +4950,10 @@ impl eframe::App for ForgeRoomApp {
         if self.show_terminal && !self.show_lobby {
             let panel = if self.terminal_maximized {
                 // Most of the window; the editor keeps a strip above it.
-                egui::Panel::bottom("terminal-maximized")
+                egui::Panel::bottom(("terminal-maximized", self.layout_generation))
                     .exact_size((ui.available_height() - 90.0).max(200.0))
             } else {
-                egui::Panel::bottom("terminal")
+                egui::Panel::bottom(("terminal", self.layout_generation))
                     .resizable(true)
                     .default_size(f32::from(self.panel_sizes.2))
                     .size_range(120.0..=720.0)
@@ -4950,6 +5117,7 @@ impl eframe::App for ForgeRoomApp {
         self.poll_recycling();
         self.discard_dialog(&context);
         self.pending_dialog(&context);
+        self.question_dialogs();
         self.update_title(&context);
     }
 }
@@ -5102,6 +5270,10 @@ enum Confirm {
     EndTerminal,
     /// `cargo check` runs the folder's build scripts and macros.
     RunCheck,
+    /// Throw away one change of the open file (from the gutter's menu); the line it was chosen on.
+    RevertChange(usize),
+    /// Replace the shown terminal with a new shell.
+    RestartTerminal,
     /// Abort the merge, cherry-pick, revert or rebase in progress.
     AbortOperation,
     /// Quit while shells are still running.

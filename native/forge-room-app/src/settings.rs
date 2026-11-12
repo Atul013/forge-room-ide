@@ -20,6 +20,16 @@ pub struct Settings {
     /// Folders the user trusts: Git and project tools only run in these (or below them).
     #[serde(default)]
     pub trusted_folders: Vec<String>,
+    /// The agent panel's choices: provider ("claude" or "codex"), model, effort and mode ("read" or
+    /// "edit"; full access is never remembered).
+    #[serde(default)]
+    pub ai_provider: Option<String>,
+    #[serde(default)]
+    pub ai_model: Option<String>,
+    #[serde(default)]
+    pub ai_effort: Option<String>,
+    #[serde(default)]
+    pub ai_mode: Option<String>,
 }
 
 fn trust_key(path: &str) -> String {
@@ -92,6 +102,13 @@ pub fn remember_folder(recent: &mut Vec<String>, folder: &str) {
 
 /// Load the settings, change them and save them again, so one setting never overwrites another.
 pub fn update(change: impl FnOnce(&mut Settings)) -> io::Result<()> {
+    // A settings file that exists but cannot be understood (half written, from a newer version) is
+    // copied aside before it is replaced, so one bad moment never loses every setting.
+    if let Ok(text) = fs::read_to_string(path())
+        && serde_json::from_str::<Settings>(&text).is_err()
+    {
+        let _ = fs::write(path().with_extension("json.bad"), text);
+    }
     let mut settings = load();
     change(&mut settings);
     save(&settings)

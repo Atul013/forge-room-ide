@@ -2,7 +2,7 @@
 
 A light, fast, native IDE written in Rust. No Electron, no webview, no bundled Node runtime.
 
-**Status:** early preview (`0.110.0-alpha.2`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [progress.md](progress.md).
+**Status:** early preview (`0.110.0-alpha.3`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [progress.md](progress.md).
 
 ## What works today
 
@@ -10,7 +10,9 @@ A light, fast, native IDE written in Rust. No Electron, no webview, no bundled N
 - Safe editing: files keep their line endings, BOM and UTF-16 encoding; saves are atomic (a crash never leaves a half-written file) and unsaved text is kept in a recovery folder and brought back after a crash; Enter keeps the indentation, Tab and Shift+Tab indent lines, brackets and quotes are completed in pairs, Ctrl+/, Alt+Up/Down, Shift+Alt+Up/Down and Ctrl+Shift+K comment, move, duplicate and delete lines, Ctrl+D selects the next occurrence, palette commands change case, sort and de-duplicate lines, trim trailing whitespace and join lines, Ctrl+Shift+Y goes to a symbol in the file, and Ctrl+= / Ctrl+- / Ctrl+0 change the editor font size.
 - Line numbers, syntax highlighting (incremental, so large files stay responsive; TypeScript, JSX, TOML and similar files borrow the closest bundled syntax), command palette, quick open and file search that follow `.gitignore`, find/replace with match case, whole word and regular expressions, and an integrated terminal with scrollback, selection, copy and Ctrl+click on `file:line:column` references to open them in the editor.
 - Source Control with staging, commits, branches, merging, cherry-pick and revert from the History graph (with abort), staging or reverting a single change from the editor gutter, branch deletion, synchronization, diffs, history, blame, and merge-conflict resolution (accept current or incoming). Git is read on a worker thread, so a big repository does not freeze the window.
-- Local project rooms with people, agents, tasks, handoffs, evidence, and activity, and a Room Lobby page (Rooms in the left rail) with goal, milestones, setup and an optional countdown. The AI panel can run a read-only Ask through an installed Codex CLI; OpenAI sign-in uses `codex login` in the terminal, and local Ollama or LM Studio models can be selected through that CLI. Network collaboration, invites, and approved agent edits are not yet implemented in the native app.
+- Local project rooms with people, agents, tasks, handoffs, evidence, and activity, and a Room Lobby page (Rooms in the left rail) with goal, milestones, setup and an optional countdown. Network collaboration and invites are not yet implemented in the native app.
+- AI agent panel (Ctrl+Shift+A): runs an installed Claude Code or Codex (and local Ollama or LM Studio models through Codex) in the open folder with streaming answers, model and effort pickers and Read only / Edit files / Full access modes. The agent program sends your prompt to its provider; Forge Room itself sends nothing. Git, cargo check and agents only run in a folder you trust. A run from the panel cannot ask for permission, so commands need Full access.
+- Several terminals with split view, maximize and a VS Code-style header; the layout, open files and terminals come back when the app starts again.
 - Six appearance themes and a per-user Windows installer with in-place updates and a themed uninstaller.
 
 Current gaps and the shared work plan are in [progress.md](progress.md).

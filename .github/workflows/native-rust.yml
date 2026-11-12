@@ -77,10 +77,10 @@ jobs:
         if: always() && steps.package.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64
+          name: Forge-Room-Early-Preview-0.110.0-alpha.3-windows-x64
           path: |
-            artifacts/windows-x64/Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64.zip
-            artifacts/windows-x64/Forge-Room-Early-Preview-0.110.0-alpha.2-windows-x64-setup.exe
+            artifacts/windows-x64/Forge-Room-Early-Preview-0.110.0-alpha.3-windows-x64.zip
+            artifacts/windows-x64/Forge-Room-Early-Preview-0.110.0-alpha.3-windows-x64-setup.exe
             artifacts/windows-x64/SHA256SUMS.txt
             artifacts/windows-x64/BUILD_METRICS.json
             artifacts/windows-x64/LAUNCH_SMOKE.json

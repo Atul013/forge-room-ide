@@ -1,6 +1,6 @@
 # Phase 1 hands-on trial (Atul's track): installer, editor, Git, terminal
 
-Use **Forge Room Early Preview 0.110.0-alpha.2**: https://github.com/Atul013/forge-room-ide/releases/tag/v0.110.0-alpha.2
+Use **Forge Room Early Preview 0.110.0-alpha.3**: https://github.com/Atul013/forge-room-ide/releases/tag/v0.110.0-alpha.3
 Record each step as **pass**, **fail** or **not tested**, with notes, in `docs/native/ATUL_PHASE1_LOG.md`. Do not mark Phase 1 closed on automated checks alone.
 
 ## 0. Prepare (5 min)
@@ -12,10 +12,10 @@ Record each step as **pass**, **fail** or **not tested**, with notes, in `docs/n
 1. Run the setup exe. SmartScreen will warn (unsigned): note the exact wording, choose More info > Run anyway.
 2. Check: the installer window opens, uses the Forge Room look, shows the logo, no clipped text. Choose the desktop-shortcut task once.
 3. After install: Start Menu entry "Forge Room Early Preview" exists; desktop shortcut exists; the taskbar and shortcut icons are the **new logo** (house-shaped F), not a generic icon.
-4. Launch from Start. Title bar shows the logo; window opens centred; version in the status bar reads 0.110.0-alpha.2.
+4. Launch from Start. Title bar shows the logo; window opens centred; version in the status bar reads 0.110.0-alpha.3.
 5. Check install folder `%LOCALAPPDATA%\Programs\Forge Room Early Preview` has the exe and the uninstaller; **no** admin prompt appeared.
-6. **Upgrade test:** install alpha.1 first on a second clean user (or after uninstalling), create a room and a lobby goal, then run the alpha.2 setup. Check: app updates in place, room and lobby settings survive, shortcuts still work.
-7. **Downgrade test:** run the alpha.1 setup over alpha.2. Expected: blocked with a clear message.
+6. **Upgrade test:** install alpha.2 first on a second clean user (or after uninstalling), create a room and a lobby goal, then run the alpha.3 setup. Check: app updates in place, room and lobby settings survive, shortcuts still work.
+7. **Downgrade test:** run the alpha.2 setup over alpha.3. Expected: blocked with a clear message.
 8. **Uninstall:** Settings > Apps > Installed apps > uninstall. Check: app, shortcuts and Start entry are gone; your sample project folder is untouched; `%LOCALAPPDATA%\Forge Room Early Preview` (rooms/settings) is kept (or the installer says otherwise).
 
 ## 2. Editor and save paths (20 min), disposable folder with a few text files
