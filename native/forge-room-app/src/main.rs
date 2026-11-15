@@ -338,6 +338,7 @@ impl ForgeRoomApp {
             .egui_ctx
             .set_zoom_factor((1.0 / native).clamp(0.8, 1.0));
         fonts::install(&creation_context.egui_ctx);
+        theme::load_import();
         match settings::load().theme {
             Some(key) if theme::find(&key).is_some() => {
                 theme::set(&creation_context.egui_ctx, &key)
@@ -5182,6 +5183,9 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(theme_gallery::Outcome::Cancel(key)) => theme::set(&context, &key),
+            Some(theme_gallery::Outcome::Error(error)) => {
+                self.status = format!("Could not save theme: {error}");
+            }
             None => {}
         }
 

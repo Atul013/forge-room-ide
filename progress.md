@@ -1,5 +1,7 @@
 # Forge Room — progress and complete working plan
 
+**15 November Studio theme import (PR pending):** Native Color Theme gallery can import a local VS Code style JSON color theme up to 512 KB. It validates theme type, name, and editor colors, previews without saving, and Keep persists the imported theme for restart; Cancel restores the prior theme. App check, focused import test, format, and warning-free Clippy passed. This covers a bounded part of A03. Grammar/snippet import, broad package compatibility, and hands-on desktop acceptance remain open.
+
 **14 November title menu follow-on:** Clicking a background panel or blank title area now dismisses the brand menu stack, including open File/Edit/View submenus. File also offers New Folder when a workspace is open, using the existing folder-name dialog and validation. Local app tests (267 passed, 6 ignored), build, format, and Clippy passed; visible desktop click acceptance remains open.
 
 **14 November local task priority:** Local Room tasks now have Normal, High, and Critical priority. The owner or host can change priority on active tasks; task cards, copied summaries, and a list filter expose it. Existing saved tasks default to Normal. Integrated core tests, 267 app tests (6 ignored), app Clippy, and formatting passed. A later full test run hit an existing search cancellation timing test once; its targeted rerun passed. This remains local metadata; visible desktop interaction and network scheduling are open.

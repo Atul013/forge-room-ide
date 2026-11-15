@@ -9,6 +9,8 @@ use eframe::egui::{
 pub struct Gallery {
     pub open: bool,
     previous: String,
+    imported_text: Option<String>,
+    error: Option<String>,
 }
 
 impl Default for Gallery {
@@ -16,6 +18,8 @@ impl Default for Gallery {
         Self {
             open: false,
             previous: theme::DEFAULT_THEME.to_string(),
+            imported_text: None,
+            error: None,
         }
     }
 }
@@ -23,11 +27,14 @@ impl Default for Gallery {
 pub enum Outcome {
     Keep,
     Cancel(String),
+    Error(String),
 }
 
 impl Gallery {
     pub fn open(&mut self) {
         self.previous = theme::current().key.clone();
+        self.imported_text = None;
+        self.error = None;
         self.open = true;
     }
 }
@@ -42,6 +49,7 @@ pub fn show(context: &egui::Context, gallery: &mut Gallery) -> Option<Outcome> {
     let mut picked: Option<String> = None;
     let mut keep = false;
     let mut cancel = false;
+    let mut import = false;
 
     let modal = egui::Modal::new(egui::Id::unique("theme-gallery")).show(context, |ui| {
         ui.set_width(CARD.x * 3.0 + 40.0);
@@ -67,6 +75,13 @@ pub fn show(context: &egui::Context, gallery: &mut Gallery) -> Option<Outcome> {
                 }
             });
         ui.add_space(14.0);
+        if ui.button("Import color theme JSON…").clicked() {
+            import = true;
+        }
+        if let Some(error) = &gallery.error {
+            ui.colored_label(egui::Color32::LIGHT_RED, error);
+        }
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
             let primary = egui::Button::new(
                 RichText::new("Keep this theme")
@@ -94,11 +109,45 @@ pub fn show(context: &egui::Context, gallery: &mut Gallery) -> Option<Outcome> {
     if let Some(key) = picked {
         theme::set(context, &key);
     }
+    if import
+        && let Some(path) = rfd::FileDialog::new()
+            .add_filter("JSON theme", &["json"])
+            .pick_file()
+    {
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.len() <= 512 * 1024 => match std::fs::read_to_string(&path) {
+                Ok(text) => match theme::preview_import(context, &text) {
+                    Ok(()) => {
+                        gallery.imported_text = Some(text);
+                        gallery.error = None;
+                    }
+                    Err(error) => gallery.error = Some(error),
+                },
+                Err(error) => gallery.error = Some(error.to_string()),
+            },
+            _ => gallery.error = Some("Choose a readable JSON theme under 512 KB".into()),
+        }
+    }
     if keep {
+        if theme::current().key == "imported-theme" {
+            if let Some(text) = gallery.imported_text.as_deref() {
+                if let Err(error) = theme::save_import(text) {
+                    return Some(Outcome::Error(error));
+                }
+                gallery.imported_text = None;
+            }
+        } else if gallery.imported_text.take().is_some() {
+            theme::discard_import();
+            theme::load_import();
+        }
         gallery.open = false;
         return Some(Outcome::Keep);
     }
     if cancel {
+        if gallery.imported_text.take().is_some() {
+            theme::discard_import();
+            theme::load_import();
+        }
         gallery.open = false;
         return Some(Outcome::Cancel(gallery.previous.clone()));
     }

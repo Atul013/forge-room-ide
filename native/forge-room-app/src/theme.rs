@@ -5,6 +5,7 @@ use eframe::egui::{self, Color32, FontFamily, FontId, TextStyle};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
+use std::{fs, path::PathBuf};
 
 pub const DEFAULT_THEME: &str = "forge-room";
 
@@ -250,7 +251,7 @@ fn build(entry: &CatalogEntry, file: &ThemeFile) -> Theme {
 }
 
 /// All bundled themes, in catalog order.
-pub fn all() -> &'static [Arc<Theme>] {
+fn bundled() -> &'static [Arc<Theme>] {
     static THEMES: OnceLock<Vec<Arc<Theme>>> = OnceLock::new();
     THEMES.get_or_init(|| {
         let catalog: CatalogFile = serde_json::from_str(CATALOG).expect("bundled theme catalog");
@@ -264,6 +265,89 @@ pub fn all() -> &'static [Arc<Theme>] {
             })
             .collect()
     })
+}
+
+fn imported() -> &'static RwLock<Option<Arc<Theme>>> {
+    static IMPORTED: OnceLock<RwLock<Option<Arc<Theme>>>> = OnceLock::new();
+    IMPORTED.get_or_init(|| RwLock::new(None))
+}
+
+pub fn all() -> Vec<Arc<Theme>> {
+    let mut themes = bundled().to_vec();
+    if let Some(theme) = imported().read().expect("theme lock").clone() {
+        themes.push(theme);
+    }
+    themes
+}
+
+fn imported_path() -> PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("Forge Room Early Preview")
+        .join("imported-theme.json")
+}
+
+pub fn parse_import(text: &str) -> Result<Arc<Theme>, String> {
+    if text.len() > 512 * 1024 {
+        return Err("Theme exceeds 512 KB".into());
+    }
+    let file: ThemeFile =
+        serde_json::from_str(text).map_err(|e| format!("Invalid theme JSON: {e}"))?;
+    if !matches!(file.kind.as_str(), "dark" | "light") {
+        return Err("Theme type must be dark or light".into());
+    }
+    let name = serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
+        .filter(|name| {
+            !name.trim().is_empty() && name.len() <= 80 && !name.chars().any(char::is_control)
+        })
+        .ok_or("Theme needs a name of at most 80 characters")?;
+    for required in ["editor.background", "editor.foreground"] {
+        if file
+            .colors
+            .get(required)
+            .and_then(|value| parse_hex(value))
+            .is_none()
+        {
+            return Err(format!("Theme needs a valid {required} color"));
+        }
+    }
+    let entry = CatalogEntry {
+        key: "imported-theme".into(),
+        name,
+        mood: "Imported theme".into(),
+        description: "Local color theme".into(),
+        colors: Vec::new(),
+    };
+    Ok(Arc::new(build(&entry, &file)))
+}
+
+pub fn preview_import(context: &egui::Context, text: &str) -> Result<(), String> {
+    let parsed = parse_import(text)?;
+    *imported().write().expect("theme lock") = Some(parsed);
+    set(context, "imported-theme");
+    Ok(())
+}
+
+pub fn discard_import() {
+    *imported().write().expect("theme lock") = None;
+}
+
+pub fn save_import(text: &str) -> Result<(), String> {
+    parse_import(text)?;
+    let path = imported_path();
+    fs::create_dir_all(path.parent().expect("theme parent")).map_err(|e| e.to_string())?;
+    fs::write(path, text).map_err(|e| e.to_string())
+}
+
+pub fn load_import() {
+    if let Ok(text) = fs::read_to_string(imported_path())
+        && let Ok(theme) = parse_import(&text)
+    {
+        *imported().write().expect("theme lock") = Some(theme);
+    }
 }
 
 pub fn find(key: &str) -> Option<Arc<Theme>> {
@@ -394,6 +478,14 @@ accessors!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imported_theme_requires_real_colors_and_name() {
+        let good = r##"{"name":"My Theme","type":"dark","colors":{"editor.background":"#102030","editor.foreground":"#ffffff"}}"##;
+        assert_eq!(parse_import(good).unwrap().name, "My Theme");
+        assert!(parse_import(&good.replace("#102030", "not-a-color")).is_err());
+        assert!(parse_import(&good.replace("My Theme", "")).is_err());
+    }
 
     #[test]
     fn parses_hex_colors() {
