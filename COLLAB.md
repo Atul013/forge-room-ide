@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-15 Codex: Implemented A03 native Studio theme import on `feat/native-theme-import` from current `origin/main`. The gallery previews a validated local color-theme JSON and saves it only on Keep. App check, focused import test, format, and warning-free Clippy passed; desktop interaction remains open.
+
 - 2026-11-14 Codex: Completed native title-menu dismissal fix and File > New Folder follow-on on `fix/title-menu-dismissal` from current `origin/main`. Background clicks close the brand menu stack; the File action uses Explorer's existing folder creation dialog. Local app tests (267 passed, 6 ignored), build, format, and Clippy passed. Visible desktop click acceptance remains open.
 
 - 2026-11-14 Codex: Completed additive local task priority on `feat/local-room-task-priority`: Normal/High/Critical, owner/host updates, badges, copied summaries, and list filter. Old tasks default to Normal. Integrated core and app tests, format, and warning-free app Clippy passed after reconciling current `main`; a later full run hit an existing search cancellation timing test once, whose targeted rerun passed. Visible desktop interaction remains open. This is local task metadata, not network scheduling.
