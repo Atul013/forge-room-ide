@@ -1,5 +1,7 @@
 # Forge Room — progress and complete working plan
 
+**15 November Studio library follow-on (PR pending):** Imported color themes now form a local library, keyed by stable content fingerprint and loaded on restart. The gallery scrolls through the collection and offers an explicit removal action for a selected imported theme. The previous single imported theme remains loadable. Focused import test, format, and warning-free app Clippy passed. This extends A03; desktop interaction and grammar/snippet support remain open.
+
 **15 November Studio theme import (PR pending):** Native Color Theme gallery can import a local VS Code style JSON color theme up to 512 KB. It validates theme type, name, and editor colors, previews without saving, and Keep persists the imported theme for restart; Cancel restores the prior theme. App check, focused import test, format, and warning-free Clippy passed. This covers a bounded part of A03. Grammar/snippet import, broad package compatibility, and hands-on desktop acceptance remain open.
 
 **14 November title menu follow-on:** Clicking a background panel or blank title area now dismisses the brand menu stack, including open File/Edit/View submenus. File also offers New Folder when a workspace is open, using the existing folder-name dialog and validation. Local app tests (267 passed, 6 ignored), build, format, and Clippy passed; visible desktop click acceptance remains open.

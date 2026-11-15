@@ -5186,6 +5186,13 @@ impl eframe::App for ForgeRoomApp {
             Some(theme_gallery::Outcome::Error(error)) => {
                 self.status = format!("Could not save theme: {error}");
             }
+            Some(theme_gallery::Outcome::Removed) => {
+                if let Err(error) =
+                    settings::update(|settings| settings.theme = Some(theme::DEFAULT_THEME.into()))
+                {
+                    self.status = format!("Theme removed; could not save settings: {error}");
+                }
+            }
             None => {}
         }
 

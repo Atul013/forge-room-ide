@@ -10,7 +10,9 @@ pub struct Gallery {
     pub open: bool,
     previous: String,
     imported_text: Option<String>,
+    staged_key: Option<String>,
     error: Option<String>,
+    confirm_remove: bool,
 }
 
 impl Default for Gallery {
@@ -19,7 +21,9 @@ impl Default for Gallery {
             open: false,
             previous: theme::DEFAULT_THEME.to_string(),
             imported_text: None,
+            staged_key: None,
             error: None,
+            confirm_remove: false,
         }
     }
 }
@@ -28,13 +32,16 @@ pub enum Outcome {
     Keep,
     Cancel(String),
     Error(String),
+    Removed,
 }
 
 impl Gallery {
     pub fn open(&mut self) {
         self.previous = theme::current().key.clone();
         self.imported_text = None;
+        self.staged_key = None;
         self.error = None;
+        self.confirm_remove = false;
         self.open = true;
     }
 }
@@ -50,6 +57,7 @@ pub fn show(context: &egui::Context, gallery: &mut Gallery) -> Option<Outcome> {
     let mut keep = false;
     let mut cancel = false;
     let mut import = false;
+    let mut remove = false;
 
     let modal = egui::Modal::new(egui::Id::unique("theme-gallery")).show(context, |ui| {
         ui.set_width(CARD.x * 3.0 + 40.0);
@@ -61,22 +69,42 @@ pub fn show(context: &egui::Context, gallery: &mut Gallery) -> Option<Outcome> {
             .color(theme::text_dim()),
         );
         ui.add_space(14.0);
-        egui::Grid::new("theme-cards")
-            .num_columns(3)
-            .spacing([20.0, 20.0])
+        egui::ScrollArea::vertical()
+            .max_height(420.0)
             .show(ui, |ui| {
-                for (index, theme) in theme::all().iter().enumerate() {
-                    if card(ui, theme, theme.key == active).clicked() {
-                        picked = Some(theme.key.clone());
-                    }
-                    if index % 3 == 2 {
-                        ui.end_row();
-                    }
-                }
+                egui::Grid::new("theme-cards")
+                    .num_columns(3)
+                    .spacing([20.0, 20.0])
+                    .show(ui, |ui| {
+                        for (index, theme) in theme::all().iter().enumerate() {
+                            if card(ui, theme, theme.key == active).clicked() {
+                                picked = Some(theme.key.clone());
+                            }
+                            if index % 3 == 2 {
+                                ui.end_row();
+                            }
+                        }
+                    });
             });
         ui.add_space(14.0);
         if ui.button("Import color theme JSON…").clicked() {
             import = true;
+        }
+        if active.starts_with("imported-")
+            && gallery.staged_key.as_deref() != Some(&active)
+            && ui
+                .button(if gallery.confirm_remove {
+                    "Confirm remove theme"
+                } else {
+                    "Remove selected imported theme"
+                })
+                .clicked()
+        {
+            if gallery.confirm_remove {
+                remove = true;
+            } else {
+                gallery.confirm_remove = true;
+            }
         }
         if let Some(error) = &gallery.error {
             ui.colored_label(egui::Color32::LIGHT_RED, error);
@@ -107,6 +135,7 @@ pub fn show(context: &egui::Context, gallery: &mut Gallery) -> Option<Outcome> {
     }
 
     if let Some(key) = picked {
+        gallery.confirm_remove = false;
         theme::set(context, &key);
     }
     if import
@@ -118,6 +147,12 @@ pub fn show(context: &egui::Context, gallery: &mut Gallery) -> Option<Outcome> {
             Ok(meta) if meta.len() <= 512 * 1024 => match std::fs::read_to_string(&path) {
                 Ok(text) => match theme::preview_import(context, &text) {
                     Ok(()) => {
+                        if let Some(key) = gallery.staged_key.take()
+                            && key != theme::current().key
+                        {
+                            theme::discard_import(&key);
+                        }
+                        gallery.staged_key = Some(theme::current().key.clone());
                         gallery.imported_text = Some(text);
                         gallery.error = None;
                     }
@@ -128,24 +163,37 @@ pub fn show(context: &egui::Context, gallery: &mut Gallery) -> Option<Outcome> {
             _ => gallery.error = Some("Choose a readable JSON theme under 512 KB".into()),
         }
     }
+    if remove {
+        match theme::remove_import(&active) {
+            Ok(()) => {
+                theme::set(context, theme::DEFAULT_THEME);
+                gallery.open = false;
+                return Some(Outcome::Removed);
+            }
+            Err(error) => gallery.error = Some(error),
+        }
+    }
     if keep {
-        if theme::current().key == "imported-theme" {
+        if gallery.staged_key.as_deref() == Some(theme::current().key.as_str()) {
             if let Some(text) = gallery.imported_text.as_deref() {
                 if let Err(error) = theme::save_import(text) {
                     return Some(Outcome::Error(error));
                 }
                 gallery.imported_text = None;
+                gallery.staged_key = None;
             }
-        } else if gallery.imported_text.take().is_some() {
-            theme::discard_import();
+        } else if let Some(key) = gallery.staged_key.take() {
+            gallery.imported_text = None;
+            theme::discard_import(&key);
             theme::load_import();
         }
         gallery.open = false;
         return Some(Outcome::Keep);
     }
     if cancel {
-        if gallery.imported_text.take().is_some() {
-            theme::discard_import();
+        if let Some(key) = gallery.staged_key.take() {
+            gallery.imported_text = None;
+            theme::discard_import(&key);
             theme::load_import();
         }
         gallery.open = false;
