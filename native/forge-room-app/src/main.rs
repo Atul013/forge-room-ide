@@ -339,6 +339,7 @@ impl ForgeRoomApp {
             .set_zoom_factor((1.0 / native).clamp(0.8, 1.0));
         fonts::install(&creation_context.egui_ctx);
         theme::load_import();
+        syntax::load_imports();
         match settings::load().theme {
             Some(key) if theme::find(&key).is_some() => {
                 theme::set(&creation_context.egui_ctx, &key)
@@ -3237,6 +3238,27 @@ impl ForgeRoomApp {
                         }
                     }
                     Some(project_tools::Selected::Studio) => self.gallery.open(),
+                    Some(project_tools::Selected::ImportGrammar) => {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Sublime syntax", &["sublime-syntax"])
+                            .pick_file()
+                        {
+                            self.status = match std::fs::metadata(&path) {
+                                Ok(meta) if meta.len() <= 128 * 1024 => {
+                                    match std::fs::read_to_string(&path) {
+                                        Ok(text) => match syntax::import_grammar(&text) {
+                                            Ok(name) => format!("Imported syntax grammar: {name}"),
+                                            Err(error) => {
+                                                format!("Could not import grammar: {error}")
+                                            }
+                                        },
+                                        Err(error) => format!("Could not read grammar: {error}"),
+                                    }
+                                }
+                                _ => "Choose a readable grammar under 128 KB".into(),
+                            };
+                        }
+                    }
                     Some(project_tools::Selected::AppCommand(command)) => {
                         self.run_command(command, false);
                     }

@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-15 Codex: Implemented A03 declarative `.sublime-syntax` import on `feat/native-syntax-grammar-import` after Studio library PR #45 passed Windows CI and merged. Imported grammars affect native editor coloring and persist locally. Focused parser/highlighter test, format, and warning-free app Clippy passed; desktop acceptance remains open.
+
 - 2026-11-15 Codex: Extended A03 Studio import into a local multi-theme library on `feat/studio-theme-library`. Existing single-theme data remains loadable; imported themes gain stable identity, restart loading, a scrollable gallery and explicit removal. Focused import test, format, and warning-free app Clippy passed; desktop interaction remains open.
 
 - 2026-11-15 Codex: Implemented A03 native Studio theme import on `feat/native-theme-import` from current `origin/main`. The gallery previews a validated local color-theme JSON and saves it only on Keep. App check, focused import test, format, and warning-free Clippy passed; desktop interaction remains open.
