@@ -39,6 +39,8 @@ pub enum Selected {
     AppCommand(Command),
     Studio,
     ImportGrammar,
+    ImportSnippets,
+    InsertSnippet(String),
     ToggleTerminal,
     ToggleDock,
     TogglePreview,
@@ -362,6 +364,20 @@ pub fn show(
             }
             for name in crate::syntax::grammar_names() {
                 ui.label(name);
+            }
+            ui.separator();
+            ui.label("Plain-text snippets");
+            ui.small("Import a VS Code JSON snippet file. Snippets with placeholders are skipped.");
+            if ui.button("Import snippets…").clicked() {
+                return Some(Selected::ImportSnippets);
+            }
+            for snippet in crate::snippets::installed() {
+                if ui
+                    .button(format!("Insert {} ({})", snippet.name, snippet.prefix))
+                    .clicked()
+                {
+                    return Some(Selected::InsertSnippet(snippet.body));
+                }
             }
             if let Some(root) = root {
                 let path = root.join(".vscode").join("extensions.json");

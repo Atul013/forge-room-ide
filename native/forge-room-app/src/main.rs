@@ -35,6 +35,7 @@ mod search;
 mod search_view;
 mod session;
 mod settings;
+mod snippets;
 mod source_control;
 mod symbols;
 mod syntax;
@@ -3257,6 +3258,52 @@ impl ForgeRoomApp {
                                 }
                                 _ => "Choose a readable grammar under 128 KB".into(),
                             };
+                        }
+                    }
+                    Some(project_tools::Selected::ImportSnippets) => {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("VS Code snippets", &["json", "code-snippets"])
+                            .pick_file()
+                        {
+                            self.status = match std::fs::metadata(&path) {
+                                Ok(meta) if meta.len() <= 128 * 1024 => {
+                                    match std::fs::read_to_string(&path) {
+                                        Ok(text) => match snippets::import(&text) {
+                                            Ok(count) => {
+                                                format!("Imported {count} plain-text snippets")
+                                            }
+                                            Err(error) => {
+                                                format!("Could not import snippets: {error}")
+                                            }
+                                        },
+                                        Err(error) => format!("Could not read snippets: {error}"),
+                                    }
+                                }
+                                _ => "Choose a readable snippet file under 128 KB".into(),
+                            };
+                        }
+                    }
+                    Some(project_tools::Selected::InsertSnippet(body)) => {
+                        if let Some(tab) = self.tabs.active_tab()
+                            && !tab.readonly
+                        {
+                            let id = egui::Id::unique(("editor", tab.id));
+                            let cursor = egui::TextEdit::load_state(ui.ctx(), id)
+                                .and_then(|state| {
+                                    state
+                                        .cursor
+                                        .char_range()
+                                        .map(|range| usize::from(range.primary.index))
+                                })
+                                .unwrap_or_else(|| tab.doc.text().chars().count());
+                            let byte = tab
+                                .doc
+                                .text()
+                                .char_indices()
+                                .nth(cursor)
+                                .map_or(tab.doc.text().len(), |(index, _)| index);
+                            tab.doc.text_mut().insert_str(byte, &body);
+                            self.status = "Inserted snippet".into();
                         }
                     }
                     Some(project_tools::Selected::AppCommand(command)) => {
