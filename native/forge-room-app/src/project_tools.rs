@@ -38,6 +38,7 @@ pub enum Selected {
     Command(String),
     AppCommand(Command),
     Studio,
+    ImportGrammar,
     ToggleTerminal,
     ToggleDock,
     TogglePreview,
@@ -353,6 +354,15 @@ pub fn show(
         Page::Extensions => {
             ui.label("Native extension support is being developed.");
             ui.small("JavaScript VSIX extensions cannot run in this native preview.");
+            ui.separator();
+            ui.label("Syntax grammars");
+            ui.small("Import a local .sublime-syntax file for editor coloring. Grammars do not run extension code.");
+            if ui.button("Import syntax grammar…").clicked() {
+                return Some(Selected::ImportGrammar);
+            }
+            for name in crate::syntax::grammar_names() {
+                ui.label(name);
+            }
             if let Some(root) = root {
                 let path = root.join(".vscode").join("extensions.json");
                 if let Ok(text) = fs::read_to_string(&path) {
