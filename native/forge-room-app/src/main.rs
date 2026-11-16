@@ -5073,6 +5073,7 @@ impl eframe::App for ForgeRoomApp {
     fn on_exit(&mut self) {
         let _ = self.lobby.finish();
         self.save_session(true);
+        self.ai.new_chat();
         // A normal exit already asked about every unsaved tab: nothing is left to recover.
         self.recovery.clear();
     }

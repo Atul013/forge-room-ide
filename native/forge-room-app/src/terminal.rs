@@ -450,10 +450,16 @@ impl Terminal {
                 let inverse = cell.inverse();
                 let mut text = String::new();
                 let mut end = column;
+                let separate_glyph = !cell.contents().is_ascii();
                 while end < screen_cols {
                     let Some(next) = screen.cell(row, end) else {
                         break;
                     };
+                    // Fallback fonts can give box drawing characters and emoji a different
+                    // advance from the terminal cell. Anchor each such glyph to its own cell.
+                    if end > column && (separate_glyph || !next.contents().is_ascii()) {
+                        break;
+                    }
                     if next.fgcolor() != foreground
                         || next.bgcolor() != cell_background
                         || next.bold() != bold

@@ -7,6 +7,49 @@ use crate::{brand, fonts, icons, theme};
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Sense, Stroke};
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
+fn clipboard_image() -> Result<Option<PathBuf>, String> {
+    use std::os::windows::process::CommandExt;
+    let dir = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Forge Room Early Preview")
+        .join("agent-images");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let path = dir.join(format!("paste-{}-{stamp}.png", std::process::id()));
+    let program = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    let command = "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $image=[System.Windows.Forms.Clipboard]::GetImage(); if ($null -eq $image) { exit 2 }; try { $image.Save($env:FORGE_ROOM_IMAGE_PATH, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $image.Dispose() }";
+    let status = std::process::Command::new(program)
+        .args(["-NoProfile", "-Sta", "-Command", command])
+        .env("FORGE_ROOM_IMAGE_PATH", &path)
+        .creation_flags(0x0800_0000)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.code() == Some(2) {
+        return Ok(None);
+    }
+    if !status.success() {
+        let _ = std::fs::remove_file(&path);
+        return Err("Could not read the clipboard image".into());
+    }
+    Ok(Some(path))
+}
+
+#[cfg(not(windows))]
+fn clipboard_image() -> Result<Option<PathBuf>, String> {
+    Ok(None)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Author {
     User,
@@ -51,6 +94,8 @@ pub struct State {
     confirm_full: bool,
     /// The note that Codex does not remember earlier messages was shown in this chat.
     noted_fresh_sessions: bool,
+    image: Option<PathBuf>,
+    image_is_temp: bool,
 }
 
 impl Default for State {
@@ -72,6 +117,8 @@ impl Default for State {
             login_requested: None,
             confirm_full: false,
             noted_fresh_sessions: false,
+            image: None,
+            image_is_temp: false,
         }
     }
 }
@@ -183,7 +230,11 @@ impl State {
     /// refused stays in the box, and the reason is shown.
     fn send(&mut self, context: &egui::Context, cwd: Option<&Path>, trusted: bool) {
         let text = self.input.trim().to_string();
-        if text.is_empty() || self.run.is_some() {
+        if (text.is_empty() && self.image.is_none()) || self.run.is_some() {
+            return;
+        }
+        if self.image.is_some() && self.provider != Provider::Codex {
+            self.fail("Image input currently requires Codex. Choose Codex or remove the image.");
             return;
         }
         let Some(cwd) = cwd else {
@@ -241,9 +292,14 @@ impl State {
             model: self.model.clone(),
             effort: self.effort.clone(),
             mode: self.mode,
-            prompt: text.clone(),
+            prompt: if text.is_empty() {
+                "Describe this image.".into()
+            } else {
+                text.clone()
+            },
             cwd: cwd.to_path_buf(),
             session: self.session.clone(),
+            image: self.image.clone(),
         };
         let wake = context.clone();
         match agent::start(&program, &request, move || wake.request_repaint()) {
@@ -252,7 +308,11 @@ impl State {
                 self.started = Some(std::time::Instant::now());
                 self.messages.push(Message {
                     author: Author::User,
-                    text,
+                    text: if self.image.is_some() {
+                        format!("{text}\n[image attached]")
+                    } else {
+                        text
+                    },
                 });
                 self.input.clear();
                 self.focus_input = true;
@@ -317,6 +377,7 @@ impl State {
         if finished {
             self.run = None;
             self.started = None;
+            self.clear_image();
         }
         finished
     }
@@ -337,6 +398,34 @@ impl State {
         self.session = None;
         self.noted_fresh_sessions = false;
         self.confirm_full = false;
+        self.clear_image();
+    }
+
+    fn clear_image(&mut self) {
+        if self.image_is_temp
+            && let Some(path) = &self.image
+        {
+            let _ = std::fs::remove_file(path);
+        }
+        self.image = None;
+        self.image_is_temp = false;
+    }
+
+    fn attach_image(&mut self, path: PathBuf, temporary: bool) {
+        let valid = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+            ["png", "jpg", "jpeg", "webp"].contains(&e.to_ascii_lowercase().as_str())
+        }) && std::fs::metadata(&path)
+            .is_ok_and(|m| m.is_file() && m.len() <= 10 * 1024 * 1024);
+        if !valid {
+            if temporary {
+                let _ = std::fs::remove_file(path);
+            }
+            self.fail("Choose a PNG, JPEG, or WebP image under 10 MB.");
+            return;
+        }
+        self.clear_image();
+        self.image = Some(path);
+        self.image_is_temp = temporary;
     }
 
     /// Add `@name ` to the input, the way the design references files and Room context.
@@ -1033,6 +1122,13 @@ fn composer(
         focused && ui.input(|input| input.key_pressed(Key::Enter) && !input.modifiers.shift);
     let send_requested =
         enter && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+    if focused && ui.input(|input| input.modifiers.command && input.key_pressed(Key::V)) {
+        match clipboard_image() {
+            Ok(Some(path)) => state.attach_image(path, true),
+            Ok(None) => {}
+            Err(error) => state.fail(error),
+        }
+    }
     if focused && state.busy() && ui.input(|input| input.key_pressed(Key::Escape)) {
         state.stop();
     }
@@ -1067,7 +1163,26 @@ fn composer(
                 ui.memory_mut(|memory| memory.request_focus(id));
             }
             ui.add_space(6.0);
+            if let Some(path) = &state.image {
+                let name = path
+                    .file_name()
+                    .map_or("Image", |name| name.to_str().unwrap_or("Image"))
+                    .to_owned();
+                ui.horizontal(|ui| {
+                    ui.label(format!("Image: {name}"));
+                    if ui.small_button("Remove").clicked() {
+                        state.clear_image();
+                    }
+                });
+            }
             ui.horizontal(|ui| {
+                if ui.small_button("Attach image…").clicked()
+                    && let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                        .pick_file()
+                {
+                    state.attach_image(path, false);
+                }
                 let attach = active_file.map(str::to_string);
                 if icons::icon_button(ui, "Reference the open file", icons::plus).clicked()
                     && let Some(name) = &attach
@@ -1094,7 +1209,7 @@ fn composer(
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(34.0, 30.0), Sense::click());
                     let busy = state.busy();
-                    let ready = !state.input.trim().is_empty() && !busy;
+                    let ready = (!state.input.trim().is_empty() || state.image.is_some()) && !busy;
                     let fill = if ready {
                         theme::button()
                     } else {
