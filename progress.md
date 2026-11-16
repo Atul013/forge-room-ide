@@ -1,3 +1,5 @@
+**16 November native LSP rename (PR pending):** Command palette can request a symbol rename, review bounded in-workspace edits by file and line, and apply after a fresh unchanged-file check. Dirty open targets, symlinks, outside-root paths, overlapping ranges, oversized edits and unsupported file operations are rejected. Changes are staged with backups and attempted rollback on failure. A focused stale-file/apply test, app check and Clippy passed; rust-analyzer rename proposal passed on rerun after a diagnostic timeout on the first run. Desktop and two-language acceptance remain open.
+
 **16 November Atul QA interactive permission path (stacked PR pending):** AI Agent now offers an Interactive agent action that launches the installed CLI in a fresh integrated terminal for a trusted folder, allowing provider permission prompts to be answered there. It does not claim the headless panel can answer prompts. App check and Clippy passed; hands-on terminal/provider acceptance remains open.
 
 **16 November Atul QA Codex continuation (stacked PR pending):** AI Agent now retains Codex thread IDs per workspace and uses `codex exec resume` for follow-up messages, while Claude continuation remains separate. Resume preserves the selected sandbox via CLI configuration and keeps prompts on stdin. Focused argument test, app check and Clippy passed. Live Codex continuation and permission-prompt handling remain open.
@@ -611,6 +613,7 @@ Seven original concept PNGs from Downloads are preserved in [`docs/design/concep
 1. **@ZayedBH:** perform the Phase 1 room, theme and accessibility trial in a disposable project; record defects and fix reproducible issues in your areas.
 2. **@Atul013:** inspect the completed Windows package artifact evidence, perform the editor, Git, terminal and interactive installer trial, and fix reproducible issues in his areas.
 3. **Together:** review failures, choose the first bounded fix, and close the Phase 1 gate before Phase 2.
+
 
 
 

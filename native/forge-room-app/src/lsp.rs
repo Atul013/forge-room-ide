@@ -281,6 +281,7 @@ pub enum QueryKind {
     Definition,
     Completion,
     References,
+    Rename,
 }
 
 pub struct QueryAnswer {
@@ -289,6 +290,7 @@ pub struct QueryAnswer {
     pub location: Option<(std::path::PathBuf, usize, usize)>,
     pub completions: Vec<(String, String)>,
     pub locations: Vec<(std::path::PathBuf, usize, usize)>,
+    pub rename_edit: Option<Value>,
 }
 
 fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
@@ -308,6 +310,7 @@ fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
                 location: None,
                 completions: Vec::new(),
                 locations: Vec::new(),
+                rename_edit: None,
             }
         }
         QueryKind::Definition => {
@@ -342,6 +345,7 @@ fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
                 location,
                 completions: Vec::new(),
                 locations: Vec::new(),
+                rename_edit: None,
             }
         }
         QueryKind::Completion => {
@@ -373,6 +377,7 @@ fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
                 location: None,
                 completions,
                 locations: Vec::new(),
+                rename_edit: None,
             }
         }
         QueryKind::References => {
@@ -401,8 +406,24 @@ fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
                 location: None,
                 completions: Vec::new(),
                 locations,
+                rename_edit: None,
             }
         }
+        QueryKind::Rename => QueryAnswer {
+            kind,
+            message: if value.get("result").is_some_and(Value::is_object) {
+                "Review the proposed rename".into()
+            } else {
+                "Language server proposed no rename".into()
+            },
+            location: None,
+            completions: Vec::new(),
+            locations: Vec::new(),
+            rename_edit: value
+                .get("result")
+                .filter(|result| result.is_object())
+                .cloned(),
+        },
     }
 }
 
@@ -436,12 +457,25 @@ pub fn query(
     column: usize,
     kind: QueryKind,
 ) -> QueryAnswer {
+    query_with_name(root, file, text, line, column, kind, None)
+}
+
+pub fn query_with_name(
+    root: &Path,
+    file: &Path,
+    text: &str,
+    line: usize,
+    column: usize,
+    kind: QueryKind,
+    new_name: Option<&str>,
+) -> QueryAnswer {
     let failed = |message: String| QueryAnswer {
         kind,
         message,
         location: None,
         completions: Vec::new(),
         locations: Vec::new(),
+        rename_edit: None,
     };
     let Some((language_id, program, args)) = language(file) else {
         return failed("No configured language server for this file type".into());
@@ -544,6 +578,7 @@ pub fn query(
             QueryKind::Definition => "textDocument/definition",
             QueryKind::Completion => "textDocument/completion",
             QueryKind::References => "textDocument/references",
+            QueryKind::Rename => "textDocument/rename",
         };
         let mut params = json!({
             "textDocument":{"uri":uri(&file)},"position":{"line":line.saturating_sub(1),"character":offset}
@@ -551,6 +586,7 @@ pub fn query(
         match kind {
             QueryKind::References => params["context"] = json!({"includeDeclaration":true}),
             QueryKind::Completion => params["context"] = json!({"triggerKind":1}),
+            QueryKind::Rename => params["newName"] = json!(new_name.unwrap_or("")),
             _ => {}
         }
         write_message(
@@ -614,6 +650,19 @@ mod tests {
         );
         let references = query(&root, &file, source, 2, 14, QueryKind::References);
         assert!(references.locations.len() >= 2, "{}", references.message);
+        let rename = query_with_name(
+            &root,
+            &file,
+            source,
+            2,
+            14,
+            QueryKind::Rename,
+            Some("renamed"),
+        );
+        let edit = rename.rename_edit.expect(&rename.message);
+        let preview = crate::lsp_rename::plan(&root, &edit).unwrap();
+        assert!(preview.edit_count >= 2);
+        assert!(preview.files[0].after.contains("fn renamed()"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

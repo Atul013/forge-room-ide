@@ -23,6 +23,7 @@ mod icons;
 mod line_ops;
 mod lobby;
 mod lsp;
+mod lsp_rename;
 mod mark;
 mod palette;
 mod path_links;
@@ -254,6 +255,8 @@ struct ForgeRoomApp {
     lsp_completion_context: Option<(PathBuf, usize, usize)>,
     lsp_completions: Vec<(String, String)>,
     lsp_references: Vec<(PathBuf, usize, usize)>,
+    lsp_rename_name: Option<String>,
+    lsp_rename_preview: Option<lsp_rename::Preview>,
     /// The last session written to disk, and when it was last compared with the window.
     session_saved: session::Session,
     session_checked: std::time::Instant,
@@ -406,6 +409,8 @@ impl ForgeRoomApp {
             lsp_completion_context: None,
             lsp_completions: Vec::new(),
             lsp_references: Vec::new(),
+            lsp_rename_name: None,
+            lsp_rename_preview: None,
             session_saved: session::Session::default(),
             session_checked: std::time::Instant::now(),
             auto_saves: autosave::Tracker::default(),
@@ -938,6 +943,7 @@ impl ForgeRoomApp {
             Command::LspDefinition => self.start_lsp_query(lsp::QueryKind::Definition),
             Command::LspCompletion => self.start_lsp_query(lsp::QueryKind::Completion),
             Command::LspReferences => self.start_lsp_query(lsp::QueryKind::References),
+            Command::LspRename => self.lsp_rename_name = Some(String::new()),
             Command::CloseTab => {
                 if !self.tabs.tabs.is_empty() {
                     self.request_close(self.tabs.active);
@@ -1327,6 +1333,53 @@ impl ForgeRoomApp {
         }
     }
 
+    fn start_lsp_rename(&mut self, name: String) {
+        if name.is_empty()
+            || name.len() > 100
+            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            || name.as_bytes()[0].is_ascii_digit()
+        {
+            self.status = "Use a simple identifier of at most 100 characters".into();
+            return;
+        }
+        let Some(root) = self.repo_root() else {
+            self.status = "Open a folder first".into();
+            return;
+        };
+        if !self.trusted {
+            self.status = "Trust this folder before starting a language server".into();
+            return;
+        }
+        let Some(tab) = self.tabs.active_tab() else {
+            self.status = "Open a source file first".into();
+            return;
+        };
+        if tab.doc.is_dirty() {
+            self.status = "Save this file before renaming a symbol".into();
+            return;
+        }
+        let Some(file) = tab.doc.path().map(|path| path.to_path_buf()) else {
+            self.status = "Save this file first".into();
+            return;
+        };
+        let text = tab.doc.text().to_owned();
+        let (line, column) = self.cursor;
+        let context = self.egui_ctx.clone();
+        if self.lsp_query.request(&context, move || {
+            lsp::query_with_name(
+                &root,
+                &file,
+                &text,
+                line,
+                column,
+                lsp::QueryKind::Rename,
+                Some(&name),
+            )
+        }) {
+            self.status = "Asking language server for rename edits…".into();
+        }
+    }
+
     fn poll_lsp_query(&mut self) {
         if let Some(answer) = self.lsp_query.poll() {
             self.status = answer.message.clone();
@@ -1347,6 +1400,14 @@ impl ForgeRoomApp {
                 self.lsp_completions = answer.completions;
             } else if matches!(answer.kind, lsp::QueryKind::References) {
                 self.lsp_references = answer.locations;
+            } else if matches!(answer.kind, lsp::QueryKind::Rename)
+                && let Some(edit) = answer.rename_edit
+                && let Some(root) = self.repo_root()
+            {
+                match lsp_rename::plan(&root, &edit) {
+                    Ok(preview) => self.lsp_rename_preview = Some(preview),
+                    Err(error) => self.status = format!("Rename rejected: {error}"),
+                }
             }
         } else if self.lsp_query.take_failed() {
             self.status = "Language server query stopped unexpectedly".into();
@@ -5233,6 +5294,87 @@ impl eframe::App for ForgeRoomApp {
             }
             if !open {
                 self.lsp_references.clear();
+            }
+        }
+        if let Some(name) = &mut self.lsp_rename_name {
+            let mut open = true;
+            let mut submit = false;
+            egui::Window::new("Rename symbol")
+                .open(&mut open)
+                .collapsible(false)
+                .show(&context, |ui| {
+                    ui.label("New identifier");
+                    ui.text_edit_singleline(name);
+                    submit = ui.button("Preview rename").clicked();
+                });
+            if submit {
+                let name = name.clone();
+                self.lsp_rename_name = None;
+                self.start_lsp_rename(name);
+            } else if !open {
+                self.lsp_rename_name = None;
+            }
+        }
+        if let Some(preview) = &self.lsp_rename_preview {
+            let mut open = true;
+            let mut apply = false;
+            let mut cancel = false;
+            egui::Window::new("Review language rename")
+                .open(&mut open)
+                .resizable(true)
+                .show(&context, |ui| {
+                    ui.label(format!(
+                        "{} edit(s) in {} file(s)",
+                        preview.edit_count,
+                        preview.files.len()
+                    ));
+                    egui::ScrollArea::vertical()
+                        .max_height(450.0)
+                        .show(ui, |ui| {
+                            for file in &preview.files {
+                                ui.collapsing(file.path.display().to_string(), |ui| {
+                                    for line in &file.lines {
+                                        ui.monospace(line);
+                                    }
+                                });
+                            }
+                        });
+                    ui.horizontal(|ui| {
+                        apply = ui.button("Apply rename").clicked();
+                        cancel = ui.button("Cancel").clicked();
+                    });
+                });
+            if apply {
+                let preview = self.lsp_rename_preview.take().expect("rename preview");
+                let root = self.repo_root().and_then(|path| path.canonicalize().ok());
+                let same_root = root.as_deref().is_some_and(|root| {
+                    preview.files.iter().all(|file| file.path.starts_with(root))
+                });
+                let dirty = self.tabs.tabs.iter().any(|tab| {
+                    tab.doc.is_dirty()
+                        && tab.doc.path().is_some_and(|path| {
+                            preview
+                                .files
+                                .iter()
+                                .any(|file| tabs::normalize(path) == tabs::normalize(&file.path))
+                        })
+                });
+                self.status = if !same_root {
+                    "Rename cancelled: workspace changed".into()
+                } else if dirty {
+                    "Rename cancelled: save open edited files first".into()
+                } else {
+                    match lsp_rename::apply(&preview) {
+                        Ok(()) => {
+                            self.reload_clean_tabs();
+                            self.refresh_git();
+                            format!("Renamed {} occurrence(s)", preview.edit_count)
+                        }
+                        Err(error) => format!("Rename not applied: {error}"),
+                    }
+                };
+            } else if !open || cancel {
+                self.lsp_rename_preview = None;
             }
         }
         self.save_session(false);
