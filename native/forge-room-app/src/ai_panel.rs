@@ -94,6 +94,7 @@ pub struct State {
     programs: Option<[Option<PathBuf>; 2]>,
     /// "Sign in" was clicked: the command for the terminal to run.
     login_requested: Option<&'static str>,
+    terminal_requested: Option<String>,
     /// Full access was picked and waits for the user's confirmation.
     confirm_full: bool,
     image: Option<PathBuf>,
@@ -122,6 +123,7 @@ impl Default for State {
             started: None,
             programs: None,
             login_requested: None,
+            terminal_requested: None,
             confirm_full: false,
             image: None,
             image_is_temp: false,
@@ -311,6 +313,10 @@ impl State {
     /// The sign-in command the user asked for with the panel's button, once.
     pub fn take_login_request(&mut self) -> Option<&'static str> {
         self.login_requested.take()
+    }
+
+    pub fn take_terminal_request(&mut self) -> Option<String> {
+        self.terminal_requested.take()
     }
 
     pub fn busy(&self) -> bool {
@@ -763,6 +769,26 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
                     .clicked()
             {
                 state.login_requested = Some(command);
+            }
+            if ui
+                .add_enabled(!state.busy(), egui::Button::new("Interactive agent"))
+                .on_hover_text(
+                    "Opens the installed agent in a terminal so you can answer permission prompts",
+                )
+                .clicked()
+            {
+                if let Some(path) = state.program(state.provider) {
+                    let escaped = path.to_string_lossy().replace('\'', "''");
+                    let mut command = format!("& '{escaped}'");
+                    match state.provider {
+                        Provider::Ollama => command.push_str(" --oss --local-provider ollama"),
+                        Provider::LmStudio => command.push_str(" --oss --local-provider lmstudio"),
+                        _ => {}
+                    }
+                    state.terminal_requested = Some(command);
+                } else {
+                    state.fail("Install this agent before opening it in a terminal.");
+                }
             }
         });
     });
