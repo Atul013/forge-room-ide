@@ -299,6 +299,75 @@ mod tests {
         (result, edit.selection)
     }
 
+    /// Every line command and text transform, on texts with multibyte characters, blank lines,
+    /// trailing newlines and no text at all, for every start/end pair on a character boundary (the
+    /// editor only ever passes those, see `editing::selection_bytes`): none may panic, and each edit
+    /// must be a valid range on character boundaries.
+    #[test]
+    fn line_commands_and_transforms_never_panic_or_make_invalid_edits() {
+        use crate::transforms::{self, Kind};
+        let texts = [
+            "",
+            "\n",
+            "a",
+            "a\n",
+            "\n\nx\n\n",
+            "héllo wörld\n  ünï(cödé)\n日本語 [テスト]\n",
+            "  // already\n  x\n\ty\n",
+            "😀 {a}\n😀 (b]\n",
+            "dup\ndup\nDup\n\ndup",
+        ];
+        let kinds = [
+            Kind::Uppercase,
+            Kind::Lowercase,
+            Kind::SortAscending,
+            Kind::SortDescending,
+            Kind::RemoveDuplicateLines,
+            Kind::TrimTrailingWhitespace,
+            Kind::JoinLines,
+            Kind::SelectNextOccurrence,
+            Kind::GoToMatchingBracket,
+            Kind::SelectToMatchingBracket,
+        ];
+        let check = |text: &str, edit: &Edit, what: &str| {
+            assert!(
+                edit.replace.start <= edit.replace.end
+                    && edit.replace.end <= text.len()
+                    && text.is_char_boundary(edit.replace.start)
+                    && text.is_char_boundary(edit.replace.end),
+                "{what}: bad range {:?} for {text:?}",
+                edit.replace
+            );
+            // Applying the edit must not panic. The caret may land past the new text (a full-line
+            // selection moved onto the last line); `editing::place_caret` clamps it.
+            let mut after = text.to_string();
+            after.replace_range(edit.replace.clone(), &edit.replacement);
+        };
+        for text in texts {
+            let offsets: Vec<usize> = (0..=text.len())
+                .filter(|&at| text.is_char_boundary(at))
+                .collect();
+            for &start in &offsets {
+                for &end in &offsets {
+                    check(text, &toggle_comment(text, start, end, "//"), "comment");
+                    check(text, &duplicate_lines(text, start, end, true), "dup down");
+                    check(text, &duplicate_lines(text, start, end, false), "dup up");
+                    check(text, &delete_lines(text, start, end), "delete");
+                    for up in [true, false] {
+                        if let Some(edit) = move_lines(text, start, end, up) {
+                            check(text, &edit, "move");
+                        }
+                    }
+                    for kind in kinds {
+                        if let Some(edit) = transforms::apply(kind, text, start, end) {
+                            check(text, &edit, &format!("{kind:?}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn comments_are_added_at_the_shallowest_indent_and_removed_again() {
         let text = "fn f() {\n    a;\n\n        b;\n}";
