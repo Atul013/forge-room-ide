@@ -85,7 +85,9 @@ pub struct State {
     saved: (String, String, String, String),
     /// The conversation the next message continues (Claude Code only).
     session: Option<String>,
+    codex_session: Option<String>,
     run: Option<agent::Run>,
+    run_provider: Option<Provider>,
     /// When the running agent was started.
     started: Option<std::time::Instant>,
     /// Where each program was found (Claude Code's, Codex's), looked up once.
@@ -94,8 +96,6 @@ pub struct State {
     login_requested: Option<&'static str>,
     /// Full access was picked and waits for the user's confirmation.
     confirm_full: bool,
-    /// The note that Codex does not remember earlier messages was shown in this chat.
-    noted_fresh_sessions: bool,
     image: Option<PathBuf>,
     image_is_temp: bool,
     workspace: Option<PathBuf>,
@@ -116,12 +116,13 @@ impl Default for State {
             effort: String::new(),
             saved: Default::default(),
             session: None,
+            codex_session: None,
             run: None,
+            run_provider: None,
             started: None,
             programs: None,
             login_requested: None,
             confirm_full: false,
-            noted_fresh_sessions: false,
             image: None,
             image_is_temp: false,
             workspace: None,
@@ -151,6 +152,8 @@ const CODEX_MODELS: [(&str, &str); 1] = [("Default model", "")];
 struct StoredChat {
     messages: Vec<Message>,
     session: Option<String>,
+    #[serde(default)]
+    codex_session: Option<String>,
 }
 
 fn chat_path(workspace: &Path) -> PathBuf {
@@ -175,11 +178,12 @@ impl State {
             return;
         }
         self.run = None;
+        self.run_provider = None;
         self.started = None;
         self.finish();
         self.messages.clear();
         self.session = None;
-        self.noted_fresh_sessions = false;
+        self.codex_session = None;
         self.workspace = Some(workspace.to_path_buf());
         let path = chat_path(workspace);
         if std::fs::metadata(&path).is_ok_and(|meta| meta.len() <= 2 * 1024 * 1024)
@@ -193,6 +197,7 @@ impl State {
                 .filter(|m| m.text.len() <= 20_000)
                 .collect();
             self.session = saved.session;
+            self.codex_session = saved.codex_session;
         }
         self.chat_dirty = false;
         self.chat_saved = std::time::Instant::now();
@@ -220,6 +225,7 @@ impl State {
         let mut saved = StoredChat {
             messages,
             session: self.session.clone(),
+            codex_session: self.codex_session.clone(),
         };
         let bytes = loop {
             let Ok(bytes) = serde_json::to_vec(&saved) else {
@@ -365,17 +371,6 @@ impl State {
                 self.model
             ));
         }
-        // Codex has no conversation to continue from here: say it once, so a follow-up that needs
-        // the earlier messages is not a surprise.
-        if provider.uses_codex()
-            && !self.noted_fresh_sessions
-            && self.messages.iter().any(|m| m.author == Author::Assistant)
-        {
-            self.noted_fresh_sessions = true;
-            self.note(
-                "Codex starts a new conversation for every message here: it does not remember the                  earlier ones, so include what it needs.",
-            );
-        }
         // Installed since the panel last looked? Look again before saying it is missing.
         if self.program(provider).is_none() {
             self.programs = None;
@@ -406,13 +401,18 @@ impl State {
                 text.clone()
             },
             cwd: cwd.to_path_buf(),
-            session: self.session.clone(),
+            session: match provider {
+                Provider::Claude => self.session.clone(),
+                Provider::Codex => self.codex_session.clone(),
+                _ => None,
+            },
             image: self.image.clone(),
         };
         let wake = context.clone();
         match agent::start(&program, &request, move || wake.request_repaint()) {
             Ok(run) => {
                 self.run = Some(run);
+                self.run_provider = Some(provider);
                 self.started = Some(std::time::Instant::now());
                 self.messages.push(Message {
                     author: Author::User,
@@ -461,12 +461,11 @@ impl State {
                     author: Author::Tool,
                     text: line,
                 }),
-                agent::Event::Session(id) => {
-                    // Only Claude Code can continue a conversation this way.
-                    if self.provider == Provider::Claude {
-                        self.session = Some(id);
-                    }
-                }
+                agent::Event::Session(id) => match self.run_provider {
+                    Some(Provider::Claude) => self.session = Some(id),
+                    Some(Provider::Codex) => self.codex_session = Some(id),
+                    _ => {}
+                },
                 agent::Event::Done { cost, error } => {
                     finished = true;
                     match error {
@@ -475,7 +474,12 @@ impl State {
                             self.fail(error);
                             // A conversation that failed (an expired or unknown session) is not
                             // continued by the next message: that would fail the same way for ever.
-                            if self.session.take().is_some() {
+                            let old = match self.run_provider {
+                                Some(Provider::Claude) => self.session.take(),
+                                Some(Provider::Codex) => self.codex_session.take(),
+                                _ => None,
+                            };
+                            if old.is_some() {
                                 self.note(
                                     "The conversation could not be continued; your next message                                      starts a new one.",
                                 );
@@ -492,6 +496,7 @@ impl State {
         }
         if finished {
             self.run = None;
+            self.run_provider = None;
             self.started = None;
             self.clear_image();
             self.save_chat();
@@ -510,10 +515,11 @@ impl State {
     pub fn new_chat(&mut self) {
         // Dropping the run stops the agent and its events no longer reach the new chat.
         self.run = None;
+        self.run_provider = None;
         self.started = None;
         self.messages.clear();
         self.session = None;
-        self.noted_fresh_sessions = false;
+        self.codex_session = None;
         self.confirm_full = false;
         self.clear_image();
         self.chat_dirty = true;
@@ -674,7 +680,6 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
             if state.provider != provider_before {
                 state.model.clear();
                 state.model_custom = false;
-                state.session = None;
                 if !agent::efforts(state.provider).contains(&state.effort.as_str()) {
                     state.effort.clear();
                 }
