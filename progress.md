@@ -1,3 +1,5 @@
+**16 November native snippet import (PR pending):** Extensions can import bounded local VS Code JSON snippets without placeholder syntax, list them after restart, and insert selected plain text at the active editor cursor. App check and warning-free Clippy passed; desktop interaction remains open. This does not execute VSIX extensions.
+
 # Forge Room — progress and complete working plan
 
 **15 November native syntax grammar import (PR pending):** Extensions can import a bounded local `.sublime-syntax` grammar for editor coloring. The native highlighter rebuilds its syntax set, prefers exact file extensions over fallback aliases, lists installed grammar names, and reloads persisted grammars on restart. Focused parser/highlighter test, format, and warning-free app Clippy passed. This is declarative grammar support in A03, not JavaScript VSIX execution or language-server completion. Desktop interaction and broader package compatibility remain open.
@@ -593,3 +595,4 @@ Seven original concept PNGs from Downloads are preserved in [`docs/design/concep
 1. **@ZayedBH:** perform the Phase 1 room, theme and accessibility trial in a disposable project; record defects and fix reproducible issues in your areas.
 2. **@Atul013:** inspect the completed Windows package artifact evidence, perform the editor, Git, terminal and interactive installer trial, and fix reproducible issues in his areas.
 3. **Together:** review failures, choose the first bounded fix, and close the Phase 1 gate before Phase 2.
+

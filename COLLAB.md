@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-16 Codex: Merged PR #46 after Windows CI passed. Added bounded plain-text snippet import and editor insertion on feat/native-snippet-import; app check and Clippy passed, desktop acceptance pending.
+
 - 2026-11-15 Codex: Implemented A03 declarative `.sublime-syntax` import on `feat/native-syntax-grammar-import` after Studio library PR #45 passed Windows CI and merged. Imported grammars affect native editor coloring and persist locally. Focused parser/highlighter test, format, and warning-free app Clippy passed; desktop acceptance remains open.
 
 - 2026-11-15 Codex: Extended A03 Studio import into a local multi-theme library on `feat/studio-theme-library`. Existing single-theme data remains loadable; imported themes gain stable identity, restart loading, a scrollable gallery and explicit removal. Focused import test, format, and warning-free app Clippy passed; desktop interaction remains open.
@@ -153,3 +155,4 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 - 2026-11-03 Codex: started mailbox T13 read-only review at 90727c5 and alpha.2 checksum/icon verification; no Rust/packaging edits or commits.
 
 - 2026-11-03 Codex: completed T13 read-only review in design-assets/forge-room-ui-spec/CODE_REVIEW_NOTES_3.md; six confirmed findings + one plausible race,91 app tests passed/5 ignored,8 probes passed, alpha.2 hashes/icons verified. C7 handed to Claude. Registered Atul-requested recurring two-minute mailbox task; MAILBOX_POLLING.md records setup and stop. No app/packaging source edits or repository commits.
+
