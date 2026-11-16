@@ -4599,6 +4599,20 @@ impl ForgeRoomApp {
                         terminal.send(format!("{command}\r").as_bytes());
                     }
                 }
+                if let Some(command) = self.ai.take_terminal_request() {
+                    if !self.trusted {
+                        self.status =
+                            "Trust this folder before starting an interactive agent".into();
+                    } else {
+                        self.show_terminal = true;
+                        self.bottom_tab = BottomTab::Terminal;
+                        if self.spawn_terminal(true)
+                            && let Some(terminal) = self.terminals.get_mut(self.active_terminal)
+                        {
+                            terminal.send(format!("{command}\r").as_bytes());
+                        }
+                    }
+                }
             }
         }
     }

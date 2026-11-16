@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-16 Codex: Added trusted-folder Interactive agent terminal entry on feat/agent-interactive-terminal, stacked after Codex resume. This provides an answerable permission-prompt path; app check and Clippy passed, desktop/provider acceptance pending.
+
 - 2026-11-16 Codex: Added Codex session continuation on feat/agent-codex-resume, stacked after chat history. Focused resume/sandbox argument test, app check and Clippy passed; live provider trial pending.
 
 - 2026-11-16 Codex: Added local per-workspace AI transcript and Claude session persistence on feat/agent-chat-history, stacked after PR #52. Focused restart/clear test, app check and Clippy passed; desktop/provider continuation remains open.
@@ -169,6 +171,7 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 - 2026-11-03 Codex: started mailbox T13 read-only review at 90727c5 and alpha.2 checksum/icon verification; no Rust/packaging edits or commits.
 
 - 2026-11-03 Codex: completed T13 read-only review in design-assets/forge-room-ui-spec/CODE_REVIEW_NOTES_3.md; six confirmed findings + one plausible race,91 app tests passed/5 ignored,8 probes passed, alpha.2 hashes/icons verified. C7 handed to Claude. Registered Atul-requested recurring two-minute mailbox task; MAILBOX_POLLING.md records setup and stop. No app/packaging source edits or repository commits.
+
 
 
 
