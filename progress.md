@@ -1,3 +1,5 @@
+**16 November native LSP diagnostics (PR pending):** Problems can start a bounded on-demand language-server session for an open file inside a trusted workspace. Rust, Python, and TypeScript/JavaScript server commands are recognized; missing servers and timeouts are shown. A real rust-analyzer probe returned an error diagnostic. App check and Clippy passed. Completion, hover, definition, continuous updates, and desktop interaction remain open.
+
 **16 November native snippet import (PR pending):** Extensions can import bounded local VS Code JSON snippets without placeholder syntax, list them after restart, and insert selected plain text at the active editor cursor. App check and warning-free Clippy passed; desktop interaction remains open. This does not execute VSIX extensions.
 
 # Forge Room — progress and complete working plan
@@ -595,4 +597,5 @@ Seven original concept PNGs from Downloads are preserved in [`docs/design/concep
 1. **@ZayedBH:** perform the Phase 1 room, theme and accessibility trial in a disposable project; record defects and fix reproducible issues in your areas.
 2. **@Atul013:** inspect the completed Windows package artifact evidence, perform the editor, Git, terminal and interactive installer trial, and fix reproducible issues in his areas.
 3. **Together:** review failures, choose the first bounded fix, and close the Phase 1 gate before Phase 2.
+
 
