@@ -251,6 +251,8 @@ struct ForgeRoomApp {
     checking: background::Latest<diagnostics::Report>,
     lsp_query: background::Latest<lsp::QueryAnswer>,
     lsp_hover: Option<String>,
+    lsp_completion_context: Option<(PathBuf, usize, usize)>,
+    lsp_completions: Vec<(String, String)>,
     /// The last session written to disk, and when it was last compared with the window.
     session_saved: session::Session,
     session_checked: std::time::Instant,
@@ -400,6 +402,8 @@ impl ForgeRoomApp {
             checking: background::Latest::default(),
             lsp_query: background::Latest::default(),
             lsp_hover: None,
+            lsp_completion_context: None,
+            lsp_completions: Vec::new(),
             session_saved: session::Session::default(),
             session_checked: std::time::Instant::now(),
             auto_saves: autosave::Tracker::default(),
@@ -932,6 +936,7 @@ impl ForgeRoomApp {
             Command::SaveAs => self.save_active(true),
             Command::LspHover => self.start_lsp_query(lsp::QueryKind::Hover),
             Command::LspDefinition => self.start_lsp_query(lsp::QueryKind::Definition),
+            Command::LspCompletion => self.start_lsp_query(lsp::QueryKind::Completion),
             Command::CloseTab => {
                 if !self.tabs.tabs.is_empty() {
                     self.request_close(self.tabs.active);
@@ -1308,11 +1313,16 @@ impl ForgeRoomApp {
         };
         let text = tab.doc.text().to_owned();
         let (line, column) = self.cursor;
+        let completion_file = file.clone();
         let context = self.egui_ctx.clone();
         if self.lsp_query.request(&context, move || {
             lsp::query(&root, &file, &text, line, column, kind)
         }) {
             self.status = "Querying language server…".into();
+            if matches!(kind, lsp::QueryKind::Completion) {
+                self.lsp_completion_context = Some((completion_file, line, column));
+                self.lsp_completions.clear();
+            }
         }
     }
 
@@ -1332,6 +1342,8 @@ impl ForgeRoomApp {
                 && answer.message != "No hover information at cursor"
             {
                 self.lsp_hover = Some(answer.message);
+            } else if matches!(answer.kind, lsp::QueryKind::Completion) {
+                self.lsp_completions = answer.completions;
             }
         } else if self.lsp_query.take_failed() {
             self.status = "Language server query stopped unexpectedly".into();
@@ -5107,6 +5119,64 @@ impl eframe::App for ForgeRoomApp {
                 });
             if !open {
                 self.lsp_hover = None;
+            }
+        }
+        if !self.lsp_completions.is_empty() {
+            let mut open = true;
+            let mut chosen = None;
+            egui::Window::new("Language completions")
+                .open(&mut open)
+                .resizable(true)
+                .show(&context, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(400.0)
+                        .show(ui, |ui| {
+                            for (label, insert) in &self.lsp_completions {
+                                if ui.button(label).clicked() {
+                                    chosen = Some(insert.clone());
+                                }
+                            }
+                        });
+                });
+            if let Some(insert) = chosen {
+                if let Some((file, line, column)) = &self.lsp_completion_context
+                    && self.tabs.active_path() == Some(file.as_path())
+                    && self.cursor == (*line, *column)
+                    && let Some(tab) = self.tabs.active_tab()
+                    && !tab.readonly
+                {
+                    let text = tab.doc.text();
+                    let at = path_links::locate(text, *line, *column);
+                    let chars: Vec<char> = text.chars().collect();
+                    let mut start = at.min(chars.len());
+                    while start > 0
+                        && (chars[start - 1].is_ascii_alphanumeric() || chars[start - 1] == '_')
+                    {
+                        start -= 1;
+                    }
+                    let start_byte = text
+                        .char_indices()
+                        .nth(start)
+                        .map_or(text.len(), |(byte, _)| byte);
+                    let end_byte = text
+                        .char_indices()
+                        .nth(at)
+                        .map_or(text.len(), |(byte, _)| byte);
+                    tab.doc
+                        .text_mut()
+                        .replace_range(start_byte..end_byte, &insert);
+                    let end = start + insert.chars().count();
+                    self.pending_select = Some((end, end));
+                    self.focus_editor = true;
+                    self.status = "Inserted language completion".into();
+                } else {
+                    self.status = "Completion was stale; request it again".into();
+                }
+                open = false;
+            }
+            if !open {
+                self.lsp_completions.clear();
+                self.lsp_completion_context = None;
             }
         }
         self.save_session(false);

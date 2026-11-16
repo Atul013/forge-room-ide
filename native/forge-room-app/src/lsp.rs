@@ -279,12 +279,14 @@ fn answer_server_request(writer: &mut impl Write, message: &Value) {
 pub enum QueryKind {
     Hover,
     Definition,
+    Completion,
 }
 
 pub struct QueryAnswer {
     pub kind: QueryKind,
     pub message: String,
     pub location: Option<(std::path::PathBuf, usize, usize)>,
+    pub completions: Vec<(String, String)>,
 }
 
 fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
@@ -302,6 +304,7 @@ fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
                 kind,
                 message: message.chars().take(4000).collect(),
                 location: None,
+                completions: Vec::new(),
             }
         }
         QueryKind::Definition => {
@@ -334,6 +337,37 @@ fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
                     "No in-workspace definition at cursor".into()
                 },
                 location,
+                completions: Vec::new(),
+            }
+        }
+        QueryKind::Completion => {
+            let result = &value["result"];
+            let items = result
+                .as_array()
+                .or_else(|| result.get("items").and_then(Value::as_array));
+            let completions = items
+                .into_iter()
+                .flatten()
+                .take(100)
+                .filter(|item| item.get("insertTextFormat").and_then(Value::as_u64) != Some(2))
+                .filter_map(|item| {
+                    let label = item.get("label")?.as_str()?.to_owned();
+                    let insert = item
+                        .get("insertText")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&label)
+                        .to_owned();
+                    if label.len() > 120 || insert.len() > 1000 || insert.contains('$') {
+                        return None;
+                    }
+                    Some((label, insert))
+                })
+                .collect::<Vec<_>>();
+            QueryAnswer {
+                kind,
+                message: format!("{} completion(s)", completions.len()),
+                location: None,
+                completions,
             }
         }
     }
@@ -373,6 +407,7 @@ pub fn query(
         kind,
         message,
         location: None,
+        completions: Vec::new(),
     };
     let Some((language_id, program, args)) = language(file) else {
         return failed("No configured language server for this file type".into());
@@ -473,6 +508,7 @@ pub fn query(
         let method = match kind {
             QueryKind::Hover => "textDocument/hover",
             QueryKind::Definition => "textDocument/definition",
+            QueryKind::Completion => "textDocument/completion",
         };
         write_message(&mut stdin, &json!({"jsonrpc":"2.0","id":2,"method":method,"params":{
             "textDocument":{"uri":uri(&file)},"position":{"line":line.saturating_sub(1),"character":offset}
@@ -521,6 +557,15 @@ mod tests {
             Some(1),
             "{}",
             definition.message
+        );
+        let completion = query(&root, &file, source, 2, 15, QueryKind::Completion);
+        assert!(
+            completion
+                .completions
+                .iter()
+                .any(|(label, _)| label.contains("helper")),
+            "{}",
+            completion.message
         );
         let _ = std::fs::remove_dir_all(root);
     }

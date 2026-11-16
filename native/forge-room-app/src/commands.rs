@@ -59,6 +59,7 @@ pub enum Command {
     CheckProject,
     LspHover,
     LspDefinition,
+    LspCompletion,
     TrustFolder,
     OpenAgent,
     ResetLayout,
@@ -70,6 +71,7 @@ pub enum Command {
 pub const ALL: &[(Command, &str, &str)] = &[
     (Command::LspHover, "Language: Show Hover", ""),
     (Command::LspDefinition, "Language: Go to Definition", ""),
+    (Command::LspCompletion, "Language: Show Completions", ""),
     (Command::NewFile, "File: New File", "Ctrl+N"),
     (Command::OpenFile, "File: Open File…", "Ctrl+O"),
     (Command::OpenFolder, "File: Open Folder…", "Ctrl+Shift+O"),
