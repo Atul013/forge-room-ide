@@ -5,9 +5,53 @@
 use crate::agent::{self, Mode, Provider};
 use crate::{brand, fonts, icons, theme};
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Sense, Stroke};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg(windows)]
+fn clipboard_image() -> Result<Option<PathBuf>, String> {
+    use std::os::windows::process::CommandExt;
+    let dir = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Forge Room Early Preview")
+        .join("agent-images");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let path = dir.join(format!("paste-{}-{stamp}.png", std::process::id()));
+    let program = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    let command = "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $image=[System.Windows.Forms.Clipboard]::GetImage(); if ($null -eq $image) { exit 2 }; try { $image.Save($env:FORGE_ROOM_IMAGE_PATH, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $image.Dispose() }";
+    let status = std::process::Command::new(program)
+        .args(["-NoProfile", "-Sta", "-Command", command])
+        .env("FORGE_ROOM_IMAGE_PATH", &path)
+        .creation_flags(0x0800_0000)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.code() == Some(2) {
+        return Ok(None);
+    }
+    if !status.success() {
+        let _ = std::fs::remove_file(&path);
+        return Err("Could not read the clipboard image".into());
+    }
+    Ok(Some(path))
+}
+
+#[cfg(not(windows))]
+fn clipboard_image() -> Result<Option<PathBuf>, String> {
+    Ok(None)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Author {
     User,
     Assistant,
@@ -19,6 +63,7 @@ enum Author {
     Error,
 }
 
+#[derive(Serialize, Deserialize)]
 struct Message {
     author: Author,
     text: String,
@@ -40,17 +85,23 @@ pub struct State {
     saved: (String, String, String, String),
     /// The conversation the next message continues (Claude Code only).
     session: Option<String>,
+    codex_session: Option<String>,
     run: Option<agent::Run>,
+    run_provider: Option<Provider>,
     /// When the running agent was started.
     started: Option<std::time::Instant>,
     /// Where each program was found (Claude Code's, Codex's), looked up once.
     programs: Option<[Option<PathBuf>; 2]>,
     /// "Sign in" was clicked: the command for the terminal to run.
     login_requested: Option<&'static str>,
+    terminal_requested: Option<String>,
     /// Full access was picked and waits for the user's confirmation.
     confirm_full: bool,
-    /// The note that Codex does not remember earlier messages was shown in this chat.
-    noted_fresh_sessions: bool,
+    image: Option<PathBuf>,
+    image_is_temp: bool,
+    workspace: Option<PathBuf>,
+    chat_dirty: bool,
+    chat_saved: std::time::Instant,
 }
 
 impl Default for State {
@@ -66,12 +117,19 @@ impl Default for State {
             effort: String::new(),
             saved: Default::default(),
             session: None,
+            codex_session: None,
             run: None,
+            run_provider: None,
             started: None,
             programs: None,
             login_requested: None,
+            terminal_requested: None,
             confirm_full: false,
-            noted_fresh_sessions: false,
+            image: None,
+            image_is_temp: false,
+            workspace: None,
+            chat_dirty: false,
+            chat_saved: std::time::Instant::now(),
         }
     }
 }
@@ -92,7 +150,110 @@ const CLAUDE_MODELS: [(&str, &str); 5] = [
 ];
 const CODEX_MODELS: [(&str, &str); 1] = [("Default model", "")];
 
+#[derive(Serialize, Deserialize)]
+struct StoredChat {
+    messages: Vec<Message>,
+    session: Option<String>,
+    #[serde(default)]
+    codex_session: Option<String>,
+}
+
+fn chat_path(workspace: &Path) -> PathBuf {
+    let name = workspace
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase();
+    let hash = name.bytes().fold(0xcbf29ce484222325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
+    });
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Forge Room Early Preview")
+        .join("agent-chats")
+        .join(format!("{hash:016x}.json"))
+}
+
 impl State {
+    pub fn set_workspace(&mut self, workspace: &Path) {
+        if self.workspace.as_deref() == Some(workspace) {
+            return;
+        }
+        self.run = None;
+        self.run_provider = None;
+        self.started = None;
+        self.finish();
+        self.messages.clear();
+        self.session = None;
+        self.codex_session = None;
+        self.workspace = Some(workspace.to_path_buf());
+        let path = chat_path(workspace);
+        if std::fs::metadata(&path).is_ok_and(|meta| meta.len() <= 2 * 1024 * 1024)
+            && let Ok(bytes) = std::fs::read(path)
+            && let Ok(saved) = serde_json::from_slice::<StoredChat>(&bytes)
+        {
+            self.messages = saved
+                .messages
+                .into_iter()
+                .take(200)
+                .filter(|m| m.text.len() <= 20_000)
+                .collect();
+            self.session = saved.session;
+            self.codex_session = saved.codex_session;
+        }
+        self.chat_dirty = false;
+        self.chat_saved = std::time::Instant::now();
+    }
+
+    fn save_chat(&mut self) {
+        if !self.chat_dirty {
+            return;
+        }
+        let Some(workspace) = &self.workspace else {
+            return;
+        };
+        let path = chat_path(workspace);
+        let messages = self
+            .messages
+            .iter()
+            .rev()
+            .take(200)
+            .rev()
+            .map(|m| Message {
+                author: m.author,
+                text: m.text.chars().take(20_000).collect(),
+            })
+            .collect();
+        let mut saved = StoredChat {
+            messages,
+            session: self.session.clone(),
+            codex_session: self.codex_session.clone(),
+        };
+        let bytes = loop {
+            let Ok(bytes) = serde_json::to_vec(&saved) else {
+                return;
+            };
+            if bytes.len() <= 2 * 1024 * 1024 {
+                break bytes;
+            }
+            if saved.messages.is_empty() {
+                return;
+            }
+            saved.messages.remove(0);
+        };
+        if let Some(parent) = path.parent()
+            && std::fs::create_dir_all(parent).is_ok()
+            && std::fs::write(path, bytes).is_ok()
+        {
+            self.chat_dirty = false;
+            self.chat_saved = std::time::Instant::now();
+        }
+    }
+
+    pub fn finish(&mut self) {
+        self.save_chat();
+        self.clear_image();
+    }
     /// The agent panel as the user left it (read from the settings file).
     pub fn from_settings(settings: &crate::settings::Settings) -> Self {
         let mut state = State {
@@ -154,6 +315,10 @@ impl State {
         self.login_requested.take()
     }
 
+    pub fn take_terminal_request(&mut self) -> Option<String> {
+        self.terminal_requested.take()
+    }
+
     pub fn busy(&self) -> bool {
         self.run.is_some()
     }
@@ -163,6 +328,7 @@ impl State {
             author: Author::Error,
             text: text.into(),
         });
+        self.chat_dirty = true;
     }
 
     fn note(&mut self, text: impl Into<String>) {
@@ -170,6 +336,7 @@ impl State {
             author: Author::Note,
             text: text.into(),
         });
+        self.chat_dirty = true;
     }
 
     fn program(&mut self, provider: Provider) -> Option<PathBuf> {
@@ -183,7 +350,11 @@ impl State {
     /// refused stays in the box, and the reason is shown.
     fn send(&mut self, context: &egui::Context, cwd: Option<&Path>, trusted: bool) {
         let text = self.input.trim().to_string();
-        if text.is_empty() || self.run.is_some() {
+        if (text.is_empty() && self.image.is_none()) || self.run.is_some() {
+            return;
+        }
+        if self.image.is_some() && self.provider != Provider::Codex {
+            self.fail("Image input currently requires Codex. Choose Codex or remove the image.");
             return;
         }
         let Some(cwd) = cwd else {
@@ -205,17 +376,6 @@ impl State {
                 "\"{}\" is not a valid model name (letters, digits and . - _ : / [ ]), so the default                  model is used.",
                 self.model
             ));
-        }
-        // Codex has no conversation to continue from here: say it once, so a follow-up that needs
-        // the earlier messages is not a surprise.
-        if provider.uses_codex()
-            && !self.noted_fresh_sessions
-            && self.messages.iter().any(|m| m.author == Author::Assistant)
-        {
-            self.noted_fresh_sessions = true;
-            self.note(
-                "Codex starts a new conversation for every message here: it does not remember the                  earlier ones, so include what it needs.",
-            );
         }
         // Installed since the panel last looked? Look again before saying it is missing.
         if self.program(provider).is_none() {
@@ -241,19 +401,34 @@ impl State {
             model: self.model.clone(),
             effort: self.effort.clone(),
             mode: self.mode,
-            prompt: text.clone(),
+            prompt: if text.is_empty() {
+                "Describe this image.".into()
+            } else {
+                text.clone()
+            },
             cwd: cwd.to_path_buf(),
-            session: self.session.clone(),
+            session: match provider {
+                Provider::Claude => self.session.clone(),
+                Provider::Codex => self.codex_session.clone(),
+                _ => None,
+            },
+            image: self.image.clone(),
         };
         let wake = context.clone();
         match agent::start(&program, &request, move || wake.request_repaint()) {
             Ok(run) => {
                 self.run = Some(run);
+                self.run_provider = Some(provider);
                 self.started = Some(std::time::Instant::now());
                 self.messages.push(Message {
                     author: Author::User,
-                    text,
+                    text: if self.image.is_some() {
+                        format!("{text}\n[image attached]")
+                    } else {
+                        text
+                    },
                 });
+                self.chat_dirty = true;
                 self.input.clear();
                 self.focus_input = true;
             }
@@ -264,11 +439,18 @@ impl State {
     /// Take what the running agent has said since the last frame. True when the run just ended
     /// (files may have changed, so the caller refreshes what shows them).
     pub fn poll(&mut self) -> bool {
+        if self.chat_dirty && self.chat_saved.elapsed() >= std::time::Duration::from_secs(2) {
+            self.save_chat();
+        }
         let Some(run) = &mut self.run else {
             return false;
         };
         let mut finished = false;
-        for event in run.poll() {
+        let events = run.poll();
+        if !events.is_empty() {
+            self.chat_dirty = true;
+        }
+        for event in events {
             match event {
                 agent::Event::Text(text) => match self.messages.last_mut() {
                     Some(last) if last.author == Author::Assistant => {
@@ -285,12 +467,11 @@ impl State {
                     author: Author::Tool,
                     text: line,
                 }),
-                agent::Event::Session(id) => {
-                    // Only Claude Code can continue a conversation this way.
-                    if self.provider == Provider::Claude {
-                        self.session = Some(id);
-                    }
-                }
+                agent::Event::Session(id) => match self.run_provider {
+                    Some(Provider::Claude) => self.session = Some(id),
+                    Some(Provider::Codex) => self.codex_session = Some(id),
+                    _ => {}
+                },
                 agent::Event::Done { cost, error } => {
                     finished = true;
                     match error {
@@ -299,7 +480,12 @@ impl State {
                             self.fail(error);
                             // A conversation that failed (an expired or unknown session) is not
                             // continued by the next message: that would fail the same way for ever.
-                            if self.session.take().is_some() {
+                            let old = match self.run_provider {
+                                Some(Provider::Claude) => self.session.take(),
+                                Some(Provider::Codex) => self.codex_session.take(),
+                                _ => None,
+                            };
+                            if old.is_some() {
                                 self.note(
                                     "The conversation could not be continued; your next message                                      starts a new one.",
                                 );
@@ -316,7 +502,10 @@ impl State {
         }
         if finished {
             self.run = None;
+            self.run_provider = None;
             self.started = None;
+            self.clear_image();
+            self.save_chat();
         }
         finished
     }
@@ -332,11 +521,42 @@ impl State {
     pub fn new_chat(&mut self) {
         // Dropping the run stops the agent and its events no longer reach the new chat.
         self.run = None;
+        self.run_provider = None;
         self.started = None;
         self.messages.clear();
         self.session = None;
-        self.noted_fresh_sessions = false;
+        self.codex_session = None;
         self.confirm_full = false;
+        self.clear_image();
+        self.chat_dirty = true;
+        self.save_chat();
+    }
+
+    fn clear_image(&mut self) {
+        if self.image_is_temp
+            && let Some(path) = &self.image
+        {
+            let _ = std::fs::remove_file(path);
+        }
+        self.image = None;
+        self.image_is_temp = false;
+    }
+
+    fn attach_image(&mut self, path: PathBuf, temporary: bool) {
+        let valid = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+            ["png", "jpg", "jpeg", "webp"].contains(&e.to_ascii_lowercase().as_str())
+        }) && std::fs::metadata(&path)
+            .is_ok_and(|m| m.is_file() && m.len() <= 10 * 1024 * 1024);
+        if !valid {
+            if temporary {
+                let _ = std::fs::remove_file(path);
+            }
+            self.fail("Choose a PNG, JPEG, or WebP image under 10 MB.");
+            return;
+        }
+        self.clear_image();
+        self.image = Some(path);
+        self.image_is_temp = temporary;
     }
 
     /// Add `@name ` to the input, the way the design references files and Room context.
@@ -466,7 +686,6 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
             if state.provider != provider_before {
                 state.model.clear();
                 state.model_custom = false;
-                state.session = None;
                 if !agent::efforts(state.provider).contains(&state.effort.as_str()) {
                     state.effort.clear();
                 }
@@ -550,6 +769,26 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
                     .clicked()
             {
                 state.login_requested = Some(command);
+            }
+            if ui
+                .add_enabled(!state.busy(), egui::Button::new("Interactive agent"))
+                .on_hover_text(
+                    "Opens the installed agent in a terminal so you can answer permission prompts",
+                )
+                .clicked()
+            {
+                if let Some(path) = state.program(state.provider) {
+                    let escaped = path.to_string_lossy().replace('\'', "''");
+                    let mut command = format!("& '{escaped}'");
+                    match state.provider {
+                        Provider::Ollama => command.push_str(" --oss --local-provider ollama"),
+                        Provider::LmStudio => command.push_str(" --oss --local-provider lmstudio"),
+                        _ => {}
+                    }
+                    state.terminal_requested = Some(command);
+                } else {
+                    state.fail("Install this agent before opening it in a terminal.");
+                }
             }
         });
     });
@@ -1033,6 +1272,13 @@ fn composer(
         focused && ui.input(|input| input.key_pressed(Key::Enter) && !input.modifiers.shift);
     let send_requested =
         enter && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+    if focused && ui.input(|input| input.modifiers.command && input.key_pressed(Key::V)) {
+        match clipboard_image() {
+            Ok(Some(path)) => state.attach_image(path, true),
+            Ok(None) => {}
+            Err(error) => state.fail(error),
+        }
+    }
     if focused && state.busy() && ui.input(|input| input.key_pressed(Key::Escape)) {
         state.stop();
     }
@@ -1067,7 +1313,26 @@ fn composer(
                 ui.memory_mut(|memory| memory.request_focus(id));
             }
             ui.add_space(6.0);
+            if let Some(path) = &state.image {
+                let name = path
+                    .file_name()
+                    .map_or("Image", |name| name.to_str().unwrap_or("Image"))
+                    .to_owned();
+                ui.horizontal(|ui| {
+                    ui.label(format!("Image: {name}"));
+                    if ui.small_button("Remove").clicked() {
+                        state.clear_image();
+                    }
+                });
+            }
             ui.horizontal(|ui| {
+                if ui.small_button("Attach image…").clicked()
+                    && let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                        .pick_file()
+                {
+                    state.attach_image(path, false);
+                }
                 let attach = active_file.map(str::to_string);
                 if icons::icon_button(ui, "Reference the open file", icons::plus).clicked()
                     && let Some(name) = &attach
@@ -1094,7 +1359,7 @@ fn composer(
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(34.0, 30.0), Sense::click());
                     let busy = state.busy();
-                    let ready = !state.input.trim().is_empty() && !busy;
+                    let ready = (!state.input.trim().is_empty() || state.image.is_some()) && !busy;
                     let fill = if ready {
                         theme::button()
                     } else {
@@ -1139,6 +1404,24 @@ fn composer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_returns_for_its_folder_and_new_chat_clears_it() {
+        let folder = std::env::temp_dir().join(format!("forge-chat-{}", std::process::id()));
+        let mut first = State::default();
+        first.set_workspace(&folder);
+        first.note("saved for this folder");
+        first.finish();
+        let mut second = State::default();
+        second.set_workspace(&folder);
+        assert_eq!(second.messages.len(), 1);
+        assert_eq!(second.messages[0].text, "saved for this folder");
+        second.new_chat();
+        let mut third = State::default();
+        third.set_workspace(&folder);
+        assert!(third.messages.is_empty());
+        let _ = std::fs::remove_file(chat_path(&folder));
+    }
 
     #[test]
     fn sending_needs_a_folder_and_trust_and_says_why_not() {

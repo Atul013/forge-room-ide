@@ -4,18 +4,125 @@
 use crate::theme::{self, Theme};
 use eframe::egui::{self, text::LayoutJob};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
+use std::{fs, path::PathBuf};
 use syntect::highlighting::{
     Color, FontStyle, HighlightIterator, HighlightState, Highlighter, ScopeSelectors,
     StyleModifier, Theme as SyntectTheme, ThemeItem, ThemeSettings,
 };
-use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
+use syntect::parsing::{ParseState, ScopeStack, SyntaxDefinition, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
-fn syntaxes() -> &'static SyntaxSet {
-    static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
-    SYNTAXES.get_or_init(SyntaxSet::load_defaults_newlines)
+fn syntax_slot() -> &'static RwLock<Arc<SyntaxSet>> {
+    static SYNTAXES: OnceLock<RwLock<Arc<SyntaxSet>>> = OnceLock::new();
+    SYNTAXES.get_or_init(|| RwLock::new(Arc::new(SyntaxSet::load_defaults_newlines())))
+}
+
+fn syntaxes() -> Arc<SyntaxSet> {
+    syntax_slot().read().expect("syntax lock").clone()
+}
+
+fn grammar_dir() -> PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("Forge Room Early Preview").join("syntaxes")
+}
+
+fn grammar_key(text: &str) -> String {
+    let hash = text.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("grammar-{hash:016x}")
+}
+
+fn parse_grammar(text: &str) -> Result<SyntaxDefinition, String> {
+    if text.len() > 128 * 1024 {
+        return Err("Grammar exceeds 128 KB".into());
+    }
+    let syntax =
+        SyntaxDefinition::load_from_str(text, true, None).map_err(|error| error.to_string())?;
+    if syntax.name.trim().is_empty() || syntax.name.len() > 80 {
+        return Err("Grammar needs a name of at most 80 characters".into());
+    }
+    if syntax.file_extensions.is_empty()
+        || syntax.file_extensions.iter().any(|ext| {
+            ext.is_empty() || ext.len() > 16 || !ext.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+    {
+        return Err("Grammar needs simple file extensions (letters and digits)".into());
+    }
+    Ok(syntax)
+}
+
+fn rebuild(extra: Option<SyntaxDefinition>) -> Result<Vec<String>, String> {
+    let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
+    let mut names = Vec::new();
+    if let Ok(entries) = fs::read_dir(grammar_dir()) {
+        for entry in entries.flatten().take(40) {
+            if entry
+                .path()
+                .extension()
+                .is_none_or(|ext| ext != "sublime-syntax")
+                || entry
+                    .metadata()
+                    .map_or(true, |meta| meta.len() > 128 * 1024)
+            {
+                continue;
+            }
+            if let Ok(text) = fs::read_to_string(entry.path())
+                && let Ok(syntax) = parse_grammar(&text)
+            {
+                names.push(syntax.name.clone());
+                builder.add(syntax);
+            }
+        }
+    }
+    if let Some(syntax) = extra {
+        names.push(syntax.name.clone());
+        builder.add(syntax);
+    }
+    let set = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| builder.build()))
+        .map_err(|_| "Grammar references could not be linked".to_string())?;
+    *syntax_slot().write().expect("syntax lock") = Arc::new(set);
+    *grammar_names_slot().write().expect("grammar names lock") = names.clone();
+    cache().lock().expect("syntax cache").take();
+    Ok(names)
+}
+
+fn grammar_names_slot() -> &'static RwLock<Vec<String>> {
+    static NAMES: OnceLock<RwLock<Vec<String>>> = OnceLock::new();
+    NAMES.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+pub fn grammar_names() -> Vec<String> {
+    grammar_names_slot()
+        .read()
+        .expect("grammar names lock")
+        .clone()
+}
+
+pub fn load_imports() {
+    let _ = rebuild(None);
+}
+
+pub fn import_grammar(text: &str) -> Result<String, String> {
+    let syntax = parse_grammar(text)?;
+    let name = syntax.name.clone();
+    // Confirm it links with the currently installed grammars before persisting it.
+    rebuild(Some(syntax))?;
+    let dir = grammar_dir();
+    if let Err(error) = fs::create_dir_all(&dir) {
+        let _ = rebuild(None);
+        return Err(error.to_string());
+    }
+    let path = dir.join(format!("{}.sublime-syntax", grammar_key(text)));
+    if let Err(error) = fs::write(path, text) {
+        let _ = rebuild(None);
+        return Err(error.to_string());
+    }
+    Ok(name)
 }
 
 fn syntect_color(color: egui::Color32) -> Color {
@@ -215,7 +322,8 @@ fn syntax_extension(extension: &str) -> String {
 fn refresh(cache: &mut Cache, text: &str, budget: Duration) {
     let set = syntaxes();
     let syntax = set
-        .find_syntax_by_extension(&syntax_extension(&cache.extension))
+        .find_syntax_by_extension(&cache.extension)
+        .or_else(|| set.find_syntax_by_extension(&syntax_extension(&cache.extension)))
         .unwrap_or_else(|| set.find_syntax_plain_text());
     let theme = cache.syntect_theme.clone();
     let highlighter = Highlighter::new(&theme);
@@ -277,7 +385,7 @@ fn refresh(cache: &mut Cache, text: &str, budget: Duration) {
         let spans = if line.len() > MAX_HIGHLIGHT_LINE_BYTES {
             vec![(plain, false, line.len())]
         } else {
-            match parse.parse_line(line, set) {
+            match parse.parse_line(line, &set) {
                 Ok(ops) => HighlightIterator::new(&mut highlight, &ops, line, &highlighter)
                     .map(|(style, piece)| {
                         let color = egui::Color32::from_rgb(
@@ -313,6 +421,18 @@ fn refresh(cache: &mut Cache, text: &str, budget: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declarative_grammar_parses_and_rejects_unsafe_extension() {
+        let good = "name: Demo\nfile_extensions: [demo]\nscope: source.demo\ncontexts:\n  main:\n    - match: 'hello'\n      scope: keyword.demo\n";
+        let syntax = parse_grammar(good).unwrap();
+        assert_eq!(syntax.file_extensions, ["demo"]);
+        let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
+        builder.add(syntax);
+        let set = builder.build();
+        assert_eq!(set.find_syntax_by_extension("demo").unwrap().name, "Demo");
+        assert!(parse_grammar(&good.replace("[demo]", "['../demo']")).is_err());
+    }
 
     #[test]
     fn the_line_limit_counts_the_newline_like_the_parser() {

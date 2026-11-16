@@ -1,5 +1,6 @@
 use forge_room_core::{
-    now_epoch_seconds, EvidenceKind, Participant, Role, RoomState, StateStore, Task, TaskStatus,
+    now_epoch_seconds, EvidenceKind, Participant, Role, RoomState, StateStore, Task, TaskPriority,
+    TaskStatus,
 };
 use std::env;
 use std::error::Error;
@@ -54,10 +55,12 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 owner_id: args[5].clone(),
                 owner_name: args[6].clone(),
                 status: TaskStatus::Open,
+                priority: TaskPriority::Normal,
                 dependencies: Vec::new(),
                 acceptance_criteria: args[7..].to_vec(),
                 completed_criteria: Vec::new(),
                 worktree_branch: None,
+                due_at_epoch_seconds: None,
                 updated_at_epoch_seconds: now_epoch_seconds(),
             };
             state.create_task(&args[2], task)?;

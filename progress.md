@@ -1,8 +1,52 @@
+**16 November Atul QA interactive permission path (stacked PR pending):** AI Agent now offers an Interactive agent action that launches the installed CLI in a fresh integrated terminal for a trusted folder, allowing provider permission prompts to be answered there. It does not claim the headless panel can answer prompts. App check and Clippy passed; hands-on terminal/provider acceptance remains open.
+
+**16 November Atul QA Codex continuation (stacked PR pending):** AI Agent now retains Codex thread IDs per workspace and uses `codex exec resume` for follow-up messages, while Claude continuation remains separate. Resume preserves the selected sandbox via CLI configuration and keeps prompts on stdin. Focused argument test, app check and Clippy passed. Live Codex continuation and permission-prompt handling remain open.
+
+**16 November Atul QA chat persistence (stacked PR pending):** AI Agent transcripts and Claude session IDs now persist locally per workspace, reload on restart or folder return, and clear when New Chat is chosen. Saved history is bounded by message count, message size, and file size; image attachments are not stored in transcripts. Focused restart/clear test, app check and Clippy passed. Desktop interaction and live provider continuation remain open.
+
+**16 November Atul QA email follow-on (PR pending):** AI Agent now accepts a bounded PNG/JPEG/WebP file and Windows clipboard image for Codex CLI `--image`, shows the attachment and removes temporary pasted images after use. Other providers receive an explicit unsupported message. Terminal painting anchors non-ASCII glyphs to individual cells to prevent later text from drifting. Focused CLI-argument test, app check and warning-free Clippy passed. Clipboard paste, live Codex vision, and visual glyph behavior still need hands-on Windows acceptance; other email gaps remain open.
+
+**16 November LSP references follow-on (stacked PR pending):** Command palette can request in-workspace references from a language server and navigate a bounded result list. The request handles LSP method-specific context correctly. A real rust-analyzer probe found both declaration and use; diagnostics, definition, and completion probes also passed, with app check and Clippy. Desktop interaction remains open.
+
+**16 November LSP completion follow-on (PR pending):** Command palette can request language-server completions for the active buffer, show a bounded list, and insert a chosen plain-text completion at the cursor when the file and position still match. Snippet-format completions are skipped. A real rust-analyzer probe returned the expected function completion; app check and Clippy passed. Desktop behavior and other servers remain open.
+
+**16 November LSP navigation follow-on (stacked PR pending):** Command palette now offers language-server hover and Go to Definition for trusted workspace files. Requests use the editor cursor and current buffer, wait briefly for server analysis, and constrain definition targets to the workspace. A real rust-analyzer probe resolved a function definition and reported a diagnostic. App check and Clippy passed; desktop interaction and other servers remain open.
+
+**16 November native LSP diagnostics (PR pending):** Problems can start a bounded on-demand language-server session for an open file inside a trusted workspace. Rust, Python, and TypeScript/JavaScript server commands are recognized; missing servers and timeouts are shown. A real rust-analyzer probe returned an error diagnostic. App check and Clippy passed. Completion, hover, definition, continuous updates, and desktop interaction remain open.
+
+**16 November native snippet import (PR pending):** Extensions can import bounded local VS Code JSON snippets without placeholder syntax, list them after restart, and insert selected plain text at the active editor cursor. App check and warning-free Clippy passed; desktop interaction remains open. This does not execute VSIX extensions.
+
 # Forge Room — progress and complete working plan
 
-**12 November visual direction:** Twelve new native UI concept images are indexed at `docs/design/concept-images/2026-11-12/README.md`. Current effort is on visual concepts across product sections; do not treat them as implemented UI or continue in-app AI work without a new direction. PR #33 (agent panel, folder trust, terminals) was merged for 0.110.0-alpha.3.
+**15 November native syntax grammar import (PR pending):** Extensions can import a bounded local `.sublime-syntax` grammar for editor coloring. The native highlighter rebuilds its syntax set, prefers exact file extensions over fallback aliases, lists installed grammar names, and reloads persisted grammars on restart. Focused parser/highlighter test, format, and warning-free app Clippy passed. This is declarative grammar support in A03, not JavaScript VSIX execution or language-server completion. Desktop interaction and broader package compatibility remain open.
 
-**Updated:** 12 November 2026. **Active product:** native Rust IDE, Developer Preview `0.110.0-alpha.3`, Windows 11 x64. **Current phase:** Phase 1, visible Windows baseline. **Owners:** @ZayedBH and @Atul013.
+**15 November Studio library follow-on (PR pending):** Imported color themes now form a local library, keyed by stable content fingerprint and loaded on restart. The gallery scrolls through the collection and offers an explicit removal action for a selected imported theme. The previous single imported theme remains loadable. Focused import test, format, and warning-free app Clippy passed. This extends A03; desktop interaction and grammar/snippet support remain open.
+
+**15 November Studio theme import (PR pending):** Native Color Theme gallery can import a local VS Code style JSON color theme up to 512 KB. It validates theme type, name, and editor colors, previews without saving, and Keep persists the imported theme for restart; Cancel restores the prior theme. App check, focused import test, format, and warning-free Clippy passed. This covers a bounded part of A03. Grammar/snippet import, broad package compatibility, and hands-on desktop acceptance remain open.
+
+**14 November title menu follow-on:** Clicking a background panel or blank title area now dismisses the brand menu stack, including open File/Edit/View submenus. File also offers New Folder when a workspace is open, using the existing folder-name dialog and validation. Local app tests (267 passed, 6 ignored), build, format, and Clippy passed; visible desktop click acceptance remains open.
+
+**14 November local task priority:** Local Room tasks now have Normal, High, and Critical priority. The owner or host can change priority on active tasks; task cards, copied summaries, and a list filter expose it. Existing saved tasks default to Normal. Integrated core tests, 267 app tests (6 ignored), app Clippy, and formatting passed. A later full test run hit an existing search cancellation timing test once; its targeted rerun passed. This remains local metadata; visible desktop interaction and network scheduling are open.
+
+**14 November integration:** PRs #34–#41 were reviewed and merged in order. Shared `COLLAB.md` and `progress.md` conflicts were resolved by preserving the distinct entries; native Rust source merged without conflicts. The combined tree passed format, 12 core tests, 267 app tests (6 ignored), and warning-free app Clippy. Native desktop visual and keyboard checks remain open where previously noted; concept images remain references, and local Room task state is not network collaboration.
+
+**12 November settings follow-on (PR #35):** Native Settings now exposes persisted Auto Save and editor font-size controls plus Reset Layout. The Models panel links to the installed-CLI AI Agent flow and no longer claims providers are wholly disconnected. Accessibility lists assigned shortcuts from the command registry. Source compile passed; visible Windows interaction remains to be checked. This is a bounded part of I01, not full keybinding customization.
+
+**12 November visual direction:** Native UI concept images are indexed at `docs/design/concept-images/2026-11-12/README.md`, including a newer eight-screen redesign set. These are references, not implemented UI. The user has since directed work back to the remaining native feature roadmap. PR #33 (agent panel, folder trust, terminals) was merged for 0.110.0-alpha.3.
+
+**12 November upstream integration (PR pending):** Five post-alpha.3 commits from `atul/native-rust-ide` were cherry-picked into an integration branch. They address agent stop/error handling, file/recovery path safety, paste and link behavior, search cancellation/regex, session handling, and terminal process cleanup. The branch touches only active native app source and preserves the newer design assets. Local Rust format, 263 tests (6 ignored) and Clippy passed. Visible Windows acceptance remains open; this does not close the related feature milestones.
+
+**12 November .NET/CMake workflow slice (PR #37):** Workflows and Tests prefer one safe-named root `.sln`/`.slnx` even when project files are beside it; otherwise they require one `.csproj`/`.fsproj`/`.vbproj`. They pass the chosen filename explicitly to `dotnet build` / `dotnet test`. Ambiguous roots remain undiscovered. A root `CMakeLists.txt` offers Configure, then Build after a cache exists, and CTest after test metadata exists. Commands still require a trusted folder and an explicit terminal button. Focused discovery tests passed; real .NET/CMake projects and desktop acceptance remain open.
+
+**12 November local task due times (PR #38):** New local Room tasks can have a relative due time (1, 4, 24 or 72 hours). An owner or host can change or clear it while the task is active. Task cards show due/overdue hours, the list can filter overdue work, and the Room Pulse links directly to overdue tasks. Copied active summaries include due state. Old saved tasks load with no due time. This is local display/filter behavior, not reminders, network synchronization, or the R05 two-client gate. Focused core and app tests plus Clippy passed; visible desktop interaction remains open.
+
+**12 November design follow-on:** The library now contains 32 images. The active gallery curates 20 flat, non-neon concepts; the first 12 are historical references. `DESIGN-RESEARCH.md` records source inventory, external IDE and accessibility references, sizing recommendations and interaction states. `prototype.html` demonstrates clickable menus, rail views, editor/Room/bottom tabs and selectors without changing native code.
+
+**12 November keyboard follow-on (PR pending):** A newly opened folder trust question now requests keyboard focus on the safer "Browse without Git and tools" choice once. Local build, formatting and Clippy pass. The Windows UI Automation trial exposed only the top-level window for this build, so focused desktop acceptance remains open.
+
+**12 November Gradle project actions (stacked PR pending):** The native Workflows and Tests panels discover a root Gradle build file and offer explicit build/test buttons. A project wrapper is preferred when present; no command starts during discovery. Three focused project-action tests and Clippy pass. The branch builds on the .NET/CMake action PR and needs that PR before merging.
+
+**Updated:** 14 November 2026. **Active product:** native Rust IDE, Developer Preview `0.110.0-alpha.3`, Windows 11 x64. **Current phase:** Phase 1, visible Windows baseline. **Owners:** @ZayedBH and @Atul013.
 
 **9 November local feature slice:** The native left rail now opens Workflows, Models, Run & Debug, Tests, Extensions, Settings, and Accessibility panels. Rust, Node, and Python marker files expose a small set of explicit project commands; pressing a command sends it to the integrated terminal. Debugger adapters, AI model providers, and extension execution remain unavailable and are labelled as such. Source inspection complete; this shell has no `cargo` command, so Rust compilation and desktop acceptance are pending.
 
@@ -567,3 +611,12 @@ Seven original concept PNGs from Downloads are preserved in [`docs/design/concep
 1. **@ZayedBH:** perform the Phase 1 room, theme and accessibility trial in a disposable project; record defects and fix reproducible issues in your areas.
 2. **@Atul013:** inspect the completed Windows package artifact evidence, perform the editor, Git, terminal and interactive installer trial, and fix reproducible issues in his areas.
 3. **Together:** review failures, choose the first bounded fix, and close the Phase 1 gate before Phase 2.
+
+
+
+
+
+
+
+
+

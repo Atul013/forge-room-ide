@@ -28,6 +28,48 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-16 Codex: Added trusted-folder Interactive agent terminal entry on feat/agent-interactive-terminal, stacked after Codex resume. This provides an answerable permission-prompt path; app check and Clippy passed, desktop/provider acceptance pending.
+
+- 2026-11-16 Codex: Added Codex session continuation on feat/agent-codex-resume, stacked after chat history. Focused resume/sandbox argument test, app check and Clippy passed; live provider trial pending.
+
+- 2026-11-16 Codex: Added local per-workspace AI transcript and Claude session persistence on feat/agent-chat-history, stacked after PR #52. Focused restart/clear test, app check and Clippy passed; desktop/provider continuation remains open.
+
+- 2026-11-16 Codex: Followed Atul's PR #33 QA email on feat/agent-image-terminal-glyphs. Added Codex image file/clipboard attachment with temporary-file cleanup and per-cell anchoring for non-ASCII terminal glyphs. Focused argument test, app check and Clippy passed; hands-on acceptance and other email gaps remain open.
+
+- 2026-11-16 Codex: Added native LSP Find References on feat/native-lsp-references, stacked after completion. Real rust-analyzer probe found declaration and use; app check and Clippy passed. Desktop acceptance remains open.
+
+- 2026-11-16 Codex: Merged LSP diagnostics PR #48 after Windows CI passed; PR #49 hover/definition also passed and merged. Added bounded plain-text LSP completion selection on feat/native-lsp-completion; real rust-analyzer completion probe, app check and Clippy passed. Desktop acceptance remains open.
+
+- 2026-11-16 Codex: Added command-palette LSP hover and Go to Definition on feat/native-lsp-navigation, stacked after diagnostics. Real rust-analyzer definition probe passed; app check and Clippy passed. Desktop and other servers remain unverified.
+
+- 2026-11-16 Codex: Started I02 native LSP connection on feat/native-lsp-diagnostics. On-demand Problems diagnostics are wired for Rust, Python and TypeScript/JavaScript servers; real rust-analyzer diagnostic probe, app check and Clippy passed. Desktop and other servers remain unverified.
+
+- 2026-11-16 Codex: Merged PR #46 after Windows CI passed. Added bounded plain-text snippet import and editor insertion on feat/native-snippet-import; app check and Clippy passed, desktop acceptance pending.
+
+- 2026-11-15 Codex: Implemented A03 declarative `.sublime-syntax` import on `feat/native-syntax-grammar-import` after Studio library PR #45 passed Windows CI and merged. Imported grammars affect native editor coloring and persist locally. Focused parser/highlighter test, format, and warning-free app Clippy passed; desktop acceptance remains open.
+
+- 2026-11-15 Codex: Extended A03 Studio import into a local multi-theme library on `feat/studio-theme-library`. Existing single-theme data remains loadable; imported themes gain stable identity, restart loading, a scrollable gallery and explicit removal. Focused import test, format, and warning-free app Clippy passed; desktop interaction remains open.
+
+- 2026-11-15 Codex: Implemented A03 native Studio theme import on `feat/native-theme-import` from current `origin/main`. The gallery previews a validated local color-theme JSON and saves it only on Keep. App check, focused import test, format, and warning-free Clippy passed; desktop interaction remains open.
+
+- 2026-11-14 Codex: Completed native title-menu dismissal fix and File > New Folder follow-on on `fix/title-menu-dismissal` from current `origin/main`. Background clicks close the brand menu stack; the File action uses Explorer's existing folder creation dialog. Local app tests (267 passed, 6 ignored), build, format, and Clippy passed. Visible desktop click acceptance remains open.
+
+- 2026-11-14 Codex: Completed additive local task priority on `feat/local-room-task-priority`: Normal/High/Critical, owner/host updates, badges, copied summaries, and list filter. Old tasks default to Normal. Integrated core and app tests, format, and warning-free app Clippy passed after reconciling current `main`; a later full run hit an existing search cancellation timing test once, whose targeted rerun passed. Visible desktop interaction remains open. This is local task metadata, not network scheduling.
+
+- 2026-11-14 Codex: Reviewed and merged PRs #34–#41 in order. Reconciled their shared notes without dropping entries; the final native source matched the combined tree that passed format, 12 core tests, 267 app tests (6 ignored), and Clippy. `main` has no open PRs or unmerged files. Desktop visual and keyboard acceptance remains separate.
+
+- 2026-11-14 Codex: Native UI overhaul stacked on compact-rail PR #34 in separate `feat/native-ui-overhaul` worktree. Focused default/reset layout, developer-first rail and Team dock order, contextual Room Pulse, truthful command entry, bounded title/tab labels, and task-first welcome screen. App check, warning-free Clippy, and isolated Windows build passed for the first commit; preview launched, but capture timed out, so visual acceptance remains open. Existing task-priority checkout untouched.
+
+- 2026-11-12 Codex: Added native Settings controls for persisted Auto Save, editor text size and layout reset, an accurate Models-to-AI-Agent action, and registry-backed shortcut help in Accessibility. This is a bounded I01 UI slice in PR #35; source compile passed, desktop interaction pending. `atul/native-rust-ide` still has unmerged fixes; its design-file deletions were not integrated.
+
+- 2026-11-12 Codex: Cherry-picked five post-alpha.3 Atul native app tester-fix commits onto `integrate/atul-alpha3-fixes` without the upstream branch's design-asset deletions. Scope is agent, file/recovery safety, search, session and terminal source; local format, 263 tests and Clippy passed. PR review is pending. No PR merge or branch deletion.
+
+- 2026-11-12 Codex: Added explicit .NET and CMake project command discovery in `feat/dotnet-project-actions` (PR #37). One safe-named solution is preferred over sibling projects; ambiguous .NET roots are skipped. CMake exposes Configure, Build and CTest according to generated files. Focused tests passed; real projects and desktop trial pending. This is a daily IDE workflow slice, not debugger or language-server support.
+
+- 2026-11-12 Codex: Added additive local task due times, authorized owner/host changes, overdue chip/filter, Pulse jump, and active task summary on `feat/local-room-task-due-times` (PR #38). Old tasks default to no due time. Focused core/app tests and Clippy passed; desktop interaction pending. No reminder scheduler or network behavior claimed.
+
+- 2026-11-12 Codex: Expanded the UI concept library to 32 images, with 20 restrained flat concepts in the active gallery. Added source-grounded design research and a local interactive HTML prototype for menus, tabs, rail views and selectors. This is a visual handoff only; the native Rust app was not changed. Older brighter concepts remain historical and are excluded from the curated gallery.
+
 - 2026-11-12 Codex: Generated twelve native Forge Room UI concept images in `docs/design/concept-images/2026-11-12/` covering the workspace, lobby, chat, tasks, Git, run/tests/debug, Studio, Ship Mode, first run, activity, extensions, and Pocket. User redirected current effort away from in-app AI work; the open upstream AI-heavy PR was not integrated. Concepts are visual references, not runtime claims.
 
 - 2026-11-09 Codex: PR #29 local Room decisions passed Windows core and graphical CI and merged. PRs #27-#29 now provide local Chat, task links, and decisions; desktop and two-client acceptance remain open. No open PRs remain on the main repository.
@@ -129,3 +171,12 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 - 2026-11-03 Codex: started mailbox T13 read-only review at 90727c5 and alpha.2 checksum/icon verification; no Rust/packaging edits or commits.
 
 - 2026-11-03 Codex: completed T13 read-only review in design-assets/forge-room-ui-spec/CODE_REVIEW_NOTES_3.md; six confirmed findings + one plausible race,91 app tests passed/5 ignored,8 probes passed, alpha.2 hashes/icons verified. C7 handed to Claude. Registered Atul-requested recurring two-minute mailbox task; MAILBOX_POLLING.md records setup and stop. No app/packaging source edits or repository commits.
+
+
+
+
+
+
+
+
+

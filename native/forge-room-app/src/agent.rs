@@ -162,6 +162,8 @@ pub struct Request {
     pub cwd: PathBuf,
     /// The conversation to continue, when the provider can.
     pub session: Option<String>,
+    /// Optional local image for Codex's `--image` input.
+    pub image: Option<PathBuf>,
 }
 
 /// What a run reports, in order.
@@ -215,11 +217,15 @@ pub fn arguments(request: &Request) -> Vec<String> {
             }
         }
         Provider::Codex | Provider::Ollama | Provider::LmStudio => {
-            args.extend([
-                "exec".into(),
-                "--json".into(),
-                "--skip-git-repo-check".into(),
-            ]);
+            let resume = (request.provider == Provider::Codex)
+                .then_some(request.session.as_deref())
+                .flatten()
+                .filter(|id| clean_id(id));
+            args.push("exec".into());
+            if resume.is_some() {
+                args.push("resume".into());
+            }
+            args.extend(["--json".into(), "--skip-git-repo-check".into()]);
             // A model that runs on this computer, through Ollama or LM Studio.
             let local = match request.provider {
                 Provider::Ollama => Some("ollama"),
@@ -234,7 +240,12 @@ pub fn arguments(request: &Request) -> Vec<String> {
                 Mode::Edit => "workspace-write",
                 Mode::Full => "danger-full-access",
             };
-            args.extend(["--sandbox".into(), sandbox.into()]);
+            if resume.is_some() {
+                // `codex exec resume` accepts configuration overrides, but not `--sandbox`.
+                args.extend(["-c".into(), format!("sandbox_mode={sandbox}")]);
+            } else {
+                args.extend(["--sandbox".into(), sandbox.into()]);
+            }
             if valid_model(&request.model) {
                 args.extend(["--model".into(), request.model.clone()]);
             }
@@ -243,6 +254,12 @@ pub fn arguments(request: &Request) -> Vec<String> {
                     "-c".into(),
                     format!("model_reasoning_effort={}", request.effort),
                 ]);
+            }
+            if let Some(image) = &request.image {
+                args.extend(["--image".into(), image.to_string_lossy().into_owned()]);
+            }
+            if let Some(id) = resume {
+                args.push(id.to_owned());
             }
             // The prompt is read from standard input.
             args.push("-".into());
@@ -774,6 +791,7 @@ mod tests {
             prompt: "hello".into(),
             cwd: PathBuf::from("."),
             session: session.map(String::from),
+            image: None,
         }
     }
 
@@ -802,6 +820,32 @@ mod tests {
         assert!(!valid_model("--dangerously-skip-permissions"));
         assert!(!valid_model("-x"));
         assert!(valid_model("claude-opus-4-1"));
+    }
+
+    #[test]
+    fn codex_image_is_a_separate_argument() {
+        let mut request = request(Provider::Codex, Mode::Edit, None);
+        request.image = Some(PathBuf::from(r"C:\Temp\pasted image.png"));
+        let args = arguments(&request);
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--image", r"C:\Temp\pasted image.png"])
+        );
+        assert_eq!(args.last().map(String::as_str), Some("-"));
+    }
+
+    #[test]
+    fn codex_resume_keeps_the_sandbox_and_prompt_on_stdin() {
+        let mut request = request(Provider::Codex, Mode::ReadOnly, Some("abc-123"));
+        let args = arguments(&request);
+        assert_eq!(&args[..2], ["exec", "resume"]);
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-c", "sandbox_mode=read-only"])
+        );
+        assert_eq!(&args[args.len() - 2..], ["abc-123", "-"]);
+        request.session = Some("-bad".into());
+        assert!(!arguments(&request).iter().any(|arg| arg == "resume"));
     }
 
     #[test]
@@ -976,6 +1020,7 @@ mod tests {
             prompt: "say hi".into(),
             cwd: dir.clone(),
             session: None,
+            image: None,
         };
         let mut run = start(&script, &request, || {}).unwrap();
         let mut seen = Vec::new();
@@ -1025,6 +1070,7 @@ mod tests {
             prompt: "go".into(),
             cwd: dir.clone(),
             session: None,
+            image: None,
         };
         let started = std::time::Instant::now();
         let mut run = start(&script, &request, || {}).unwrap();

@@ -71,6 +71,15 @@ impl FromStr for TaskStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskPriority {
+    #[default]
+    Normal,
+    High,
+    Critical,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
@@ -79,6 +88,8 @@ pub struct Task {
     pub owner_id: String,
     pub owner_name: String,
     pub status: TaskStatus,
+    #[serde(default)]
+    pub priority: TaskPriority,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -87,6 +98,9 @@ pub struct Task {
     pub completed_criteria: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_branch: Option<String>,
+    /// Optional local deadline. This is display/filter data, not a scheduler or reminder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_at_epoch_seconds: Option<u64>,
     pub updated_at_epoch_seconds: u64,
 }
 
@@ -172,6 +186,8 @@ pub enum DomainError {
     AgentOwnerMissing,
     AcceptanceCriteriaTooLarge,
     CompletedTaskHandoff,
+    CompletedTaskDueChange,
+    CompletedTaskPriorityChange,
     DependencyBlocked(Vec<String>),
     DuplicateParticipant,
     DuplicateTask,
@@ -212,6 +228,16 @@ impl fmt::Display for DomainError {
             Self::CompletedTaskHandoff => {
                 write!(formatter, "completed tasks must be reopened before handoff")
             }
+            Self::CompletedTaskDueChange => {
+                write!(
+                    formatter,
+                    "completed tasks must be reopened before changing the due time"
+                )
+            }
+            Self::CompletedTaskPriorityChange => write!(
+                formatter,
+                "completed tasks must be reopened before changing priority"
+            ),
             Self::DependencyBlocked(ids) => write!(
                 formatter,
                 "unfinished dependencies block this transition: {}",
@@ -473,6 +499,42 @@ impl RoomState {
         Ok(())
     }
 
+    pub fn set_task_due(
+        &mut self,
+        actor_id: &str,
+        task_id: &str,
+        due_at_epoch_seconds: Option<u64>,
+    ) -> Result<(), DomainError> {
+        self.require_connected(actor_id)?;
+        let index = self.task_index(task_id)?;
+        self.require_task_writer(actor_id, &self.tasks[index])?;
+        if self.tasks[index].status == TaskStatus::Done {
+            return Err(DomainError::CompletedTaskDueChange);
+        }
+        self.tasks[index].due_at_epoch_seconds = due_at_epoch_seconds;
+        self.tasks[index].updated_at_epoch_seconds = now_epoch_seconds();
+        self.record_activity(actor_id, format!("changed due time for task {task_id}"));
+        Ok(())
+    }
+
+    pub fn set_task_priority(
+        &mut self,
+        actor_id: &str,
+        task_id: &str,
+        priority: TaskPriority,
+    ) -> Result<(), DomainError> {
+        self.require_connected(actor_id)?;
+        let index = self.task_index(task_id)?;
+        self.require_task_writer(actor_id, &self.tasks[index])?;
+        if self.tasks[index].status == TaskStatus::Done {
+            return Err(DomainError::CompletedTaskPriorityChange);
+        }
+        self.tasks[index].priority = priority;
+        self.tasks[index].updated_at_epoch_seconds = now_epoch_seconds();
+        self.record_activity(actor_id, format!("changed priority for task {task_id}"));
+        Ok(())
+    }
+
     pub fn request_handoff(
         &mut self,
         actor_id: &str,
@@ -709,12 +771,47 @@ mod tests {
             owner_id: owner.into(),
             owner_name: owner.into(),
             status: TaskStatus::Open,
+            priority: TaskPriority::Normal,
             dependencies,
             acceptance_criteria: vec!["tests pass".into()],
             completed_criteria: Vec::new(),
             worktree_branch: None,
+            due_at_epoch_seconds: None,
             updated_at_epoch_seconds: now_epoch_seconds(),
         }
+    }
+
+    #[test]
+    fn old_tasks_load_without_a_due_time() {
+        let original = task("old", "alice", Vec::new());
+        let mut value = serde_json::to_value(&original).unwrap();
+        assert!(value.get("dueAtEpochSeconds").is_none());
+        value.as_object_mut().unwrap().remove("priority");
+        let loaded: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(loaded.due_at_epoch_seconds, None);
+        assert_eq!(loaded.priority, TaskPriority::Normal);
+    }
+
+    #[test]
+    fn only_owner_or_host_changes_active_task_priority() {
+        let mut room = room();
+        room.create_task("host", task("priority", "alice", vec![]))
+            .unwrap();
+        assert_eq!(
+            room.set_task_priority("bob", "priority", TaskPriority::High),
+            Err(DomainError::OnlyOwnerOrHostCanUpdate)
+        );
+        room.set_task_priority("alice", "priority", TaskPriority::High)
+            .unwrap();
+        assert_eq!(room.tasks[0].priority, TaskPriority::High);
+        room.set_task_priority("host", "priority", TaskPriority::Critical)
+            .unwrap();
+        assert_eq!(room.tasks[0].priority, TaskPriority::Critical);
+        room.tasks[0].status = TaskStatus::Done;
+        assert_eq!(
+            room.set_task_priority("host", "priority", TaskPriority::Normal),
+            Err(DomainError::CompletedTaskPriorityChange)
+        );
     }
 
     fn room() -> RoomState {
@@ -724,6 +821,26 @@ mod tests {
         room.add_participant("host", participant("bob", "Bob"))
             .unwrap();
         room
+    }
+
+    #[test]
+    fn only_owner_or_host_changes_an_active_task_due_time() {
+        let mut room = room();
+        room.create_task("host", task("due", "alice", vec![]))
+            .unwrap();
+        assert_eq!(
+            room.set_task_due("bob", "due", Some(5_000)),
+            Err(DomainError::OnlyOwnerOrHostCanUpdate)
+        );
+        room.set_task_due("alice", "due", Some(5_000)).unwrap();
+        assert_eq!(room.tasks[0].due_at_epoch_seconds, Some(5_000));
+        room.set_task_due("host", "due", None).unwrap();
+        assert_eq!(room.tasks[0].due_at_epoch_seconds, None);
+        room.tasks[0].status = TaskStatus::Done;
+        assert_eq!(
+            room.set_task_due("host", "due", Some(6_000)),
+            Err(DomainError::CompletedTaskDueChange)
+        );
     }
 
     #[test]

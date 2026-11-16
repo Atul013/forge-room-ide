@@ -4,6 +4,7 @@ mod agent;
 mod ai_panel;
 mod autosave;
 mod background;
+#[allow(dead_code)] // Keep optional brand artwork available to the AI panel and future themes.
 mod brand;
 mod commands;
 mod diagnostics;
@@ -21,6 +22,7 @@ mod gutter;
 mod icons;
 mod line_ops;
 mod lobby;
+mod lsp;
 mod mark;
 mod palette;
 mod path_links;
@@ -34,6 +36,7 @@ mod search;
 mod search_view;
 mod session;
 mod settings;
+mod snippets;
 mod source_control;
 mod symbols;
 mod syntax;
@@ -51,9 +54,9 @@ use tabs::{Tabs, normalize};
 use workspace::Workspace;
 
 const APP_NAME: &str = "Forge Room Early Preview";
-const TAB_HEIGHT: f32 = 42.0;
+const TAB_HEIGHT: f32 = 36.0;
 const TITLE_HEIGHT: f32 = 36.0;
-const ACTIVITY_WIDTH: f32 = 112.0;
+const ACTIVITY_WIDTH: f32 = 56.0;
 
 /// One entry of the navigation rail on the left.
 #[derive(Clone, Copy)]
@@ -227,6 +230,8 @@ struct ForgeRoomApp {
     trusted: bool,
     /// The folder waiting for the answer to the trust question.
     trust_prompt: Option<PathBuf>,
+    /// Move keyboard focus into a newly opened trust question exactly once.
+    trust_focus_pending: bool,
     /// The top folder of the repository when the open folder is a subfolder of it.
     git_top: Option<PathBuf>,
     /// The files git reported as changed at the last read; the Explorer refreshes when it differs.
@@ -244,6 +249,11 @@ struct ForgeRoomApp {
     /// The last `cargo check`, and the worker that makes the next one.
     problems: Option<diagnostics::Report>,
     checking: background::Latest<diagnostics::Report>,
+    lsp_query: background::Latest<lsp::QueryAnswer>,
+    lsp_hover: Option<String>,
+    lsp_completion_context: Option<(PathBuf, usize, usize)>,
+    lsp_completions: Vec<(String, String)>,
+    lsp_references: Vec<(PathBuf, usize, usize)>,
     /// The last session written to disk, and when it was last compared with the window.
     session_saved: session::Session,
     session_checked: std::time::Instant,
@@ -335,6 +345,8 @@ impl ForgeRoomApp {
             .egui_ctx
             .set_zoom_factor((1.0 / native).clamp(0.8, 1.0));
         fonts::install(&creation_context.egui_ctx);
+        theme::load_import();
+        syntax::load_imports();
         match settings::load().theme {
             Some(key) if theme::find(&key).is_some() => {
                 theme::set(&creation_context.egui_ctx, &key)
@@ -376,6 +388,7 @@ impl ForgeRoomApp {
             split_pair: None,
             trusted: true,
             trust_prompt: None,
+            trust_focus_pending: false,
             git_top: None,
             change_paths: Vec::new(),
             terminals_confirmed: false,
@@ -388,6 +401,11 @@ impl ForgeRoomApp {
             auto_save: settings::load().auto_save.unwrap_or(false),
             problems: None,
             checking: background::Latest::default(),
+            lsp_query: background::Latest::default(),
+            lsp_hover: None,
+            lsp_completion_context: None,
+            lsp_completions: Vec::new(),
+            lsp_references: Vec::new(),
             session_saved: session::Session::default(),
             session_checked: std::time::Instant::now(),
             auto_saves: autosave::Tracker::default(),
@@ -404,14 +422,14 @@ impl ForgeRoomApp {
             room: rooms::RoomView::default(),
             terminals: Vec::new(),
             active_terminal: 0,
-            show_terminal: true,
+            show_terminal: false,
             bottom_tab: BottomTab::Terminal,
-            show_right: true,
-            show_preview: true,
+            show_right: false,
+            show_preview: false,
             lobby_close_warned: false,
             preview: preview::Preview::default(),
             ai: ai_panel::State::from_settings(&settings::load()),
-            right_tab: RightTab::Ai,
+            right_tab: RightTab::Room,
             terminal_focus_request: false,
             terminal_has_focus: false,
             terminal_error: None,
@@ -714,10 +732,8 @@ impl ForgeRoomApp {
             let previous = self.repo_root();
             self.explorer_state = explorer::State::default();
             self.problems = None;
-            if previous.as_ref().is_some_and(|old| *old != folder) {
-                // The agent's conversation belongs to the folder it ran in.
-                self.ai.new_chat();
-            }
+            // Keep each folder's local agent conversation separate and restore it on return.
+            self.ai.set_workspace(&folder);
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
             self.clear_git_state();
@@ -746,6 +762,7 @@ impl ForgeRoomApp {
             } else {
                 self.set_trust(false);
                 self.trust_prompt = Some(folder.clone());
+                self.trust_focus_pending = true;
             }
             let root = self.repo_root();
             self.room.load_for(root.as_deref());
@@ -917,6 +934,10 @@ impl ForgeRoomApp {
             Command::OpenFolder => self.open_folder_dialog(),
             Command::Save => self.save_active(false),
             Command::SaveAs => self.save_active(true),
+            Command::LspHover => self.start_lsp_query(lsp::QueryKind::Hover),
+            Command::LspDefinition => self.start_lsp_query(lsp::QueryKind::Definition),
+            Command::LspCompletion => self.start_lsp_query(lsp::QueryKind::Completion),
+            Command::LspReferences => self.start_lsp_query(lsp::QueryKind::References),
             Command::CloseTab => {
                 if !self.tabs.tabs.is_empty() {
                     self.request_close(self.tabs.active);
@@ -1124,13 +1145,14 @@ impl ForgeRoomApp {
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
             Command::ResetLayout => {
-                self.panel_sizes = (250, 364, 200);
+                self.panel_sizes = (264, 340, 200);
                 self.layout_generation += 1;
                 self.show_sidebar = true;
-                self.show_right = true;
-                self.show_terminal = true;
+                self.show_right = false;
+                self.show_terminal = false;
+                self.show_preview = false;
                 self.terminal_maximized = false;
-                self.status = "Layout reset".into();
+                self.status = "Focused layout restored".into();
             }
             Command::OpenAgent => {
                 self.show_right = true;
@@ -1142,6 +1164,7 @@ impl ForgeRoomApp {
                         self.status = "This folder is already trusted".into();
                     } else {
                         self.trust_prompt = Some(root);
+                        self.trust_focus_pending = true;
                     }
                 } else {
                     self.status = "Open a folder first".into();
@@ -1245,18 +1268,106 @@ impl ForgeRoomApp {
         }
     }
 
+    fn start_lsp_check(&mut self) {
+        let Some(root) = self.repo_root() else {
+            self.status = "Open a folder to use a language server".into();
+            return;
+        };
+        if !self.trusted {
+            self.status = "Trust this folder before starting a language server".into();
+            return;
+        }
+        let Some(tab) = self.tabs.active_tab() else {
+            self.status = "Open a source file first".into();
+            return;
+        };
+        let Some(file) = tab.doc.path().map(|path| path.to_path_buf()) else {
+            self.status = "Save this file before checking it with a language server".into();
+            return;
+        };
+        let text = tab.doc.text().to_owned();
+        let context = self.egui_ctx.clone();
+        if self
+            .checking
+            .request(&context, move || lsp::check(&root, &file, &text))
+        {
+            self.status = "Running language server diagnostics…".into();
+        }
+    }
+
+    fn start_lsp_query(&mut self, kind: lsp::QueryKind) {
+        let Some(root) = self.repo_root() else {
+            self.status = "Open a folder first".into();
+            return;
+        };
+        if !self.trusted {
+            self.status = "Trust this folder before starting a language server".into();
+            return;
+        }
+        let Some(tab) = self.tabs.active_tab() else {
+            self.status = "Open a source file first".into();
+            return;
+        };
+        let Some(file) = tab.doc.path().map(|path| path.to_path_buf()) else {
+            self.status = "Save this file first".into();
+            return;
+        };
+        let text = tab.doc.text().to_owned();
+        let (line, column) = self.cursor;
+        let completion_file = file.clone();
+        let context = self.egui_ctx.clone();
+        if self.lsp_query.request(&context, move || {
+            lsp::query(&root, &file, &text, line, column, kind)
+        }) {
+            self.status = "Querying language server…".into();
+            if matches!(kind, lsp::QueryKind::Completion) {
+                self.lsp_completion_context = Some((completion_file, line, column));
+                self.lsp_completions.clear();
+            }
+        }
+    }
+
+    fn poll_lsp_query(&mut self) {
+        if let Some(answer) = self.lsp_query.poll() {
+            self.status = answer.message.clone();
+            if let Some((file, line, column)) = answer.location {
+                self.open_path(file.clone());
+                if self.tabs.active_path() == Some(tabs::normalize(&file).as_path())
+                    && let Some(tab) = self.tabs.tabs.get(self.tabs.active)
+                {
+                    let at = path_links::locate(tab.doc.text(), line, column);
+                    self.pending_select = Some((at, at));
+                    self.focus_editor = true;
+                }
+            } else if matches!(answer.kind, lsp::QueryKind::Hover)
+                && answer.message != "No hover information at cursor"
+            {
+                self.lsp_hover = Some(answer.message);
+            } else if matches!(answer.kind, lsp::QueryKind::Completion) {
+                self.lsp_completions = answer.completions;
+            } else if matches!(answer.kind, lsp::QueryKind::References) {
+                self.lsp_references = answer.locations;
+            }
+        } else if self.lsp_query.take_failed() {
+            self.status = "Language server query stopped unexpectedly".into();
+        }
+    }
+
     /// Take a finished check.
     fn poll_check(&mut self) {
         if let Some(report) = self.checking.poll() {
             let errors = report.problems.iter().filter(|p| p.error).count();
             let warnings = report.problems.len() - errors;
             self.status = match &report.failure {
-                Some(failure) => format!("cargo check: {failure}"),
-                None => format!("cargo check: {errors} error(s), {warnings} warning(s)"),
+                Some(failure) => format!("{}: {failure}", report.source),
+                None => format!(
+                    "{}: {errors} error(s), {warnings} warning(s)",
+                    report.source
+                ),
             };
             self.problems = Some(report);
         } else if self.checking.take_failed() {
-            self.status = "cargo check stopped unexpectedly".into();
+            self.status = "The diagnostic check stopped unexpectedly".into();
         }
     }
 
@@ -1652,6 +1763,7 @@ impl ForgeRoomApp {
     /// each opening its file at the right line.
     fn problems_view(&mut self, ui: &mut egui::Ui) {
         let mut run = false;
+        let mut run_lsp = false;
         let mut open: Option<diagnostics::Problem> = None;
         ui.horizontal(|ui| {
             ui.add_space(12.0);
@@ -1661,6 +1773,12 @@ impl ForgeRoomApp {
                 .clicked()
             {
                 run = true;
+            }
+            if ui
+                .add_enabled(!busy, egui::Button::new("Run language server"))
+                .clicked()
+            {
+                run_lsp = true;
             }
             if busy {
                 ui.spinner();
@@ -1695,6 +1813,9 @@ impl ForgeRoomApp {
             });
             if run {
                 self.start_check();
+            }
+            if run_lsp {
+                self.start_lsp_check();
             }
             return;
         };
@@ -1744,6 +1865,9 @@ impl ForgeRoomApp {
         }
         if run {
             self.start_check();
+        }
+        if run_lsp {
+            self.start_lsp_check();
         }
     }
 
@@ -1956,13 +2080,26 @@ impl ForgeRoomApp {
             mark::draw(ui.painter(), logo.center(), 24.0);
             ui.add_space(4.0);
             // The design has no menu strip: File, Edit and View live under the brand name.
-            ui.menu_button(
+            let brand_menu = ui.menu_button(
                 egui::RichText::new("Forge Room")
                     .size(16.0)
                     .family(fonts::semibold())
                     .color(theme::text()),
                 |ui| self.menu_bar(ui),
             );
+            // The brand menu contains nested menus. A click on the editor or another
+            // background panel should dismiss the whole stack, including an open submenu.
+            // Foreground layers contain the menu itself, so clicks on its items stay active.
+            if !brand_menu.response.clicked()
+                && ui.input(|input| input.pointer.any_click())
+                && let Some(position) = ui.input(|input| input.pointer.interact_pos())
+                && ui
+                    .ctx()
+                    .layer_id_at(position)
+                    .is_none_or(|layer| layer.order != egui::Order::Foreground)
+            {
+                egui::Popup::close_all(ui.ctx());
+            }
             ui.add_space(10.0);
             self.title_chips(ui, bar.width());
 
@@ -2012,6 +2149,7 @@ impl ForgeRoomApp {
                 }
                 ui.add_space(10.0);
                 for (icon, tip, command) in [
+                    ("eye", "Toggle browser preview", Command::TogglePreview),
                     (
                         "panel-right",
                         "Side panel: AI agent, team, chat",
@@ -2034,7 +2172,7 @@ impl ForgeRoomApp {
                     }
                 }
                 ui.add_space(8.0);
-                if bar.width() > 900.0 {
+                if bar.width() > 1140.0 {
                     let (pill, response) =
                         ui.allocate_exact_size(egui::vec2(300.0, 28.0), egui::Sense::click());
                     let painter = ui.painter();
@@ -2063,7 +2201,7 @@ impl ForgeRoomApp {
                     painter.text(
                         egui::pos2(pill.left() + 34.0, pill.center().y),
                         egui::Align2::LEFT_CENTER,
-                        "Search, run, or ask Forge...",
+                        "Run a command...",
                         egui::FontId::proportional(13.0),
                         theme::text_dim(),
                     );
@@ -2113,36 +2251,24 @@ impl ForgeRoomApp {
         if width < 900.0 {
             return;
         }
-        if title_chip(ui, Some("room"), &room_name, None, true)
+        if title_chip(ui, Some("room"), &rooms::short(&room_name, 18), None, true)
             .on_hover_text("Open the Room Lobby")
             .clicked()
         {
             self.show_lobby = !self.show_lobby;
         }
         if let Some(branch) = self.branch.clone()
-            && title_chip(ui, Some("source-control"), &branch, None, true)
-                .on_hover_text("Switch branch")
-                .clicked()
+            && title_chip(
+                ui,
+                Some("source-control"),
+                &rooms::short(&branch, 18),
+                None,
+                true,
+            )
+            .on_hover_text(format!("Switch branch: {branch}"))
+            .clicked()
         {
             self.run_command(Command::SwitchBranch, false);
-        }
-        if width < 1260.0 {
-            return;
-        }
-        let dot = Some(egui::Color32::from_rgb(240, 113, 120));
-        if title_chip(ui, None, &format!("Lobby: {room_name}"), dot, false).clicked() {
-            self.show_lobby = true;
-        }
-        title_chip(ui, Some("lock"), "Private", None, false);
-        if width >= 1360.0
-            && let Some(state) = self.room.state()
-        {
-            let people: Vec<&str> = state
-                .participants
-                .iter()
-                .map(|person| person.name.as_str())
-                .collect();
-            avatar_stack(ui, &people);
         }
     }
 
@@ -2199,6 +2325,16 @@ impl ForgeRoomApp {
                         }
                         ui.close();
                     }
+                }
+                if ui
+                    .add_enabled(self.workspace.is_some(), egui::Button::new("New Folder"))
+                    .clicked()
+                {
+                    if let Some(workspace) = &self.workspace {
+                        self.new_folder_parent = Some(workspace.root.clone());
+                        self.new_folder_name.clear();
+                    }
+                    ui.close();
                 }
                 self.recent_menu(ui);
                 ui.separator();
@@ -2362,8 +2498,6 @@ impl ForgeRoomApp {
         // (item, icon, label, tooltip); `None` is a divider.
         type Entry = Option<(Rail, &'static str, &'static str, &'static str)>;
         let top: [Entry; 13] = [
-            Some((Rail::Ai, "ai", "AI Agent", "AI Agent (Ctrl+Shift+A)")),
-            None,
             Some((
                 Rail::View(SidebarView::Explorer),
                 "code",
@@ -2376,21 +2510,6 @@ impl ForgeRoomApp {
                 "Search",
                 "Search (Ctrl+Shift+F)",
             )),
-            Some((Rail::Room, "room", "Rooms", "Room Lobby")),
-            Some((Rail::Studio, "studio", "Studio", "Studio: themes")),
-            Some((
-                Rail::Project(project_tools::Page::Workflows),
-                "workflows",
-                "Workflows",
-                "Local project workflows",
-            )),
-            Some((
-                Rail::Project(project_tools::Page::Models),
-                "models",
-                "Models",
-                "Project runtimes and provider status",
-            )),
-            None,
             Some((
                 Rail::View(SidebarView::SourceControl),
                 "source-control",
@@ -2409,40 +2528,63 @@ impl ForgeRoomApp {
                 "Tests",
                 "Run project tests",
             )),
+            None,
+            Some((Rail::Room, "room", "Rooms", "Room Lobby")),
+            Some((Rail::Studio, "studio", "Studio", "Studio: themes")),
+            Some((
+                Rail::Project(project_tools::Page::Workflows),
+                "workflows",
+                "Workflows",
+                "Local project workflows",
+            )),
+            Some((
+                Rail::Project(project_tools::Page::Models),
+                "models",
+                "Models",
+                "Project runtimes and provider status",
+            )),
             Some((
                 Rail::Project(project_tools::Page::Extensions),
                 "extensions",
                 "Extensions",
                 "Extension support status",
             )),
+            None,
+            Some((Rail::Ai, "ai", "AI Agent", "AI Agent (Ctrl+Shift+A)")),
         ];
-        for entry in top {
-            match entry {
-                None => {
-                    ui.add_space(4.0);
-                    let (rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), 1.0),
-                        egui::Sense::hover(),
-                    );
-                    ui.painter().line_segment(
-                        [
-                            rect.left_center() + egui::vec2(12.0, 0.0),
-                            rect.right_center() - egui::vec2(12.0, 0.0),
-                        ],
-                        egui::Stroke::new(1.0, theme::border()),
-                    );
-                    ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .id_salt("activity_tools")
+            .auto_shrink([false, false])
+            .max_height((ui.available_height() - 100.0).max(100.0))
+            .show(ui, |ui| {
+                for entry in top {
+                    match entry {
+                        None => {
+                            ui.add_space(4.0);
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 1.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().line_segment(
+                                [
+                                    rect.left_center() + egui::vec2(12.0, 0.0),
+                                    rect.right_center() - egui::vec2(12.0, 0.0),
+                                ],
+                                egui::Stroke::new(1.0, theme::border()),
+                            );
+                            ui.add_space(4.0);
+                        }
+                        Some((item, icon, label, tip)) => {
+                            let count = match item {
+                                Rail::View(SidebarView::SourceControl) => badge,
+                                Rail::Room => rooms,
+                                _ => 0,
+                            };
+                            self.rail_item(ui, item, icon, label, tip, count);
+                        }
+                    }
                 }
-                Some((item, icon, label, tip)) => {
-                    let count = match item {
-                        Rail::View(SidebarView::SourceControl) => badge,
-                        Rail::Room => rooms,
-                        _ => 0,
-                    };
-                    self.rail_item(ui, item, icon, label, tip, count);
-                }
-            }
-        }
+            });
         ui.add_space(4.0);
         self.rail_item(
             ui,
@@ -2456,27 +2598,14 @@ impl ForgeRoomApp {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 14.0;
-                ui.add_space(14.0);
-                for (icon, tip, enabled) in [
-                    ("cloud", "Cloud: coming soon", false),
-                    ("settings", "Settings", true),
-                ] {
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(30.0, 30.0),
-                        if enabled {
-                            egui::Sense::click()
-                        } else {
-                            egui::Sense::hover()
-                        },
-                    );
-                    icons::draw(ui.painter(), icon, rect.center(), 20.0, theme::text_dim());
-                    if response.on_hover_text(tip).clicked() {
-                        self.switch_view(SidebarView::Project(project_tools::Page::Settings));
-                    }
-                }
-            });
+            self.rail_item(
+                ui,
+                Rail::Project(project_tools::Page::Settings),
+                "settings",
+                "",
+                "Settings",
+                0,
+            );
             self.rail_item(
                 ui,
                 Rail::Project(project_tools::Page::Accessibility),
@@ -2493,21 +2622,19 @@ impl ForgeRoomApp {
         ui: &mut egui::Ui,
         item: Rail,
         icon: &str,
-        label: &str,
+        _label: &str,
         tip: &str,
         count: usize,
     ) {
-        let soon = false;
-        let height = if label.contains('\n') { 46.0 } else { 35.0 };
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ACTIVITY_WIDTH - 12.0, height),
-            if soon {
-                egui::Sense::hover()
-            } else {
-                egui::Sense::click()
-            },
-        );
-        let rect = rect.translate(egui::vec2(6.0, 0.0));
+        let height = 40.0;
+        let response = ui
+            .add_sized(
+                egui::vec2(ACTIVITY_WIDTH - 8.0, height),
+                egui::Button::new("").frame(false),
+            )
+            .accessible_name(tip)
+            .on_hover_text(tip);
+        let rect = response.rect.translate(egui::vec2(4.0, 0.0));
         let active = match item {
             Rail::View(view) => !self.show_lobby && self.show_sidebar && self.view == view,
             Rail::Terminal => !self.show_lobby && self.show_terminal,
@@ -2518,16 +2645,22 @@ impl ForgeRoomApp {
             }
             Rail::Studio => false,
         };
-        let hovered = response.hovered() && !soon;
+        let hovered = response.hovered();
         let painter = ui.painter();
         if active {
             painter.rect_filled(rect, 5.0, theme::nav_active());
         } else if hovered {
             painter.rect_filled(rect, 8.0, theme::overlay(12));
         }
-        let color = if soon {
-            theme::mix(theme::bg_activity(), theme::text_dim(), 0.6)
-        } else if active || hovered {
+        if response.has_focus() {
+            painter.rect_stroke(
+                rect,
+                5.0,
+                egui::Stroke::new(2.0, theme::accent()),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let color = if active || hovered {
             theme::text()
         } else {
             theme::text_dim()
@@ -2537,24 +2670,9 @@ impl ForgeRoomApp {
         } else {
             icon
         };
-        icons::draw(
-            painter,
-            icon_name,
-            egui::pos2(rect.left() + 19.0, rect.center().y),
-            19.0,
-            color,
-        );
-        if !label.is_empty() {
-            painter.text(
-                egui::pos2(rect.left() + 35.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                label,
-                egui::FontId::proportional(if label.len() > 10 { 11.0 } else { 12.0 }),
-                color,
-            );
-        }
+        icons::draw(painter, icon_name, rect.center(), 19.0, color);
         if count > 0 {
-            let center = egui::pos2(rect.right() - 12.0, rect.center().y);
+            let center = egui::pos2(rect.right() - 8.0, rect.top() + 9.0);
             painter.circle_filled(center, 7.0, theme::badge());
             painter.text(
                 center,
@@ -2564,7 +2682,7 @@ impl ForgeRoomApp {
                 theme::badge_text(),
             );
         }
-        if response.on_hover_text(tip).clicked() {
+        if response.clicked() {
             match item {
                 Rail::View(view) => {
                     let showing = self.show_sidebar && self.view == view && !self.show_lobby;
@@ -2901,6 +3019,7 @@ impl ForgeRoomApp {
         };
         if matches!(action, Action::Trust) {
             self.trust_prompt = self.repo_root();
+            self.trust_focus_pending = self.trust_prompt.is_some();
             return;
         }
         if matches!(action, Action::StashDrop) {
@@ -3210,7 +3329,14 @@ impl ForgeRoomApp {
             SidebarView::SourceControl => self.source_control_view(ui, false),
             SidebarView::Project(page) => {
                 let root = self.repo_root();
-                match project_tools::show(ui, page, root.as_deref(), &self.runtimes) {
+                match project_tools::show(
+                    ui,
+                    page,
+                    root.as_deref(),
+                    &self.runtimes,
+                    self.auto_save,
+                    self.editor_scale,
+                ) {
                     Some(project_tools::Selected::Command(_)) if !self.trusted => {
                         self.status = "Trust this folder first (Folder: Trust This Folder): project commands run its build scripts".into();
                     }
@@ -3231,6 +3357,76 @@ impl ForgeRoomApp {
                         }
                     }
                     Some(project_tools::Selected::Studio) => self.gallery.open(),
+                    Some(project_tools::Selected::ImportGrammar) => {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Sublime syntax", &["sublime-syntax"])
+                            .pick_file()
+                        {
+                            self.status = match std::fs::metadata(&path) {
+                                Ok(meta) if meta.len() <= 128 * 1024 => {
+                                    match std::fs::read_to_string(&path) {
+                                        Ok(text) => match syntax::import_grammar(&text) {
+                                            Ok(name) => format!("Imported syntax grammar: {name}"),
+                                            Err(error) => {
+                                                format!("Could not import grammar: {error}")
+                                            }
+                                        },
+                                        Err(error) => format!("Could not read grammar: {error}"),
+                                    }
+                                }
+                                _ => "Choose a readable grammar under 128 KB".into(),
+                            };
+                        }
+                    }
+                    Some(project_tools::Selected::ImportSnippets) => {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("VS Code snippets", &["json", "code-snippets"])
+                            .pick_file()
+                        {
+                            self.status = match std::fs::metadata(&path) {
+                                Ok(meta) if meta.len() <= 128 * 1024 => {
+                                    match std::fs::read_to_string(&path) {
+                                        Ok(text) => match snippets::import(&text) {
+                                            Ok(count) => {
+                                                format!("Imported {count} plain-text snippets")
+                                            }
+                                            Err(error) => {
+                                                format!("Could not import snippets: {error}")
+                                            }
+                                        },
+                                        Err(error) => format!("Could not read snippets: {error}"),
+                                    }
+                                }
+                                _ => "Choose a readable snippet file under 128 KB".into(),
+                            };
+                        }
+                    }
+                    Some(project_tools::Selected::InsertSnippet(body)) => {
+                        if let Some(tab) = self.tabs.active_tab()
+                            && !tab.readonly
+                        {
+                            let id = egui::Id::unique(("editor", tab.id));
+                            let cursor = egui::TextEdit::load_state(ui.ctx(), id)
+                                .and_then(|state| {
+                                    state
+                                        .cursor
+                                        .char_range()
+                                        .map(|range| usize::from(range.primary.index))
+                                })
+                                .unwrap_or_else(|| tab.doc.text().chars().count());
+                            let byte = tab
+                                .doc
+                                .text()
+                                .char_indices()
+                                .nth(cursor)
+                                .map_or(tab.doc.text().len(), |(index, _)| index);
+                            tab.doc.text_mut().insert_str(byte, &body);
+                            self.status = "Inserted snippet".into();
+                        }
+                    }
+                    Some(project_tools::Selected::AppCommand(command)) => {
+                        self.run_command(command, false);
+                    }
                     Some(project_tools::Selected::ToggleTerminal) => {
                         self.show_terminal = !self.show_terminal;
                     }
@@ -3339,6 +3535,7 @@ impl ForgeRoomApp {
     fn question_dialogs(&mut self) {
         if let Some(folder) = self.trust_prompt.take() {
             let (mut trust, mut restricted) = (false, false);
+            let focus_safe_choice = std::mem::take(&mut self.trust_focus_pending);
             egui::Window::new("Trust this folder?")
                 .collapsible(false)
                 .resizable(false)
@@ -3355,12 +3552,13 @@ impl ForgeRoomApp {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         trust = ui.button("Trust this folder").clicked();
-                        restricted = ui.button("Browse without Git and tools").clicked();
+                        let safe = ui.button("Browse without Git and tools");
+                        if focus_safe_choice {
+                            safe.request_focus();
+                        }
+                        restricted = safe.clicked();
                     });
                 });
-            if ui_escape(&self.egui_ctx) {
-                restricted = true;
-            }
             if trust {
                 let shown = folder.display().to_string();
                 let _ = settings::update(|settings| {
@@ -3712,12 +3910,14 @@ impl ForgeRoomApp {
                         if tab.external.is_some() {
                             title.push_str("  (!)");
                         }
+                        let full_title = title.clone();
+                        let title = rooms::short(&title, 28);
                         let galley = ui.painter().layout_no_wrap(
                             title,
                             egui::FontId::proportional(14.0),
                             theme::text(),
                         );
-                        let width = (galley.size().x + 56.0).max(110.0);
+                        let width = (galley.size().x + 56.0).clamp(110.0, 250.0);
                         let (rect, response) = ui.allocate_exact_size(
                             egui::vec2(width, TAB_HEIGHT),
                             egui::Sense::click(),
@@ -3732,6 +3932,7 @@ impl ForgeRoomApp {
                             egui::Sense::click(),
                         );
                         let hovered = response.hovered() || close_response.hovered();
+                        response.clone().on_hover_text(full_title);
                         if let Some(what) = tab.external {
                             response.clone().on_hover_text(format!(
                                 "This file was {what}. Saving would {}.",
@@ -3752,6 +3953,11 @@ impl ForgeRoomApp {
                             );
                         }
                         if is_active {
+                            painter.rect_filled(
+                                rect.shrink2(egui::vec2(1.0, 2.0)),
+                                5.0,
+                                theme::mix(theme::bg_editor(), theme::text(), 0.055),
+                            );
                             painter.rect_filled(
                                 egui::Rect::from_min_max(
                                     egui::pos2(rect.left() + 8.0, rect.bottom() - 2.0),
@@ -4187,32 +4393,66 @@ impl ForgeRoomApp {
 
     fn welcome(&mut self, ui: &mut egui::Ui) {
         let area = ui.available_rect_before_wrap();
-        brand::welcome_backdrop(&ui.painter_at(area), area);
-        let center_x = area.center().x;
-        let top = area.top() + (area.height() * 0.2).max(40.0);
+        let narrow = area.width() < 600.0;
+        let left = if narrow {
+            area.left() + 24.0
+        } else {
+            area.left() + (area.width() * 0.13).clamp(56.0, 180.0)
+        };
+        let width = (area.right() - left - 24.0).clamp(240.0, 420.0);
+        let top = area.top() + (area.height() * 0.16).clamp(40.0, 112.0);
         let painter = ui.painter_at(area);
-        brand::logo(&painter, egui::pos2(center_x, top + 36.0), 34.0);
-        brand::wordmark(&painter, egui::pos2(center_x, top + 104.0), 26.0);
+        mark::draw(&painter, egui::pos2(left + 14.0, top + 14.0), 24.0);
         painter.text(
-            egui::pos2(center_x, top + 134.0),
-            egui::Align2::CENTER_CENTER,
-            "E A R L Y   P R E V I E W",
-            egui::FontId::proportional(11.5),
+            egui::pos2(left + 38.0, top + 14.0),
+            egui::Align2::LEFT_CENTER,
+            "FORGE ROOM  /  EARLY PREVIEW",
+            egui::FontId::proportional(11.0),
             theme::text_dim(),
         );
-
-        let width = 320.0;
-        let mut y = top + 178.0;
-        let entries: [(&str, &str, bool); 3] = [
-            ("New File", "Ctrl+N", false),
-            ("Open File…", "Ctrl+O", false),
-            ("Open Folder…", "Ctrl+Shift+O", true),
-        ];
+        let has_workspace = self.workspace.is_some();
+        let title = if has_workspace {
+            "Continue in this workspace"
+        } else {
+            "Start with a folder"
+        };
+        painter.text(
+            egui::pos2(left, top + 72.0),
+            egui::Align2::LEFT_CENTER,
+            title,
+            egui::FontId::proportional(if narrow { 21.0 } else { 28.0 }),
+            theme::text(),
+        );
+        let detail = if narrow && !has_workspace {
+            "Open a project folder to begin."
+        } else if has_workspace {
+            "Open a file or create one to begin editing."
+        } else {
+            "Open a project folder to edit files, run tools, and use Rooms."
+        };
+        painter.text(
+            egui::pos2(left, top + 108.0),
+            egui::Align2::LEFT_CENTER,
+            detail,
+            egui::FontId::proportional(13.0),
+            theme::text_dim(),
+        );
+        let entries: [(&str, &str, bool); 3] = if has_workspace {
+            [
+                ("Go to File", "Ctrl+P", true),
+                ("New File", "Ctrl+N", false),
+                ("Open Folder…", "Ctrl+Shift+O", false),
+            ]
+        } else {
+            [
+                ("Open Folder…", "Ctrl+Shift+O", true),
+                ("Open File…", "Ctrl+O", false),
+                ("New File", "Ctrl+N", false),
+            ]
+        };
+        let mut y = top + 148.0;
         for (index, (label, keys, primary)) in entries.iter().enumerate() {
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(center_x - width / 2.0, y),
-                egui::vec2(width, 38.0),
-            );
+            let rect = egui::Rect::from_min_size(egui::pos2(left, y), egui::vec2(width, 40.0));
             let mut button = egui::Button::new(egui::RichText::new(*label).color(if *primary {
                 theme::button_text()
             } else {
@@ -4225,18 +4465,21 @@ impl ForgeRoomApp {
             }
             if ui.put(rect, button).clicked() {
                 match index {
-                    0 => self.new_file(),
+                    0 if has_workspace => self.run_command(Command::QuickOpen, false),
+                    0 => self.open_folder_dialog(),
+                    1 if has_workspace => self.new_file(),
                     1 => self.open_file_dialog(),
-                    _ => self.open_folder_dialog(),
+                    2 if has_workspace => self.open_folder_dialog(),
+                    _ => self.new_file(),
                 }
             }
-            y += 46.0;
+            y += 48.0;
         }
         painter.text(
-            egui::pos2(center_x, y + 22.0),
-            egui::Align2::CENTER_CENTER,
-            "Ctrl+Shift+P  Command Palette      Ctrl+P  Go to File",
-            egui::FontId::proportional(12.0),
+            egui::pos2(left, y + 24.0),
+            egui::Align2::LEFT_CENTER,
+            "Ctrl+Shift+P  Run a command",
+            egui::FontId::proportional(11.5),
             theme::text_dim(),
         );
     }
@@ -4256,15 +4499,14 @@ impl ForgeRoomApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
-                                // The AI agent comes first: it is the tab people open most, and the
-                                // last tabs are the ones a narrow dock cuts off.
+                                // Keep everyday Room work visible in narrow docks.
                                 for (tab, label) in [
-                                    (RightTab::Ai, "AI"),
                                     (RightTab::Room, "Team"),
                                     (RightTab::Chat, "Chat"),
-                                    (RightTab::Agents, "Agents"),
                                     (RightTab::Tasks, "Tasks"),
                                     (RightTab::Activity, "Activity"),
+                                    (RightTab::Agents, "Agents"),
+                                    (RightTab::Ai, "AI"),
                                 ] {
                                     if underline_tab_padded(
                                         ui,
@@ -4380,6 +4622,20 @@ impl ForgeRoomApp {
                         && let Some(terminal) = self.terminals.get_mut(self.active_terminal)
                     {
                         terminal.send(format!("{command}\r").as_bytes());
+                    }
+                }
+                if let Some(command) = self.ai.take_terminal_request() {
+                    if !self.trusted {
+                        self.status =
+                            "Trust this folder before starting an interactive agent".into();
+                    } else {
+                        self.show_terminal = true;
+                        self.bottom_tab = BottomTab::Terminal;
+                        if self.spawn_terminal(true)
+                            && let Some(terminal) = self.terminals.get_mut(self.active_terminal)
+                        {
+                            terminal.send(format!("{command}\r").as_bytes());
+                        }
                     }
                 }
             }
@@ -4706,6 +4962,8 @@ impl ForgeRoomApp {
             self.show_preview = !self.show_preview;
         }
         let mut open_activity = false;
+        let mut open_overdue = false;
+        let overdue = self.room.overdue_task_count();
         ui.horizontal_centered(|ui| {
             let (icon, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
             icons::draw(ui.painter(), "pulse", icon.center(), 18.0, theme::accent());
@@ -4722,6 +4980,14 @@ impl ForgeRoomApp {
                 );
                 return;
             };
+            if overdue > 0
+                && ui
+                    .add(egui::Button::new(format!("{overdue} overdue")).frame(false))
+                    .on_hover_text("Open overdue local Room tasks")
+                    .clicked()
+            {
+                open_overdue = true;
+            }
             if state.activity.is_empty() {
                 ui.label(egui::RichText::new("No activity yet").color(theme::text_dim()));
                 return;
@@ -4765,6 +5031,12 @@ impl ForgeRoomApp {
         });
         if open_activity {
             self.show_dock(RightTab::Activity);
+        }
+        if open_overdue {
+            self.room.show_overdue_tasks();
+            self.show_lobby = false;
+            self.show_right = true;
+            self.right_tab = RightTab::Tasks;
         }
     }
 
@@ -4838,6 +5110,7 @@ impl eframe::App for ForgeRoomApp {
     fn on_exit(&mut self) {
         let _ = self.lobby.finish();
         self.save_session(true);
+        self.ai.finish();
         // A normal exit already asked about every unsaved tab: nothing is left to recover.
         self.recovery.clear();
     }
@@ -4874,6 +5147,119 @@ impl eframe::App for ForgeRoomApp {
         }
         self.auto_save_tabs();
         self.poll_check();
+        self.poll_lsp_query();
+        if let Some(hover) = &self.lsp_hover {
+            let mut open = true;
+            egui::Window::new("Language hover")
+                .open(&mut open)
+                .resizable(true)
+                .show(&context, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(400.0)
+                        .show(ui, |ui| {
+                            ui.label(hover);
+                        });
+                });
+            if !open {
+                self.lsp_hover = None;
+            }
+        }
+        if !self.lsp_completions.is_empty() {
+            let mut open = true;
+            let mut chosen = None;
+            egui::Window::new("Language completions")
+                .open(&mut open)
+                .resizable(true)
+                .show(&context, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(400.0)
+                        .show(ui, |ui| {
+                            for (label, insert) in &self.lsp_completions {
+                                if ui.button(label).clicked() {
+                                    chosen = Some(insert.clone());
+                                }
+                            }
+                        });
+                });
+            if let Some(insert) = chosen {
+                if let Some((file, line, column)) = &self.lsp_completion_context
+                    && self.tabs.active_path() == Some(file.as_path())
+                    && self.cursor == (*line, *column)
+                    && let Some(tab) = self.tabs.active_tab()
+                    && !tab.readonly
+                {
+                    let text = tab.doc.text();
+                    let at = path_links::locate(text, *line, *column);
+                    let chars: Vec<char> = text.chars().collect();
+                    let mut start = at.min(chars.len());
+                    while start > 0
+                        && (chars[start - 1].is_ascii_alphanumeric() || chars[start - 1] == '_')
+                    {
+                        start -= 1;
+                    }
+                    let start_byte = text
+                        .char_indices()
+                        .nth(start)
+                        .map_or(text.len(), |(byte, _)| byte);
+                    let end_byte = text
+                        .char_indices()
+                        .nth(at)
+                        .map_or(text.len(), |(byte, _)| byte);
+                    tab.doc
+                        .text_mut()
+                        .replace_range(start_byte..end_byte, &insert);
+                    let end = start + insert.chars().count();
+                    self.pending_select = Some((end, end));
+                    self.focus_editor = true;
+                    self.status = "Inserted language completion".into();
+                } else {
+                    self.status = "Completion was stale; request it again".into();
+                }
+                open = false;
+            }
+            if !open {
+                self.lsp_completions.clear();
+                self.lsp_completion_context = None;
+            }
+        }
+        if !self.lsp_references.is_empty() {
+            let mut open = true;
+            let mut chosen = None;
+            egui::Window::new("Language references")
+                .open(&mut open)
+                .resizable(true)
+                .show(&context, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(450.0)
+                        .show(ui, |ui| {
+                            for (file, line, column) in &self.lsp_references {
+                                let label = self
+                                    .workspace
+                                    .as_ref()
+                                    .map(|workspace| {
+                                        file_ops::relative_display(&workspace.root, file)
+                                    })
+                                    .unwrap_or_else(|| file.display().to_string());
+                                if ui.button(format!("{label}:{line}:{column}")).clicked() {
+                                    chosen = Some((file.clone(), *line, *column));
+                                }
+                            }
+                        });
+                });
+            if let Some((file, line, column)) = chosen {
+                self.open_path(file.clone());
+                if self.tabs.active_path() == Some(tabs::normalize(&file).as_path())
+                    && let Some(tab) = self.tabs.tabs.get(self.tabs.active)
+                {
+                    let at = path_links::locate(tab.doc.text(), line, column);
+                    self.pending_select = Some((at, at));
+                    self.focus_editor = true;
+                }
+            }
+            if !open {
+                self.lsp_references.clear();
+            }
+        }
         self.save_session(false);
         self.autosave_recovery();
         if context.input(|input| input.viewport().close_requested())
@@ -4940,7 +5326,7 @@ impl eframe::App for ForgeRoomApp {
             .frame(egui::Frame::new().fill(theme::bg_activity()))
             .show(ui, |ui| self.activity_bar(ui));
 
-        if !self.show_lobby {
+        if !self.show_lobby && self.room.state().is_some() {
             egui::Panel::top("pulse")
                 .exact_size(34.0)
                 .resizable(false)
@@ -5133,6 +5519,16 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(theme_gallery::Outcome::Cancel(key)) => theme::set(&context, &key),
+            Some(theme_gallery::Outcome::Error(error)) => {
+                self.status = format!("Could not save theme: {error}");
+            }
+            Some(theme_gallery::Outcome::Removed) => {
+                if let Err(error) =
+                    settings::update(|settings| settings.theme = Some(theme::DEFAULT_THEME.into()))
+                {
+                    self.status = format!("Theme removed; could not save settings: {error}");
+                }
+            }
             None => {}
         }
 
@@ -5200,48 +5596,6 @@ fn title_chip(
         );
     }
     response
-}
-
-/// Overlapping initials circles for the people in the room, with a "+N" for the rest.
-fn avatar_stack(ui: &mut egui::Ui, names: &[&str]) {
-    let shown = names.len().min(4);
-    let extra = names.len() - shown;
-    let step = 20.0;
-    let width = 28.0 + step * shown.saturating_sub(1) as f32 + if extra > 0 { 30.0 } else { 0.0 };
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
-    let painter = ui.painter();
-    for (index, name) in names.iter().take(shown).enumerate() {
-        let center = egui::pos2(rect.left() + 14.0 + step * index as f32, rect.center().y);
-        let hue = name.bytes().fold(7u32, |acc, b| {
-            acc.wrapping_mul(31).wrapping_add(u32::from(b))
-        });
-        let palette = [
-            egui::Color32::from_rgb(88, 120, 170),
-            egui::Color32::from_rgb(120, 96, 160),
-            egui::Color32::from_rgb(90, 140, 120),
-            egui::Color32::from_rgb(170, 110, 90),
-        ];
-        painter.circle_filled(center, 13.0, theme::title_bar());
-        painter.circle_filled(center, 11.5, palette[hue as usize % palette.len()]);
-        let initial: String = name.chars().next().into_iter().collect();
-        painter.text(
-            center,
-            egui::Align2::CENTER_CENTER,
-            initial.to_uppercase(),
-            egui::FontId::proportional(12.0),
-            egui::Color32::WHITE,
-        );
-    }
-    if extra > 0 {
-        painter.text(
-            egui::pos2(rect.right() - 12.0, rect.center().y),
-            egui::Align2::CENTER_CENTER,
-            format!("+{extra}"),
-            egui::FontId::proportional(12.5),
-            theme::text(),
-        );
-    }
-    response.on_hover_text(names.join(", "));
 }
 
 /// Display name of the language for a file name, judged from its extension.

@@ -24,6 +24,7 @@ pub struct Problem {
 
 #[derive(Clone, Debug, Default)]
 pub struct Report {
+    pub source: &'static str,
     pub problems: Vec<Problem>,
     /// Why the check could not run or ended early (no cargo, a manifest that does not parse).
     pub failure: Option<String>,
@@ -125,7 +126,10 @@ fn resolve(base: &Path, name: &str) -> Option<PathBuf> {
 
 /// Run `cargo check` for the project in `root` and collect what it reports.
 pub fn check(root: &Path) -> Report {
-    let mut report = Report::default();
+    let mut report = Report {
+        source: "cargo check",
+        ..Report::default()
+    };
     let Some(manifest) = find_manifest(root) else {
         report.failure = Some("No Cargo.toml in this folder or the ones just below it".into());
         return report;

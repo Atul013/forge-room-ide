@@ -5,6 +5,7 @@ use eframe::egui::{self, Color32, FontFamily, FontId, TextStyle};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
+use std::{fs, path::PathBuf};
 
 pub const DEFAULT_THEME: &str = "forge-room";
 
@@ -250,7 +251,7 @@ fn build(entry: &CatalogEntry, file: &ThemeFile) -> Theme {
 }
 
 /// All bundled themes, in catalog order.
-pub fn all() -> &'static [Arc<Theme>] {
+fn bundled() -> &'static [Arc<Theme>] {
     static THEMES: OnceLock<Vec<Arc<Theme>>> = OnceLock::new();
     THEMES.get_or_init(|| {
         let catalog: CatalogFile = serde_json::from_str(CATALOG).expect("bundled theme catalog");
@@ -264,6 +265,137 @@ pub fn all() -> &'static [Arc<Theme>] {
             })
             .collect()
     })
+}
+
+fn imported() -> &'static RwLock<Vec<Arc<Theme>>> {
+    static IMPORTED: OnceLock<RwLock<Vec<Arc<Theme>>>> = OnceLock::new();
+    IMPORTED.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+pub fn all() -> Vec<Arc<Theme>> {
+    let mut themes = bundled().to_vec();
+    themes.extend(imported().read().expect("theme lock").iter().cloned());
+    themes
+}
+
+fn theme_home() -> PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("Forge Room Early Preview")
+}
+
+fn theme_path(key: &str) -> PathBuf {
+    theme_home().join("themes").join(format!("{key}.json"))
+}
+
+fn import_key(text: &str) -> String {
+    // A stable, filename-safe content fingerprint. Equal imports share one entry.
+    let hash = text.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("imported-{hash:016x}")
+}
+
+pub fn parse_import(text: &str) -> Result<Arc<Theme>, String> {
+    if text.len() > 512 * 1024 {
+        return Err("Theme exceeds 512 KB".into());
+    }
+    let file: ThemeFile =
+        serde_json::from_str(text).map_err(|e| format!("Invalid theme JSON: {e}"))?;
+    if !matches!(file.kind.as_str(), "dark" | "light") {
+        return Err("Theme type must be dark or light".into());
+    }
+    let name = serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
+        .filter(|name| {
+            !name.trim().is_empty() && name.len() <= 80 && !name.chars().any(char::is_control)
+        })
+        .ok_or("Theme needs a name of at most 80 characters")?;
+    for required in ["editor.background", "editor.foreground"] {
+        if file
+            .colors
+            .get(required)
+            .and_then(|value| parse_hex(value))
+            .is_none()
+        {
+            return Err(format!("Theme needs a valid {required} color"));
+        }
+    }
+    let entry = CatalogEntry {
+        key: import_key(text),
+        name,
+        mood: "Imported theme".into(),
+        description: "Local color theme".into(),
+        colors: Vec::new(),
+    };
+    Ok(Arc::new(build(&entry, &file)))
+}
+
+pub fn preview_import(context: &egui::Context, text: &str) -> Result<(), String> {
+    let parsed = parse_import(text)?;
+    let key = parsed.key.clone();
+    let mut library = imported().write().expect("theme lock");
+    library.retain(|theme| theme.key != key);
+    library.push(parsed);
+    drop(library);
+    set(context, &key);
+    Ok(())
+}
+
+pub fn discard_import(key: &str) {
+    imported()
+        .write()
+        .expect("theme lock")
+        .retain(|theme| theme.key != key);
+}
+
+pub fn save_import(text: &str) -> Result<(), String> {
+    let key = parse_import(text)?.key.clone();
+    let path = theme_path(&key);
+    fs::create_dir_all(path.parent().expect("theme parent")).map_err(|e| e.to_string())?;
+    fs::write(path, text).map_err(|e| e.to_string())
+}
+
+pub fn load_import() {
+    let mut library = Vec::new();
+    let legacy = theme_home().join("imported-theme.json");
+    if let Ok(text) = fs::read_to_string(&legacy)
+        && let Ok(mut theme) = parse_import(&text)
+    {
+        Arc::make_mut(&mut theme).key = "imported-theme".into();
+        library.push(theme);
+    }
+    if let Ok(entries) = fs::read_dir(theme_home().join("themes")) {
+        for entry in entries.flatten().take(100) {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "json")
+                || entry
+                    .metadata()
+                    .map_or(true, |meta| meta.len() > 512 * 1024)
+            {
+                continue;
+            }
+            if let Ok(text) = fs::read_to_string(&path)
+                && let Ok(theme) = parse_import(&text)
+                && path == theme_path(&theme.key)
+            {
+                library.push(theme);
+            }
+        }
+    }
+    library.sort_by(|left, right| left.name.cmp(&right.name));
+    *imported().write().expect("theme lock") = library;
+}
+
+pub fn remove_import(key: &str) -> Result<(), String> {
+    if !key.starts_with("imported-") {
+        return Err("Bundled themes cannot be removed".into());
+    }
+    fs::remove_file(theme_path(key)).map_err(|error| error.to_string())?;
+    discard_import(key);
+    Ok(())
 }
 
 pub fn find(key: &str) -> Option<Arc<Theme>> {
@@ -394,6 +526,19 @@ accessors!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imported_theme_requires_real_colors_and_name() {
+        let good = r##"{"name":"My Theme","type":"dark","colors":{"editor.background":"#102030","editor.foreground":"#ffffff"}}"##;
+        assert_eq!(parse_import(good).unwrap().name, "My Theme");
+        assert!(parse_import(&good.replace("#102030", "not-a-color")).is_err());
+        assert!(parse_import(&good.replace("My Theme", "")).is_err());
+        assert_ne!(
+            import_key(good),
+            import_key(&good.replace("My Theme", "Other Theme"))
+        );
+        assert!(import_key(good).starts_with("imported-"));
+    }
 
     #[test]
     fn parses_hex_colors() {
