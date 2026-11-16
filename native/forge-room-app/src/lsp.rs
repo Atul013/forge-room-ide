@@ -280,6 +280,7 @@ pub enum QueryKind {
     Hover,
     Definition,
     Completion,
+    References,
 }
 
 pub struct QueryAnswer {
@@ -287,6 +288,7 @@ pub struct QueryAnswer {
     pub message: String,
     pub location: Option<(std::path::PathBuf, usize, usize)>,
     pub completions: Vec<(String, String)>,
+    pub locations: Vec<(std::path::PathBuf, usize, usize)>,
 }
 
 fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
@@ -305,6 +307,7 @@ fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
                 message: message.chars().take(4000).collect(),
                 location: None,
                 completions: Vec::new(),
+                locations: Vec::new(),
             }
         }
         QueryKind::Definition => {
@@ -338,6 +341,7 @@ fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
                 },
                 location,
                 completions: Vec::new(),
+                locations: Vec::new(),
             }
         }
         QueryKind::Completion => {
@@ -368,6 +372,35 @@ fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
                 message: format!("{} completion(s)", completions.len()),
                 location: None,
                 completions,
+                locations: Vec::new(),
+            }
+        }
+        QueryKind::References => {
+            let locations = value
+                .get("result")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .take(500)
+                .filter_map(|item| {
+                    let path = path_from_uri(item.get("uri")?.as_str()?)?;
+                    if !path.canonicalize().ok()?.starts_with(root) {
+                        return None;
+                    }
+                    let start = item.get("range")?.get("start")?;
+                    Some((
+                        path,
+                        start.get("line")?.as_u64()? as usize + 1,
+                        start.get("character")?.as_u64()? as usize + 1,
+                    ))
+                })
+                .collect::<Vec<_>>();
+            QueryAnswer {
+                kind,
+                message: format!("{} in-workspace reference(s)", locations.len()),
+                location: None,
+                completions: Vec::new(),
+                locations,
             }
         }
     }
@@ -408,6 +441,7 @@ pub fn query(
         message,
         location: None,
         completions: Vec::new(),
+        locations: Vec::new(),
     };
     let Some((language_id, program, args)) = language(file) else {
         return failed("No configured language server for this file type".into());
@@ -509,10 +543,21 @@ pub fn query(
             QueryKind::Hover => "textDocument/hover",
             QueryKind::Definition => "textDocument/definition",
             QueryKind::Completion => "textDocument/completion",
+            QueryKind::References => "textDocument/references",
         };
-        write_message(&mut stdin, &json!({"jsonrpc":"2.0","id":2,"method":method,"params":{
+        let mut params = json!({
             "textDocument":{"uri":uri(&file)},"position":{"line":line.saturating_sub(1),"character":offset}
-        }})).map_err(|e| e.to_string())?;
+        });
+        match kind {
+            QueryKind::References => params["context"] = json!({"includeDeclaration":true}),
+            QueryKind::Completion => params["context"] = json!({"triggerKind":1}),
+            _ => {}
+        }
+        write_message(
+            &mut stdin,
+            &json!({"jsonrpc":"2.0","id":2,"method":method,"params":params}),
+        )
+        .map_err(|e| e.to_string())?;
         loop {
             let message = receiver
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
@@ -567,6 +612,8 @@ mod tests {
             "{}",
             completion.message
         );
+        let references = query(&root, &file, source, 2, 14, QueryKind::References);
+        assert!(references.locations.len() >= 2, "{}", references.message);
         let _ = std::fs::remove_dir_all(root);
     }
 }
