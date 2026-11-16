@@ -5,6 +5,7 @@
 use crate::agent::{self, Mode, Provider};
 use crate::{brand, fonts, icons, theme};
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Sense, Stroke};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
@@ -50,7 +51,7 @@ fn clipboard_image() -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Author {
     User,
     Assistant,
@@ -62,6 +63,7 @@ enum Author {
     Error,
 }
 
+#[derive(Serialize, Deserialize)]
 struct Message {
     author: Author,
     text: String,
@@ -96,6 +98,9 @@ pub struct State {
     noted_fresh_sessions: bool,
     image: Option<PathBuf>,
     image_is_temp: bool,
+    workspace: Option<PathBuf>,
+    chat_dirty: bool,
+    chat_saved: std::time::Instant,
 }
 
 impl Default for State {
@@ -119,6 +124,9 @@ impl Default for State {
             noted_fresh_sessions: false,
             image: None,
             image_is_temp: false,
+            workspace: None,
+            chat_dirty: false,
+            chat_saved: std::time::Instant::now(),
         }
     }
 }
@@ -139,7 +147,105 @@ const CLAUDE_MODELS: [(&str, &str); 5] = [
 ];
 const CODEX_MODELS: [(&str, &str); 1] = [("Default model", "")];
 
+#[derive(Serialize, Deserialize)]
+struct StoredChat {
+    messages: Vec<Message>,
+    session: Option<String>,
+}
+
+fn chat_path(workspace: &Path) -> PathBuf {
+    let name = workspace
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase();
+    let hash = name.bytes().fold(0xcbf29ce484222325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
+    });
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Forge Room Early Preview")
+        .join("agent-chats")
+        .join(format!("{hash:016x}.json"))
+}
+
 impl State {
+    pub fn set_workspace(&mut self, workspace: &Path) {
+        if self.workspace.as_deref() == Some(workspace) {
+            return;
+        }
+        self.run = None;
+        self.started = None;
+        self.finish();
+        self.messages.clear();
+        self.session = None;
+        self.noted_fresh_sessions = false;
+        self.workspace = Some(workspace.to_path_buf());
+        let path = chat_path(workspace);
+        if std::fs::metadata(&path).is_ok_and(|meta| meta.len() <= 2 * 1024 * 1024)
+            && let Ok(bytes) = std::fs::read(path)
+            && let Ok(saved) = serde_json::from_slice::<StoredChat>(&bytes)
+        {
+            self.messages = saved
+                .messages
+                .into_iter()
+                .take(200)
+                .filter(|m| m.text.len() <= 20_000)
+                .collect();
+            self.session = saved.session;
+        }
+        self.chat_dirty = false;
+        self.chat_saved = std::time::Instant::now();
+    }
+
+    fn save_chat(&mut self) {
+        if !self.chat_dirty {
+            return;
+        }
+        let Some(workspace) = &self.workspace else {
+            return;
+        };
+        let path = chat_path(workspace);
+        let messages = self
+            .messages
+            .iter()
+            .rev()
+            .take(200)
+            .rev()
+            .map(|m| Message {
+                author: m.author,
+                text: m.text.chars().take(20_000).collect(),
+            })
+            .collect();
+        let mut saved = StoredChat {
+            messages,
+            session: self.session.clone(),
+        };
+        let bytes = loop {
+            let Ok(bytes) = serde_json::to_vec(&saved) else {
+                return;
+            };
+            if bytes.len() <= 2 * 1024 * 1024 {
+                break bytes;
+            }
+            if saved.messages.is_empty() {
+                return;
+            }
+            saved.messages.remove(0);
+        };
+        if let Some(parent) = path.parent()
+            && std::fs::create_dir_all(parent).is_ok()
+            && std::fs::write(path, bytes).is_ok()
+        {
+            self.chat_dirty = false;
+            self.chat_saved = std::time::Instant::now();
+        }
+    }
+
+    pub fn finish(&mut self) {
+        self.save_chat();
+        self.clear_image();
+    }
     /// The agent panel as the user left it (read from the settings file).
     pub fn from_settings(settings: &crate::settings::Settings) -> Self {
         let mut state = State {
@@ -210,6 +316,7 @@ impl State {
             author: Author::Error,
             text: text.into(),
         });
+        self.chat_dirty = true;
     }
 
     fn note(&mut self, text: impl Into<String>) {
@@ -217,6 +324,7 @@ impl State {
             author: Author::Note,
             text: text.into(),
         });
+        self.chat_dirty = true;
     }
 
     fn program(&mut self, provider: Provider) -> Option<PathBuf> {
@@ -314,6 +422,7 @@ impl State {
                         text
                     },
                 });
+                self.chat_dirty = true;
                 self.input.clear();
                 self.focus_input = true;
             }
@@ -324,11 +433,18 @@ impl State {
     /// Take what the running agent has said since the last frame. True when the run just ended
     /// (files may have changed, so the caller refreshes what shows them).
     pub fn poll(&mut self) -> bool {
+        if self.chat_dirty && self.chat_saved.elapsed() >= std::time::Duration::from_secs(2) {
+            self.save_chat();
+        }
         let Some(run) = &mut self.run else {
             return false;
         };
         let mut finished = false;
-        for event in run.poll() {
+        let events = run.poll();
+        if !events.is_empty() {
+            self.chat_dirty = true;
+        }
+        for event in events {
             match event {
                 agent::Event::Text(text) => match self.messages.last_mut() {
                     Some(last) if last.author == Author::Assistant => {
@@ -378,6 +494,7 @@ impl State {
             self.run = None;
             self.started = None;
             self.clear_image();
+            self.save_chat();
         }
         finished
     }
@@ -399,6 +516,8 @@ impl State {
         self.noted_fresh_sessions = false;
         self.confirm_full = false;
         self.clear_image();
+        self.chat_dirty = true;
+        self.save_chat();
     }
 
     fn clear_image(&mut self) {
@@ -1254,6 +1373,24 @@ fn composer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_returns_for_its_folder_and_new_chat_clears_it() {
+        let folder = std::env::temp_dir().join(format!("forge-chat-{}", std::process::id()));
+        let mut first = State::default();
+        first.set_workspace(&folder);
+        first.note("saved for this folder");
+        first.finish();
+        let mut second = State::default();
+        second.set_workspace(&folder);
+        assert_eq!(second.messages.len(), 1);
+        assert_eq!(second.messages[0].text, "saved for this folder");
+        second.new_chat();
+        let mut third = State::default();
+        third.set_workspace(&folder);
+        assert!(third.messages.is_empty());
+        let _ = std::fs::remove_file(chat_path(&folder));
+    }
 
     #[test]
     fn sending_needs_a_folder_and_trust_and_says_why_not() {
