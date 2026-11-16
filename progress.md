@@ -1,3 +1,5 @@
+**16 November Atul QA email follow-on (PR pending):** AI Agent now accepts a bounded PNG/JPEG/WebP file and Windows clipboard image for Codex CLI `--image`, shows the attachment and removes temporary pasted images after use. Other providers receive an explicit unsupported message. Terminal painting anchors non-ASCII glyphs to individual cells to prevent later text from drifting. Focused CLI-argument test, app check and warning-free Clippy passed. Clipboard paste, live Codex vision, and visual glyph behavior still need hands-on Windows acceptance; other email gaps remain open.
+
 **16 November LSP references follow-on (stacked PR pending):** Command palette can request in-workspace references from a language server and navigate a bounded result list. The request handles LSP method-specific context correctly. A real rust-analyzer probe found both declaration and use; diagnostics, definition, and completion probes also passed, with app check and Clippy. Desktop interaction remains open.
 
 **16 November LSP completion follow-on (PR pending):** Command palette can request language-server completions for the active buffer, show a bounded list, and insert a chosen plain-text completion at the cursor when the file and position still match. Snippet-format completions are skipped. A real rust-analyzer probe returned the expected function completion; app check and Clippy passed. Desktop behavior and other servers remain open.
@@ -603,6 +605,7 @@ Seven original concept PNGs from Downloads are preserved in [`docs/design/concep
 1. **@ZayedBH:** perform the Phase 1 room, theme and accessibility trial in a disposable project; record defects and fix reproducible issues in your areas.
 2. **@Atul013:** inspect the completed Windows package artifact evidence, perform the editor, Git, terminal and interactive installer trial, and fix reproducible issues in his areas.
 3. **Together:** review failures, choose the first bounded fix, and close the Phase 1 gate before Phase 2.
+
 
 
 

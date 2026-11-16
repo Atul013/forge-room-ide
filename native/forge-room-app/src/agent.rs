@@ -162,6 +162,8 @@ pub struct Request {
     pub cwd: PathBuf,
     /// The conversation to continue, when the provider can.
     pub session: Option<String>,
+    /// Optional local image for Codex's `--image` input.
+    pub image: Option<PathBuf>,
 }
 
 /// What a run reports, in order.
@@ -243,6 +245,9 @@ pub fn arguments(request: &Request) -> Vec<String> {
                     "-c".into(),
                     format!("model_reasoning_effort={}", request.effort),
                 ]);
+            }
+            if let Some(image) = &request.image {
+                args.extend(["--image".into(), image.to_string_lossy().into_owned()]);
             }
             // The prompt is read from standard input.
             args.push("-".into());
@@ -774,6 +779,7 @@ mod tests {
             prompt: "hello".into(),
             cwd: PathBuf::from("."),
             session: session.map(String::from),
+            image: None,
         }
     }
 
@@ -802,6 +808,18 @@ mod tests {
         assert!(!valid_model("--dangerously-skip-permissions"));
         assert!(!valid_model("-x"));
         assert!(valid_model("claude-opus-4-1"));
+    }
+
+    #[test]
+    fn codex_image_is_a_separate_argument() {
+        let mut request = request(Provider::Codex, Mode::Edit, None);
+        request.image = Some(PathBuf::from(r"C:\Temp\pasted image.png"));
+        let args = arguments(&request);
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--image", r"C:\Temp\pasted image.png"])
+        );
+        assert_eq!(args.last().map(String::as_str), Some("-"));
     }
 
     #[test]
@@ -976,6 +994,7 @@ mod tests {
             prompt: "say hi".into(),
             cwd: dir.clone(),
             session: None,
+            image: None,
         };
         let mut run = start(&script, &request, || {}).unwrap();
         let mut seen = Vec::new();
@@ -1025,6 +1044,7 @@ mod tests {
             prompt: "go".into(),
             cwd: dir.clone(),
             session: None,
+            image: None,
         };
         let started = std::time::Instant::now();
         let mut run = start(&script, &request, || {}).unwrap();
