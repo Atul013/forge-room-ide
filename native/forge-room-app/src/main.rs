@@ -253,6 +253,7 @@ struct ForgeRoomApp {
     lsp_hover: Option<String>,
     lsp_completion_context: Option<(PathBuf, usize, usize)>,
     lsp_completions: Vec<(String, String)>,
+    lsp_references: Vec<(PathBuf, usize, usize)>,
     /// The last session written to disk, and when it was last compared with the window.
     session_saved: session::Session,
     session_checked: std::time::Instant,
@@ -404,6 +405,7 @@ impl ForgeRoomApp {
             lsp_hover: None,
             lsp_completion_context: None,
             lsp_completions: Vec::new(),
+            lsp_references: Vec::new(),
             session_saved: session::Session::default(),
             session_checked: std::time::Instant::now(),
             auto_saves: autosave::Tracker::default(),
@@ -937,6 +939,7 @@ impl ForgeRoomApp {
             Command::LspHover => self.start_lsp_query(lsp::QueryKind::Hover),
             Command::LspDefinition => self.start_lsp_query(lsp::QueryKind::Definition),
             Command::LspCompletion => self.start_lsp_query(lsp::QueryKind::Completion),
+            Command::LspReferences => self.start_lsp_query(lsp::QueryKind::References),
             Command::CloseTab => {
                 if !self.tabs.tabs.is_empty() {
                     self.request_close(self.tabs.active);
@@ -1344,6 +1347,8 @@ impl ForgeRoomApp {
                 self.lsp_hover = Some(answer.message);
             } else if matches!(answer.kind, lsp::QueryKind::Completion) {
                 self.lsp_completions = answer.completions;
+            } else if matches!(answer.kind, lsp::QueryKind::References) {
+                self.lsp_references = answer.locations;
             }
         } else if self.lsp_query.take_failed() {
             self.status = "Language server query stopped unexpectedly".into();
@@ -5177,6 +5182,44 @@ impl eframe::App for ForgeRoomApp {
             if !open {
                 self.lsp_completions.clear();
                 self.lsp_completion_context = None;
+            }
+        }
+        if !self.lsp_references.is_empty() {
+            let mut open = true;
+            let mut chosen = None;
+            egui::Window::new("Language references")
+                .open(&mut open)
+                .resizable(true)
+                .show(&context, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(450.0)
+                        .show(ui, |ui| {
+                            for (file, line, column) in &self.lsp_references {
+                                let label = self
+                                    .workspace
+                                    .as_ref()
+                                    .map(|workspace| {
+                                        file_ops::relative_display(&workspace.root, file)
+                                    })
+                                    .unwrap_or_else(|| file.display().to_string());
+                                if ui.button(format!("{label}:{line}:{column}")).clicked() {
+                                    chosen = Some((file.clone(), *line, *column));
+                                }
+                            }
+                        });
+                });
+            if let Some((file, line, column)) = chosen {
+                self.open_path(file.clone());
+                if self.tabs.active_path() == Some(tabs::normalize(&file).as_path())
+                    && let Some(tab) = self.tabs.tabs.get(self.tabs.active)
+                {
+                    let at = path_links::locate(tab.doc.text(), line, column);
+                    self.pending_select = Some((at, at));
+                    self.focus_editor = true;
+                }
+            }
+            if !open {
+                self.lsp_references.clear();
             }
         }
         self.save_session(false);

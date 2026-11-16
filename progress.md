@@ -1,3 +1,5 @@
+**16 November LSP references follow-on (stacked PR pending):** Command palette can request in-workspace references from a language server and navigate a bounded result list. The request handles LSP method-specific context correctly. A real rust-analyzer probe found both declaration and use; diagnostics, definition, and completion probes also passed, with app check and Clippy. Desktop interaction remains open.
+
 **16 November LSP completion follow-on (PR pending):** Command palette can request language-server completions for the active buffer, show a bounded list, and insert a chosen plain-text completion at the cursor when the file and position still match. Snippet-format completions are skipped. A real rust-analyzer probe returned the expected function completion; app check and Clippy passed. Desktop behavior and other servers remain open.
 
 **16 November LSP navigation follow-on (stacked PR pending):** Command palette now offers language-server hover and Go to Definition for trusted workspace files. Requests use the editor cursor and current buffer, wait briefly for server analysis, and constrain definition targets to the workspace. A real rust-analyzer probe resolved a function definition and reported a diagnostic. App check and Clippy passed; desktop interaction and other servers remain open.
@@ -601,6 +603,7 @@ Seven original concept PNGs from Downloads are preserved in [`docs/design/concep
 1. **@ZayedBH:** perform the Phase 1 room, theme and accessibility trial in a disposable project; record defects and fix reproducible issues in your areas.
 2. **@Atul013:** inspect the completed Windows package artifact evidence, perform the editor, Git, terminal and interactive installer trial, and fix reproducible issues in his areas.
 3. **Together:** review failures, choose the first bounded fix, and close the Phase 1 gate before Phase 2.
+
 
 
 
