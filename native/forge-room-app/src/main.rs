@@ -22,6 +22,7 @@ mod gutter;
 mod icons;
 mod line_ops;
 mod lobby;
+mod lsp;
 mod mark;
 mod palette;
 mod path_links;
@@ -1255,18 +1256,48 @@ impl ForgeRoomApp {
         }
     }
 
+    fn start_lsp_check(&mut self) {
+        let Some(root) = self.repo_root() else {
+            self.status = "Open a folder to use a language server".into();
+            return;
+        };
+        if !self.trusted {
+            self.status = "Trust this folder before starting a language server".into();
+            return;
+        }
+        let Some(tab) = self.tabs.active_tab() else {
+            self.status = "Open a source file first".into();
+            return;
+        };
+        let Some(file) = tab.doc.path().map(|path| path.to_path_buf()) else {
+            self.status = "Save this file before checking it with a language server".into();
+            return;
+        };
+        let text = tab.doc.text().to_owned();
+        let context = self.egui_ctx.clone();
+        if self
+            .checking
+            .request(&context, move || lsp::check(&root, &file, &text))
+        {
+            self.status = "Running language server diagnostics…".into();
+        }
+    }
+
     /// Take a finished check.
     fn poll_check(&mut self) {
         if let Some(report) = self.checking.poll() {
             let errors = report.problems.iter().filter(|p| p.error).count();
             let warnings = report.problems.len() - errors;
             self.status = match &report.failure {
-                Some(failure) => format!("cargo check: {failure}"),
-                None => format!("cargo check: {errors} error(s), {warnings} warning(s)"),
+                Some(failure) => format!("{}: {failure}", report.source),
+                None => format!(
+                    "{}: {errors} error(s), {warnings} warning(s)",
+                    report.source
+                ),
             };
             self.problems = Some(report);
         } else if self.checking.take_failed() {
-            self.status = "cargo check stopped unexpectedly".into();
+            self.status = "The diagnostic check stopped unexpectedly".into();
         }
     }
 
@@ -1662,6 +1693,7 @@ impl ForgeRoomApp {
     /// each opening its file at the right line.
     fn problems_view(&mut self, ui: &mut egui::Ui) {
         let mut run = false;
+        let mut run_lsp = false;
         let mut open: Option<diagnostics::Problem> = None;
         ui.horizontal(|ui| {
             ui.add_space(12.0);
@@ -1671,6 +1703,12 @@ impl ForgeRoomApp {
                 .clicked()
             {
                 run = true;
+            }
+            if ui
+                .add_enabled(!busy, egui::Button::new("Run language server"))
+                .clicked()
+            {
+                run_lsp = true;
             }
             if busy {
                 ui.spinner();
@@ -1705,6 +1743,9 @@ impl ForgeRoomApp {
             });
             if run {
                 self.start_check();
+            }
+            if run_lsp {
+                self.start_lsp_check();
             }
             return;
         };
@@ -1754,6 +1795,9 @@ impl ForgeRoomApp {
         }
         if run {
             self.start_check();
+        }
+        if run_lsp {
+            self.start_lsp_check();
         }
     }
 
