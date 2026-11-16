@@ -732,10 +732,8 @@ impl ForgeRoomApp {
             let previous = self.repo_root();
             self.explorer_state = explorer::State::default();
             self.problems = None;
-            if previous.as_ref().is_some_and(|old| *old != folder) {
-                // The agent's conversation belongs to the folder it ran in.
-                self.ai.new_chat();
-            }
+            // Keep each folder's local agent conversation separate and restore it on return.
+            self.ai.set_workspace(&folder);
             self.workspace = Some(Workspace::new(normalize(&path)));
             self.show_sidebar = true;
             self.clear_git_state();
@@ -5073,7 +5071,7 @@ impl eframe::App for ForgeRoomApp {
     fn on_exit(&mut self) {
         let _ = self.lobby.finish();
         self.save_session(true);
-        self.ai.new_chat();
+        self.ai.finish();
         // A normal exit already asked about every unsaved tab: nothing is left to recover.
         self.recovery.clear();
     }
