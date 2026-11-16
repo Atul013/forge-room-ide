@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-16 Codex: Added command-palette LSP hover and Go to Definition on feat/native-lsp-navigation, stacked after diagnostics. Real rust-analyzer definition probe passed; app check and Clippy passed. Desktop and other servers remain unverified.
+
 - 2026-11-16 Codex: Started I02 native LSP connection on feat/native-lsp-diagnostics. On-demand Problems diagnostics are wired for Rust, Python and TypeScript/JavaScript servers; real rust-analyzer diagnostic probe, app check and Clippy passed. Desktop and other servers remain unverified.
 
 - 2026-11-16 Codex: Merged PR #46 after Windows CI passed. Added bounded plain-text snippet import and editor insertion on feat/native-snippet-import; app check and Clippy passed, desktop acceptance pending.
@@ -157,5 +159,6 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 - 2026-11-03 Codex: started mailbox T13 read-only review at 90727c5 and alpha.2 checksum/icon verification; no Rust/packaging edits or commits.
 
 - 2026-11-03 Codex: completed T13 read-only review in design-assets/forge-room-ui-spec/CODE_REVIEW_NOTES_3.md; six confirmed findings + one plausible race,91 app tests passed/5 ignored,8 probes passed, alpha.2 hashes/icons verified. C7 handed to Claude. Registered Atul-requested recurring two-minute mailbox task; MAILBOX_POLLING.md records setup and stop. No app/packaging source edits or repository commits.
+
 
 

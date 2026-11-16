@@ -57,6 +57,8 @@ pub enum Command {
     GitStashApply,
     ToggleTerminal,
     CheckProject,
+    LspHover,
+    LspDefinition,
     TrustFolder,
     OpenAgent,
     ResetLayout,
@@ -66,6 +68,8 @@ pub enum Command {
 
 /// (command, title shown in the palette, shortcut hint)
 pub const ALL: &[(Command, &str, &str)] = &[
+    (Command::LspHover, "Language: Show Hover", ""),
+    (Command::LspDefinition, "Language: Go to Definition", ""),
     (Command::NewFile, "File: New File", "Ctrl+N"),
     (Command::OpenFile, "File: Open File…", "Ctrl+O"),
     (Command::OpenFolder, "File: Open Folder…", "Ctrl+Shift+O"),

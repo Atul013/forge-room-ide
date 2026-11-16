@@ -275,6 +275,226 @@ fn answer_server_request(writer: &mut impl Write, message: &Value) {
     let _ = write_message(writer, &json!({"jsonrpc":"2.0","id":id,"result":result}));
 }
 
+#[derive(Clone, Copy)]
+pub enum QueryKind {
+    Hover,
+    Definition,
+}
+
+pub struct QueryAnswer {
+    pub kind: QueryKind,
+    pub message: String,
+    pub location: Option<(std::path::PathBuf, usize, usize)>,
+}
+
+fn query_result(kind: QueryKind, value: &Value, root: &Path) -> QueryAnswer {
+    match kind {
+        QueryKind::Hover => {
+            let contents = &value["result"]["contents"];
+            let message = if let Some(text) = contents.as_str() {
+                text.to_owned()
+            } else if let Some(text) = contents.get("value").and_then(Value::as_str) {
+                text.to_owned()
+            } else {
+                "No hover information at cursor".into()
+            };
+            QueryAnswer {
+                kind,
+                message: message.chars().take(4000).collect(),
+                location: None,
+            }
+        }
+        QueryKind::Definition => {
+            let item = value
+                .get("result")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items.first())
+                .or_else(|| value.get("result"));
+            let location = item.and_then(|v| {
+                let target = v.get("targetUri").or_else(|| v.get("uri"))?.as_str()?;
+                let path = path_from_uri(target)?;
+                if !path.canonicalize().ok()?.starts_with(root) {
+                    return None;
+                }
+                let start = v
+                    .get("targetSelectionRange")
+                    .or_else(|| v.get("range"))?
+                    .get("start")?;
+                Some((
+                    path,
+                    start.get("line")?.as_u64()? as usize + 1,
+                    start.get("character")?.as_u64()? as usize + 1,
+                ))
+            });
+            QueryAnswer {
+                kind,
+                message: if location.is_some() {
+                    "Definition found".into()
+                } else {
+                    "No in-workspace definition at cursor".into()
+                },
+                location,
+            }
+        }
+    }
+}
+
+fn path_from_uri(uri: &str) -> Option<std::path::PathBuf> {
+    let path = uri.strip_prefix("file://")?;
+    let mut bytes = Vec::new();
+    let mut input = path.as_bytes().iter().copied();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let a = (input.next()? as char).to_digit(16)?;
+            let b = (input.next()? as char).to_digit(16)?;
+            bytes.push((a * 16 + b) as u8);
+        } else {
+            bytes.push(byte);
+        }
+    }
+    let decoded = String::from_utf8(bytes).ok()?;
+    #[cfg(windows)]
+    let decoded = decoded
+        .strip_prefix('/')
+        .unwrap_or(&decoded)
+        .replace('/', "\\");
+    Some(std::path::PathBuf::from(decoded))
+}
+
+pub fn query(
+    root: &Path,
+    file: &Path,
+    text: &str,
+    line: usize,
+    column: usize,
+    kind: QueryKind,
+) -> QueryAnswer {
+    let failed = |message: String| QueryAnswer {
+        kind,
+        message,
+        location: None,
+    };
+    let Some((language_id, program, args)) = language(file) else {
+        return failed("No configured language server for this file type".into());
+    };
+    let (Ok(root), Ok(file)) = (root.canonicalize(), file.canonicalize()) else {
+        return failed("Folder or file is unavailable".into());
+    };
+    if !file.starts_with(&root) {
+        return failed("File is outside the trusted folder".into());
+    }
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => return failed(format!("{program} is unavailable: {error}")),
+    };
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let stdout = child.stdout.take().expect("piped stdout");
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        while let Ok(message) = read_message(&mut reader) {
+            if sender.send(message).is_err() {
+                break;
+            }
+        }
+    });
+    let result = (|| -> Result<QueryAnswer, String> {
+        write_message(&mut stdin, &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "processId":std::process::id(),"rootUri":uri(&root),"capabilities":{},"workspaceFolders":null
+        }})).map_err(|e| e.to_string())?;
+        let deadline = Instant::now() + LIMIT;
+        loop {
+            let message = receiver
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|_| format!("{program} did not initialize"))?;
+            if message.get("id") == Some(&json!(1)) {
+                if message.get("error").is_some() {
+                    return Err(format!("{program} rejected initialization"));
+                }
+                break;
+            }
+            answer_server_request(&mut stdin, &message);
+        }
+        write_message(
+            &mut stdin,
+            &json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+        )
+        .map_err(|e| e.to_string())?;
+        write_message(
+            &mut stdin,
+            &json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+                "textDocument":{"uri":uri(&file),"languageId":language_id,"version":1,"text":text}
+            }}),
+        )
+        .map_err(|e| e.to_string())?;
+        let ready_deadline = Instant::now() + Duration::from_secs(10);
+        let file_uri = uri(&file);
+        loop {
+            let remaining = ready_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let Ok(message) = receiver.recv_timeout(remaining) else {
+                break;
+            };
+            if message.get("method").and_then(Value::as_str)
+                == Some("textDocument/publishDiagnostics")
+                && message
+                    .get("params")
+                    .and_then(|p| p.get("uri"))
+                    .and_then(Value::as_str)
+                    == Some(file_uri.as_str())
+                && !parse_diagnostics(&message, &file).is_empty()
+            {
+                break;
+            }
+            answer_server_request(&mut stdin, &message);
+        }
+        let offset = text
+            .lines()
+            .nth(line.saturating_sub(1))
+            .unwrap_or("")
+            .chars()
+            .take(column.saturating_sub(1))
+            .map(char::len_utf16)
+            .sum::<usize>();
+        let method = match kind {
+            QueryKind::Hover => "textDocument/hover",
+            QueryKind::Definition => "textDocument/definition",
+        };
+        write_message(&mut stdin, &json!({"jsonrpc":"2.0","id":2,"method":method,"params":{
+            "textDocument":{"uri":uri(&file)},"position":{"line":line.saturating_sub(1),"character":offset}
+        }})).map_err(|e| e.to_string())?;
+        loop {
+            let message = receiver
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|_| format!("{program} did not answer {method}"))?;
+            if message.get("id") == Some(&json!(2)) {
+                if let Some(error) = message.get("error") {
+                    return Err(format!("{program}: {error}"));
+                }
+                return Ok(query_result(kind, &message, &root));
+            }
+            answer_server_request(&mut stdin, &message);
+        }
+    })();
+    let _ = child.kill();
+    let _ = child.wait();
+    result.unwrap_or_else(failed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,11 +510,18 @@ mod tests {
         )
         .unwrap();
         let file = root.join("src/main.rs");
-        let source = "fn main() { let x: i32 = true; }\n";
+        let source = "fn helper() {}\nfn main() { helper(); let x: i32 = true; }\n";
         std::fs::write(&file, source).unwrap();
         let report = check(&root, &file, source);
         assert!(report.failure.is_none(), "{:?}", report.failure);
         assert!(report.problems.iter().any(|problem| problem.error));
+        let definition = query(&root, &file, source, 2, 14, QueryKind::Definition);
+        assert_eq!(
+            definition.location.as_ref().map(|(_, line, _)| *line),
+            Some(1),
+            "{}",
+            definition.message
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }
