@@ -249,6 +249,8 @@ struct ForgeRoomApp {
     /// The last `cargo check`, and the worker that makes the next one.
     problems: Option<diagnostics::Report>,
     checking: background::Latest<diagnostics::Report>,
+    lsp_query: background::Latest<lsp::QueryAnswer>,
+    lsp_hover: Option<String>,
     /// The last session written to disk, and when it was last compared with the window.
     session_saved: session::Session,
     session_checked: std::time::Instant,
@@ -396,6 +398,8 @@ impl ForgeRoomApp {
             auto_save: settings::load().auto_save.unwrap_or(false),
             problems: None,
             checking: background::Latest::default(),
+            lsp_query: background::Latest::default(),
+            lsp_hover: None,
             session_saved: session::Session::default(),
             session_checked: std::time::Instant::now(),
             auto_saves: autosave::Tracker::default(),
@@ -926,6 +930,8 @@ impl ForgeRoomApp {
             Command::OpenFolder => self.open_folder_dialog(),
             Command::Save => self.save_active(false),
             Command::SaveAs => self.save_active(true),
+            Command::LspHover => self.start_lsp_query(lsp::QueryKind::Hover),
+            Command::LspDefinition => self.start_lsp_query(lsp::QueryKind::Definition),
             Command::CloseTab => {
                 if !self.tabs.tabs.is_empty() {
                     self.request_close(self.tabs.active);
@@ -1280,6 +1286,55 @@ impl ForgeRoomApp {
             .request(&context, move || lsp::check(&root, &file, &text))
         {
             self.status = "Running language server diagnostics…".into();
+        }
+    }
+
+    fn start_lsp_query(&mut self, kind: lsp::QueryKind) {
+        let Some(root) = self.repo_root() else {
+            self.status = "Open a folder first".into();
+            return;
+        };
+        if !self.trusted {
+            self.status = "Trust this folder before starting a language server".into();
+            return;
+        }
+        let Some(tab) = self.tabs.active_tab() else {
+            self.status = "Open a source file first".into();
+            return;
+        };
+        let Some(file) = tab.doc.path().map(|path| path.to_path_buf()) else {
+            self.status = "Save this file first".into();
+            return;
+        };
+        let text = tab.doc.text().to_owned();
+        let (line, column) = self.cursor;
+        let context = self.egui_ctx.clone();
+        if self.lsp_query.request(&context, move || {
+            lsp::query(&root, &file, &text, line, column, kind)
+        }) {
+            self.status = "Querying language server…".into();
+        }
+    }
+
+    fn poll_lsp_query(&mut self) {
+        if let Some(answer) = self.lsp_query.poll() {
+            self.status = answer.message.clone();
+            if let Some((file, line, column)) = answer.location {
+                self.open_path(file.clone());
+                if self.tabs.active_path() == Some(tabs::normalize(&file).as_path())
+                    && let Some(tab) = self.tabs.tabs.get(self.tabs.active)
+                {
+                    let at = path_links::locate(tab.doc.text(), line, column);
+                    self.pending_select = Some((at, at));
+                    self.focus_editor = true;
+                }
+            } else if matches!(answer.kind, lsp::QueryKind::Hover)
+                && answer.message != "No hover information at cursor"
+            {
+                self.lsp_hover = Some(answer.message);
+            }
+        } else if self.lsp_query.take_failed() {
+            self.status = "Language server query stopped unexpectedly".into();
         }
     }
 
@@ -5037,6 +5092,23 @@ impl eframe::App for ForgeRoomApp {
         }
         self.auto_save_tabs();
         self.poll_check();
+        self.poll_lsp_query();
+        if let Some(hover) = &self.lsp_hover {
+            let mut open = true;
+            egui::Window::new("Language hover")
+                .open(&mut open)
+                .resizable(true)
+                .show(&context, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(400.0)
+                        .show(ui, |ui| {
+                            ui.label(hover);
+                        });
+                });
+            if !open {
+                self.lsp_hover = None;
+            }
+        }
         self.save_session(false);
         self.autosave_recovery();
         if context.input(|input| input.viewport().close_requested())
