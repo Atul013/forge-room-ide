@@ -58,8 +58,8 @@ agents, join approval queue, relay, discovery or hosted service here.
 - Invites are single-use, expire after at most one hour (UI: five minutes), and are bounded
   to 128 active grants. Invite expiry affects new joins; it does not expire a joined session.
   The UI retains at most 32 issued invites for individual revocation.
-- Sessions expire one hour after Join. Successful authenticated requests refresh the
-  ten-second presence lease, but do not extend the session deadline. Offline roster entries
+- Sessions expire after one hour without an authenticated request; active clients renew that idle deadline. Successful authenticated requests refresh the
+  ten-second presence lease, and extend the idle session deadline. Offline roster entries
   remain until session expiry, Leave or revocation. The room permits at most 32 sessions,
   including the host's normal authenticated client.
 - Reconnect uses the same in-memory session and cursor on a fresh TCP/TLS connection.
@@ -164,3 +164,7 @@ Independent process tests check recipient/third-client isolation, secret/travers
 unauthorized revocation, sender revocation and sender-session revocation. Local review tests
 check revision mismatch, no write on receipt, dirty-buffer rejection, apply and undo. Native
 desktop and two-machine privacy/revocation acceptance remain open.
+
+Rejected message/task drafts are retained without overwriting newer input. Evidence drafts stay
+scoped to their task, and duplicate acceptance criteria are rejected before creating a task.
+A hidden panel does not discard acknowledged rejection records; they drain when it is reopened.

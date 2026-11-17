@@ -39,7 +39,9 @@ process cancellation and retains workspace files/branch. Workspace records persi
 Worktrees/branches remain until the user removes them through Git. If the folder/app is closed
 while Git checkout is still running, Git may finish its registration; inspect `git worktree list`
 to recover an interrupted creation that did not reach the UI record save. Automatic cleanup,
-committing/integration, durable edit checkpoints and resource-budget enforcement are future work.
+committing/integration, Direct-agent per-action checkpoints and resource-budget enforcement
+are future work. App-reviewed AI/Room changes now have the separate durable checkpoint
+workflow in RECOVERY_CHECKPOINTS.md.
 
 ## Evidence and open acceptance
 

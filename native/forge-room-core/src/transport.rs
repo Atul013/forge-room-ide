@@ -553,6 +553,7 @@ impl Authority {
             return Err("Session expired or revoked".into());
         }
         session.seen = now;
+        session.expires = now + SESSION;
         Ok(session)
     }
 }
@@ -846,7 +847,7 @@ impl Client {
         {
             return Err("Invalid shared patch state".into());
         }
-        if snapshot.you.len() != 64 {
+        if snapshot.you.len() != 64 || snapshot.you != self.identity {
             return Err("Invalid session identity".into());
         }
         self.cursor = snapshot.cursor;
@@ -1205,5 +1206,22 @@ mod tests {
         });
         assert!(denied.is_err());
         assert!(Host::start("0.0.0.0:0".parse().unwrap(), "bad bind").is_err());
+    }
+    #[test]
+    fn active_requests_renew_the_idle_session_deadline() {
+        let host = host();
+        let (mut client, _) = Client::join(invite(&host), "Ada").unwrap();
+        host.authority
+            .lock()
+            .unwrap()
+            .sessions
+            .get_mut(&client.session)
+            .unwrap()
+            .expires = Instant::now() + Duration::from_secs(30);
+        client.poll().unwrap();
+        assert!(
+            host.authority.lock().unwrap().sessions[&client.session].expires
+                > Instant::now() + Duration::from_secs(3500)
+        );
     }
 }

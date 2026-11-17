@@ -72,6 +72,15 @@ fn independent_clients_share_tasks_handoffs_clock_and_private_conversations() {
         priority: TaskPriority::High,
         due_hours: Some(1),
     };
+    assert!(a.execute(Action::CreateTask {
+        title: "duplicate criteria".into(),
+        owner: a_id.clone(),
+        criteria: vec!["same".into(), "same".into()],
+        dependencies: vec![],
+        priority: TaskPriority::Normal,
+        due_hours: None
+    })["rejection"]
+        .is_string());
     assert!(a.execute(create("Protocol", vec![]))["rejection"].is_null());
     assert!(a.execute(create("UI", vec!["T1".into()]))["rejection"].is_null());
     let shared = b.request(json!({"command":"poll"}));

@@ -36,6 +36,7 @@ mod position;
 mod preview;
 mod project_tools;
 mod recovery;
+mod review_checkpoints;
 mod room_changes;
 mod room_network;
 mod room_network_workflow;
@@ -5548,6 +5549,23 @@ impl eframe::App for ForgeRoomApp {
             self.status = "Received Room patch updated local files".into();
         }
         let finished = self.ai.poll();
+        if self.ai.take_checkpoint_request() {
+            let root = self.repo_root();
+            let dirty = self.tabs.dirty_paths();
+            let result = if !self.trusted {
+                Err("Trust this folder before recovery".into())
+            } else if let Some(root) = root {
+                self.ai.restore_checkpoint(&root, &dirty)
+            } else {
+                Err("Open the original folder before recovery".into())
+            };
+            self.reload_clean_tabs();
+            self.refresh_git();
+            self.status = match result {
+                Ok(count) => format!("Recovered {count} checkpoint file(s)"),
+                Err(error) => format!("Recovery stopped: {error}"),
+            };
+        }
         if let Some(undo) = self.ai.take_review_request() {
             let root = self.repo_root();
             let dirty: Vec<_> = self

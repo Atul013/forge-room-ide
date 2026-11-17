@@ -73,6 +73,7 @@ pub struct State {
     workflow: crate::ai_workflow::Workflow,
     isolated: crate::agent_workspaces::State,
     run_workspace: Option<PathBuf>,
+    recovery: crate::review_checkpoints::State,
     messages: Vec<Message>,
     input: String,
     focus_input: bool,
@@ -116,6 +117,7 @@ impl Default for State {
             workflow: Default::default(),
             isolated: Default::default(),
             run_workspace: None,
+            recovery: Default::default(),
             messages: Vec::new(),
             input: String::new(),
             focus_input: false,
@@ -200,7 +202,9 @@ impl State {
         self.messages.clear();
         self.isolated.new_chat();
         self.run_workspace = None;
+        let selected_flow = self.workflow.flow;
         self.workflow = Default::default();
+        self.workflow.flow = selected_flow;
         self.session = None;
         self.codex_session = None;
         self.workspace = Some(workspace.to_path_buf());
@@ -345,6 +349,15 @@ impl State {
         } else {
             None
         }
+    }
+    pub fn take_checkpoint_request(&mut self) -> bool {
+        std::mem::take(&mut self.recovery.restore_requested)
+    }
+    pub fn restore_checkpoint(&mut self, root: &Path, dirty: &[PathBuf]) -> Result<usize, String> {
+        if self.busy() {
+            return Err("Stop the agent before recovery".into());
+        }
+        self.recovery.restore_selected(root, dirty)
     }
     pub fn apply_review(
         &mut self,
@@ -737,7 +750,9 @@ impl State {
         self.messages.clear();
         self.isolated.new_chat();
         self.run_workspace = None;
+        let selected_flow = self.workflow.flow;
         self.workflow = Default::default();
+        self.workflow.flow = selected_flow;
         self.session = None;
         self.codex_session = None;
         self.confirm_full = false;
@@ -813,6 +828,7 @@ pub fn show(
             for note in state.isolated.show(ui, cwd, trusted, busy) {
                 state.note(note);
             }
+            state.recovery.show(ui, cwd, trusted, busy);
             let busy = state.busy();
             let old_plan = state.workflow.plan.clone();
             for note in state.workflow.show(ui, cwd, busy, trusted) {
@@ -1844,8 +1860,12 @@ mod tests {
             text: "x".into(),
         });
         state.session = Some("s".into());
+        state.mode = Mode::Full;
+        state.workflow.flow = crate::ai_workflow::Flow::Plan;
         state.new_chat();
         assert!(state.messages.is_empty() && state.session.is_none());
+        assert!(state.workflow.flow == crate::ai_workflow::Flow::Plan);
+        assert_eq!(state.workflow.flow.mode(state.mode), Mode::ReadOnly);
     }
 
     #[test]
