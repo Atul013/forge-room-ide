@@ -304,6 +304,7 @@ struct ForgeRoomApp {
     delete: Option<PathBuf>,
     /// A question that waits for a yes: dropping a stash, ending a terminal.
     confirm: Option<Confirm>,
+    git_confirm: Option<(GitOp, String)>,
     /// A move to the Recycle Bin running on a worker thread.
     recycling: background::Latest<Recycled>,
 }
@@ -441,6 +442,7 @@ impl ForgeRoomApp {
             rename: None,
             delete: None,
             confirm: None,
+            git_confirm: None,
             recycling: background::Latest::default(),
             find: find_bar::FindState::default(),
             pending_select: None,
@@ -928,6 +930,19 @@ impl ForgeRoomApp {
     fn run_command(&mut self, command: Command, palette_mode: bool) {
         // Whatever the command does, the tree no longer has the keyboard.
         self.explorer_state.unfocus();
+        // A Git command in a folder where Git is off would do nothing and say nothing.
+        if matches!(
+            command,
+            Command::SwitchBranch
+                | Command::MergeBranch
+                | Command::DeleteBranch
+                | Command::CreateTag
+                | Command::DeleteTag
+        ) && self.git_root().is_none()
+        {
+            self.git_off();
+            return;
+        }
         match command {
             Command::NewFile => self.new_file(),
             Command::OpenFile => self.open_file_dialog(),
@@ -2990,6 +3005,7 @@ impl ForgeRoomApp {
             return;
         }
         let Some(root) = self.git_root() else {
+            self.git_off();
             return;
         };
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -3031,6 +3047,7 @@ impl ForgeRoomApp {
     fn git_action(&mut self, action: source_control::Action) {
         use source_control::Action;
         let Some(root) = self.git_root() else {
+            self.git_off();
             return;
         };
         let upstream = self.has_upstream();
@@ -3550,6 +3567,65 @@ impl ForgeRoomApp {
         }
     }
 
+    /// Say why a Git action did nothing.
+    fn git_off(&mut self) {
+        self.status = if self.repo_root().is_none() {
+            "Open a folder first".into()
+        } else {
+            "Git is off in this folder: trust it first (Folder: Trust This Folder)".into()
+        };
+    }
+
+    /// Ask before a palette Git action that changes the working tree or removes a branch or tag.
+    fn ask_git(&mut self, op: GitOp, name: String) {
+        if self.git_root().is_none() {
+            self.status =
+                "Git is off in this folder: trust it first (Folder: Trust This Folder)".into();
+            return;
+        }
+        self.git_confirm = Some((op, name));
+    }
+
+    fn run_git_op(&mut self, op: GitOp, name: String) {
+        let Some(root) = self.git_root() else {
+            return;
+        };
+        match op {
+            GitOp::Merge => {
+                self.status = match git::merge(&root, &name) {
+                    Ok(git::MergeOutcome::Merged(text)) => format!("Merged {name}: {text}"),
+                    Ok(git::MergeOutcome::UpToDate) => format!("Already up to date with {name}"),
+                    Ok(git::MergeOutcome::Conflicts) => format!(
+                        "Merging {name} has conflicts. Resolve them in Source Control,                          then commit, or run Git: Abort Merge"
+                    ),
+                    Err(error) => format!("Git: {error}"),
+                };
+                self.refresh_git();
+                self.reload_clean_tabs();
+            }
+            GitOp::DeleteBranch => {
+                self.status = match git::delete_branch(&root, &name, false) {
+                    Ok(()) => format!("Deleted branch {name}"),
+                    Err(error) => format!("Git: {error}"),
+                };
+                self.refresh_git();
+            }
+            GitOp::DeleteTag => {
+                self.status = match git::delete_tag(&root, &name) {
+                    Ok(text) => match text.split("(was ").nth(1) {
+                        Some(rest) => format!(
+                            "{text}. To make it again: git tag {name} {}",
+                            rest.trim_end_matches(')')
+                        ),
+                        None => text,
+                    },
+                    Err(error) => format!("Git: {error}"),
+                };
+                self.refresh_git();
+            }
+        }
+    }
+
     /// The questions that wait for an answer (trust, confirmations, delete, rename, new folder).
     /// They are drawn on every frame whatever the sidebar shows: a prompt hidden behind another view
     /// would leave the window refusing to close with no explanation.
@@ -3595,6 +3671,44 @@ impl ForgeRoomApp {
                 self.status = "Restricted mode: Git and cargo check are off (Folder: Trust This Folder turns them on)".into();
             } else {
                 self.trust_prompt = Some(folder);
+            }
+        }
+        if let Some((op, name)) = self.git_confirm.take() {
+            let (title, text, button, destructive) = match op {
+                GitOp::Merge => (
+                    "Merge branch",
+                    format!(
+                        "Merge {name} into the current branch? Files in the folder and open tabs                          change. If it conflicts you resolve the conflicts or abort the merge."
+                    ),
+                    "Merge",
+                    false,
+                ),
+                GitOp::DeleteBranch => (
+                    "Delete branch",
+                    format!(
+                        "Delete the branch {name}? Git refuses a branch that is not merged yet."
+                    ),
+                    "Delete branch",
+                    true,
+                ),
+                GitOp::DeleteTag => (
+                    "Delete tag",
+                    format!("Delete the tag {name}? The status line shows how to make it again."),
+                    "Delete tag",
+                    true,
+                ),
+            };
+            let (mut yes, mut no) = (false, false);
+            if dialog_shell(&self.egui_ctx, "git-confirm-dialog", title, 380.0, |ui| {
+                ui.label(text);
+                (yes, no) = dialog_buttons(ui, button, destructive, true);
+            }) {
+                no = true;
+            }
+            if yes {
+                self.run_git_op(op, name);
+            } else if !no {
+                self.git_confirm = Some((op, name));
             }
         }
         if let Some(question) = self.confirm.take() {
@@ -5464,30 +5578,10 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::Merge(name)) => {
-                if let Some(root) = self.git_root() {
-                    self.status = match git::merge(&root, &name) {
-                        Ok(git::MergeOutcome::Merged(text)) => format!("Merged {name}: {text}"),
-                        Ok(git::MergeOutcome::UpToDate) => {
-                            format!("Already up to date with {name}")
-                        }
-                        Ok(git::MergeOutcome::Conflicts) => format!(
-                            "Merging {name} has conflicts. Resolve them in Source Control, \
-                             then commit, or run Git: Abort Merge"
-                        ),
-                        Err(error) => format!("Git: {error}"),
-                    };
-                    self.refresh_git();
-                    self.reload_clean_tabs();
-                }
+                self.ask_git(GitOp::Merge, name);
             }
             Some(palette::Outcome::DeleteBranch(name)) => {
-                if let Some(root) = self.git_root() {
-                    self.status = match git::delete_branch(&root, &name, false) {
-                        Ok(()) => format!("Deleted branch {name}"),
-                        Err(error) => format!("Git: {error}"),
-                    };
-                    self.refresh_git();
-                }
+                self.ask_git(GitOp::DeleteBranch, name);
             }
             Some(palette::Outcome::CreateTag(name)) => {
                 if let Some(root) = self.git_root() {
@@ -5499,19 +5593,7 @@ impl eframe::App for ForgeRoomApp {
                 }
             }
             Some(palette::Outcome::DeleteTag(name)) => {
-                if let Some(root) = self.git_root() {
-                    self.status = match git::delete_tag(&root, &name) {
-                        Ok(text) => match text.split("(was ").nth(1) {
-                            Some(rest) => format!(
-                                "{text}. To make it again: git tag {name} {}",
-                                rest.trim_end_matches(')')
-                            ),
-                            None => text,
-                        },
-                        Err(error) => format!("Git: {error}"),
-                    };
-                    self.refresh_git();
-                }
+                self.ask_git(GitOp::DeleteTag, name);
             }
             Some(palette::Outcome::Run(command)) => self.run_command(command, false),
             Some(palette::Outcome::Open(path)) => self.open_path(path),
@@ -5648,6 +5730,14 @@ impl FileGit {
             hunks,
         }
     }
+}
+
+/// A Git action chosen from the palette that changes or removes something and so asks first.
+#[derive(Clone, Copy)]
+enum GitOp {
+    Merge,
+    DeleteBranch,
+    DeleteTag,
 }
 
 /// A question the user must answer before something that cannot be undone happens.
