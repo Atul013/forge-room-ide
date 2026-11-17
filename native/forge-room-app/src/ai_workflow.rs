@@ -294,13 +294,14 @@ impl Workflow {
         root: Option<&Path>,
         busy: bool,
         trusted: bool,
+        allow_direct: bool,
     ) -> Vec<String> {
         use eframe::egui;
         let mut notes = Vec::new();
         egui::CollapsingHeader::new("Plan, context and reviewed edits").default_open(true).show(ui,|ui| {
-            egui::ComboBox::from_id_salt("ai-workflow-flow").selected_text(self.flow.label()).show_ui(ui,|ui|{for flow in Flow::ALL{ui.selectable_value(&mut self.flow,flow,flow.label());}});
-            ui.label(if self.flow==Flow::Direct {"Uses the CLI permission mode selected above."}else{"Drafts with the provider CLI's read-only mode in a fresh conversation. No generated edits are applied automatically."});
-            ui.label("Attached saved files are included in the next prompt. The CLI may also read the workspace using its own permissions. Unsaved editor text is not attached.");
+            ui.add_enabled_ui(!busy,|ui|{egui::ComboBox::from_id_salt("ai-workflow-flow").selected_text(self.flow.label()).show_ui(ui,|ui|{for flow in Flow::ALL{if allow_direct || flow != Flow::Direct {ui.selectable_value(&mut self.flow,flow,flow.label());}}});});
+            ui.label(if !allow_direct {"Native text requests have no tools. Generated edits require explicit review and Apply."}else if self.flow==Flow::Direct {"Uses the CLI permission mode selected above."}else{"Drafts with the provider CLI's read-only mode in a fresh conversation. No generated edits are applied automatically."});
+            ui.label(if allow_direct {"Attached saved files are included in the next prompt. The CLI may also read the workspace using its own permissions. Unsaved editor text is not attached."}else{"Only the instruction, selected plan, explicit saved-file attachments and optional native history are sent. Review the complete request before sending."});
             ui.add_enabled_ui(!busy&&trusted,|ui|{
                 if ui.button("Attach active saved file").clicked() {
                     match (root,self.active_file.clone()) { (Some(root),Some(path))=>if let Err(error)=self.attach(root,&path){notes.push(error);},_=>notes.push("Open a saved file inside the current folder first".into()) }

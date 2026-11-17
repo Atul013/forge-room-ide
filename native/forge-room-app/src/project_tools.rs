@@ -495,8 +495,8 @@ pub fn show(
                 ui.label(runtime.as_str());
             }
             ui.separator();
-            ui.label("AI agents use installed Claude Code or Codex CLI programs.");
-            ui.small("Provider sign-in and local model setup happen in those programs. An open trusted folder is required.");
+            ui.label("AI supports installed CLI agents and native text model connections.");
+            ui.small("CLI sign-in stays in the provider program. Native connections use an explicit endpoint/model and optional API-key environment variable. An open trusted folder is required.");
             if ui.button("Open AI Agent").clicked() {
                 return Some(Selected::AppCommand(Command::OpenAgent));
             }

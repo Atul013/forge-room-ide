@@ -7,6 +7,8 @@ use std::{fs, io, path::PathBuf};
 #[derive(Default, Deserialize, Serialize)]
 pub struct Settings {
     #[serde(default)]
+    pub native_model: Option<crate::native_models::Config>,
+    #[serde(default)]
     pub theme: Option<String>,
     /// Folders opened most recently, newest first.
     #[serde(default)]
