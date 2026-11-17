@@ -28,7 +28,7 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
-- 2026-11-18 Codex: Expanded PR #73 with a collapsed Network Room header unread badge that uses the same in-session activity cursor; Activity marks events read. Regression checks cover baseline/new-event/mark-read. Full local app suite and final-head CI/package are being rerun. Due reminders remain visible only while expanded; the unread count remains in the collapsed header. Earlier CI/package heads were canceled/superseded.
+- 2026-11-18 Codex: PR #73 final code head `4170f6f` passed Windows CI run 44159960049 and package/install run 44160997835; package checksum manifest and all five ZIP entries verified locally. Upgrade/uninstall/data preservation and headless launch passed; interactive installer/visible app UI remain open. Final app 346/9, core 28 + six process trials; format/Clippy pass. Worktree clean after notes update; two-machine LAN remains open.
 
 - 2026-11-18 Codex: R05 Network Room awareness source includes activity seen cursor/search/member/task filters/task links, bounded local due reminders, and opt-in task focus/read-only follow in a separate view. Pre-header-extension local head: core 28 + six independent-process trials, app 345/9, both Clippy and fmt checks pass. Earlier final-head CI passed before this header extension; final-head Windows CI/package and visible desktop/two-machine acceptance remain open.
 
