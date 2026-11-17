@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Task pipeline source now covers sequential dependency graphs, shared prerequisite deduplication, explicit argument/cwd/environment variables, Windows overrides, cached review with refresh and unsupported-plan reasons. Real PowerShell tests passed order, native exit failure stopping dependents and finally restoration; compiled native argument capture passed literal quoted paths. Fixed terminal startup failure fall-through. #66 final head ab8a5b8 passed Windows CI; task batch final CI and desktop/PTY trial remain separate.
+
+- 2026-11-17 Codex: Continuing with a substantive project-task pipeline batch stacked on #66: bounded sequential dependencies, workspace/file argument variables, explicit cwd/environment, visible unsupported-task reasons and stop-on-failure terminal execution. Existing project actions remain available. Commands still require an explicit trusted-folder click; no background scheduler is claimed.
+
 - 2026-11-17 Codex: Completed persistent language sessions source: explicit Problems/palette start/stop, bounded coalesced open-buffer full/incremental sync, versioned diagnostics, shared navigation/reviewed rename, latest-request and changed-buffer rejection, UTF-16 positions and owned-process shutdown/watchdog cleanup. Seven protocol/lifecycle regressions pass; real rust-analyzer and isolated pylsp trials passed unsaved syntax diagnostics/navigation while saved source stayed unchanged. Full local app suite 302 passed/9 ignored; final Windows CI/visible desktop tracked separately.
 
 - 2026-11-17 Codex: Started substantive native persistent-language-session batch stacked on PR #65. Explicit trusted start/stop, coalesced open-buffer synchronization, versioned diagnostics, shared navigation requests and lifecycle cleanup are in scope. #64 and #65 remain open with final Windows CI passed; upstream UX remains separate. No visible desktop or two-language acceptance claim yet.
