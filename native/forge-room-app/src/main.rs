@@ -9,6 +9,7 @@ mod background;
 #[allow(dead_code)] // Keep optional brand artwork available to the AI panel and future themes.
 mod brand;
 mod commands;
+mod controlled_build;
 mod dap;
 mod debug_state;
 mod diagnostics;

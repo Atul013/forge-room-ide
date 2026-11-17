@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone)]
 pub struct FileChange {
     pub path: PathBuf,
     pub before: String,

@@ -7,6 +7,7 @@ type Catalog = (
     std::sync::mpsc::Receiver<Result<Vec<String>, String>>,
 );
 pub struct Review {
+    pub budget: Option<String>,
     pub prepared: Prepared,
     pub root: PathBuf,
     pub instruction: String,
@@ -44,7 +45,7 @@ impl State {
         instruction: String,
     ) -> Result<(), String> {
         if flow == Flow::Direct {
-            return Err("Native HTTP supports Ask, Plan and Reviewed edits; it does not run a direct CLI agent".into());
+            return Err("Native HTTP supports Ask, Plan, Reviewed edits and Controlled build; choose the CLI runtime for a direct agent".into());
         }
         let root = root.canonicalize().map_err(|e| e.to_string())?;
         let identity = serde_json::to_string(&(
@@ -62,6 +63,7 @@ impl State {
         }
         let prepared = super::prepare(&self.config, prompt, &self.history)?;
         self.review = Some(Review {
+            budget: None,
             prepared,
             root,
             instruction,
@@ -190,7 +192,7 @@ impl State {
                 "Include this native conversation on subsequent sends",
             );
             ui.small(format!(
-                "Retained native history: {} message(s). CLI history is never forwarded.",
+                "Retained native history: {} message(s). Controlled build uses its own approved session context. CLI history is never forwarded.",
                 self.history.len()
             ));
             if ui.button("Clear native conversation").clicked() {
@@ -210,7 +212,7 @@ impl State {
                 };
             }
         });
-        ui.small("Text only. No tools, commands or automatic file access. Ask/Plan/Reviewed edits use explicit attached context. Output limits are not a dollar budget; stopping the client may not stop provider billing.");
+        ui.small("Text transport only; provider-native tools are disabled. Controlled build proposes separately approved local actions. Other flows use explicit attached context. Output limits are not a dollar budget; stopping the client may not stop provider billing.");
         if !self.status.is_empty() {
             ui.label(&self.status);
         }
@@ -225,6 +227,7 @@ impl State {
             let suffix=if review.prepared.config.protocol==Protocol::Chat {"chat/completions"}else{"messages"};
             ui.label(format!("Destination: {}",review.prepared.config.url(suffix).map(|u|u.to_string()).unwrap_or_else(|_|"Invalid endpoint".into())));ui.label(format!("Model: {}",review.prepared.config.model));
             ui.label(format!("{} bytes; at most {} output tokens / {} seconds",serde_json::to_vec(&review.prepared.body).map_or(0,|b|b.len()),review.prepared.config.max_tokens,review.prepared.config.seconds));
+            if let Some(budget)=&review.budget{ui.label(budget);}
             ui.small("The complete request below leaves this device when you send. Authentication uses the named environment variable and is not shown. No native tools are enabled.");
             egui::ScrollArea::vertical().max_height(350.0).show(ui,|ui|{if let Some(messages)=review.prepared.body["messages"].as_array(){for message in messages{ui.label(message["role"].as_str().unwrap_or("message"));ui.monospace(message["content"].as_str().unwrap_or(""));ui.separator();}}});
             ui.horizontal(|ui|{send=ui.button("Send this request").clicked();cancel=ui.button("Cancel").clicked();});

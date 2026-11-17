@@ -70,6 +70,7 @@ struct Message {
 }
 
 pub struct State {
+    controlled: crate::controlled_build::State,
     native: crate::native_models::panel::State,
     workflow: crate::ai_workflow::Workflow,
     isolated: crate::agent_workspaces::State,
@@ -115,6 +116,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            controlled: Default::default(),
             native: Default::default(),
             workflow: Default::default(),
             isolated: Default::default(),
@@ -199,6 +201,7 @@ impl State {
         }
         self.run = None;
         self.native.reset();
+        self.controlled.reset();
         self.run_provider = None;
         self.started = None;
         self.finish();
@@ -376,7 +379,19 @@ impl State {
         if self.busy() {
             return Err("Stop the running agent before applying edits".into());
         }
+        if self.workflow.flow == crate::ai_workflow::Flow::Controlled && !undo {
+            self.controlled.guard_apply(root, &self.native.config)?;
+        }
+        let approved_files = self
+            .workflow
+            .preview
+            .as_ref()
+            .map(|p| p.files.clone())
+            .unwrap_or_default();
         self.workflow.apply(root, dirty, undo)?;
+        if self.controlled.active() {
+            self.controlled.after_apply(root, &approved_files, undo);
+        }
         self.note(if undo {
             "Last reviewed proposal was undone"
         } else {
@@ -426,7 +441,7 @@ impl State {
     }
 
     pub fn busy(&self) -> bool {
-        self.run.is_some() || self.native.busy()
+        self.run.is_some() || self.native.busy() || self.controlled.busy()
     }
     fn provider_name(&self) -> &str {
         if self.native.enabled {
@@ -440,6 +455,7 @@ impl State {
         let Some(review) = self.native.decision(context) else {
             if had_review && self.native.review.is_none() {
                 self.workflow.run_flow = None;
+                self.controlled.cancel_review();
             }
             return;
         };
@@ -455,21 +471,49 @@ impl State {
         if !trusted
             || cwd.and_then(|p| p.canonicalize().ok()).as_ref() != Some(&review.root)
             || self.workflow.flow != review.flow
+            || self.native.config != review.prepared.config
         {
             self.workflow.run_flow = None;
             self.fail("Workspace, trust or flow changed; review a fresh request");
+            self.controlled.cancel_review();
             return;
         }
-        let current = self.workflow.prepare(&review.root, &review.instruction);
+        let controlled = review.flow == crate::ai_workflow::Flow::Controlled;
+        let current = if controlled {
+            self.controlled
+                .current_prompt(&review.root, &self.native.config)
+        } else {
+            self.workflow.prepare(&review.root, &review.instruction)
+        };
         if current.as_ref().ok() != Some(&review.prepared.prompt) {
             self.workflow.run_flow = None;
             self.fail("Attached files or plan changed; review a fresh request before sending");
+            self.controlled.cancel_review();
             return;
         }
         let wake = context.clone();
         let prompt = review.prepared.prompt.clone();
+        let reservation = if controlled {
+            match self.controlled.reserve(
+                &review.root,
+                &self.native.config,
+                serde_json::to_vec(&review.prepared.body).map_or(usize::MAX, |b| b.len()),
+            ) {
+                Ok(r) => Some(r),
+                Err(error) => {
+                    self.workflow.run_flow = None;
+                    self.fail(error);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         match crate::native_models::start(review.prepared, move || wake.request_repaint()) {
             Ok(run) => {
+                if let Some(reservation) = reservation {
+                    self.controlled.commit(reservation);
+                }
                 self.native.run = Some(run);
                 self.native.inflight = Some(prompt);
                 if self.input.trim() == review.instruction {
@@ -486,6 +530,9 @@ impl State {
                 self.run_workspace = None;
             }
             Err(error) => {
+                if controlled {
+                    self.controlled.cancel_review();
+                }
                 self.workflow.run_flow = None;
                 self.fail(error);
             }
@@ -593,17 +640,58 @@ impl State {
                 self.fail("Native model connections currently accept text only; remove the image");
                 return;
             }
-            match self
-                .workflow
-                .prepare(cwd, &text)
+            let controlled = self.workflow.flow == crate::ai_workflow::Flow::Controlled;
+            let prompt = if controlled {
+                self.native.history.clear();
+                crate::native_models::prepare(&self.native.config, String::new(), &[]).and_then(
+                    |_| {
+                        self.controlled.request(
+                            cwd,
+                            &self.native.config,
+                            &self.workflow.sources,
+                            &text,
+                        )
+                    },
+                )
+            } else {
+                self.workflow.prepare(cwd, &text)
+            };
+            match prompt
                 .and_then(|prompt| self.native.prepare(cwd, self.workflow.flow, prompt, text))
             {
-                Ok(()) => {}
+                Ok(()) => {
+                    if controlled {
+                        self.workflow.run_flow = Some(crate::ai_workflow::Flow::Controlled);
+                        self.workflow.output.clear();
+                        if let Some(review) = &mut self.native.review {
+                            match self.controlled.reserve(
+                                cwd,
+                                &self.native.config,
+                                serde_json::to_vec(&review.prepared.body)
+                                    .map_or(usize::MAX, |b| b.len()),
+                            ) {
+                                Ok(r) => {
+                                    review.budget =
+                                        Some(crate::controlled_build::State::reservation_note(&r))
+                                }
+                                Err(error) => {
+                                    self.native.review = None;
+                                    self.workflow.run_flow = None;
+                                    self.fail(error);
+                                }
+                            }
+                        }
+                    }
+                }
                 Err(error) => {
                     self.workflow.run_flow = None;
                     self.fail(error);
                 }
             }
+            return;
+        }
+        if self.workflow.flow == crate::ai_workflow::Flow::Controlled {
+            self.fail("Controlled build requires the native model connection");
             return;
         }
         let provider = self.provider;
@@ -709,6 +797,12 @@ impl State {
     /// Take what the running agent has said since the last frame. True when the run just ended
     /// (files may have changed, so the caller refreshes what shows them).
     pub fn poll(&mut self) -> bool {
+        let validation_finished = if let Some(note) = self.controlled.poll() {
+            self.note(note);
+            true
+        } else {
+            false
+        };
         for note in self.isolated.poll() {
             self.note(note);
         }
@@ -723,7 +817,7 @@ impl State {
         } else if let Some(run) = &mut self.native.run {
             run.poll()
         } else {
-            return false;
+            return validation_finished;
         };
         if !events.is_empty() {
             self.chat_dirty = true;
@@ -814,17 +908,48 @@ impl State {
             }
         }
         if finished {
+            let controlled = self.workflow.run_flow == Some(crate::ai_workflow::Flow::Controlled);
             if native {
-                self.native.complete(succeeded, &self.workflow.output);
+                if !controlled {
+                    self.native.complete(succeeded, &self.workflow.output);
+                } else {
+                    self.native.inflight = None;
+                }
                 self.native.run = None;
             }
-            if succeeded {
+            if succeeded && controlled {
+                let controlled_output = self.workflow.output.clone();
+                let result = self
+                    .workspace
+                    .clone()
+                    .ok_or_else(|| "Workspace changed".to_owned())
+                    .and_then(|root| {
+                        self.controlled.receive(
+                            &root,
+                            &self.native.config,
+                            &controlled_output,
+                            &mut self.workflow,
+                        )
+                    });
+                self.workflow.run_flow = None;
+                match result {
+                    Ok(note) => self.note(note),
+                    Err(error) => {
+                        self.controlled.record_error(&error);
+                        self.fail(error);
+                    }
+                }
+            } else if succeeded {
                 match self.workflow.complete() {
                     Ok(Some(note)) => self.note(note),
                     Err(error) => self.fail(error),
                     _ => {}
                 }
             } else {
+                if controlled {
+                    self.controlled
+                        .record_error("Model request failed or was stopped");
+                }
                 self.workflow.run_flow = None;
             }
             self.run = None;
@@ -834,11 +959,16 @@ impl State {
             self.clear_image();
             self.save_chat();
         }
-        finished
+        finished || validation_finished
     }
 
     /// Stop the agent that is running.
     fn stop(&mut self) {
+        if self.workflow.flow == crate::ai_workflow::Flow::Controlled {
+            self.controlled.reset();
+            self.workflow.preview = None;
+            self.workflow.run_flow = None;
+        }
         if let Some(run) = &self.run {
             run.cancel();
         }
@@ -850,6 +980,7 @@ impl State {
         }
     }
     pub fn restrict(&mut self) {
+        self.controlled.reset();
         self.stop();
         self.run = None;
         self.native.reset();
@@ -860,6 +991,7 @@ impl State {
 
     /// Forget the conversation (and stop the agent): the next message starts fresh.
     pub fn new_chat(&mut self) {
+        self.controlled.reset();
         // Dropping the run stops the agent and its events no longer reach the new chat.
         self.run = None;
         self.native.reset();
@@ -953,11 +1085,40 @@ pub fn show(
             state.recovery.show(ui, cwd, trusted, busy);
             let busy = state.busy();
             let old_plan = state.workflow.plan.clone();
-            for note in state
-                .workflow
-                .show(ui, cwd, busy, trusted, !state.native.enabled)
-            {
+            let old_flow = state.workflow.flow;
+            for note in state.workflow.show(
+                ui,
+                cwd,
+                busy,
+                trusted,
+                !state.native.enabled,
+                state.controlled.active(),
+            ) {
                 state.note(note);
+            }
+            if state.workflow.flow != old_flow
+                && (old_flow == crate::ai_workflow::Flow::Controlled
+                    || state.workflow.flow == crate::ai_workflow::Flow::Controlled)
+            {
+                state.controlled.reset();
+                state.workflow.preview = None;
+            }
+            state.controlled.reconcile_preview(&mut state.workflow);
+            if state.native.enabled && state.workflow.flow == crate::ai_workflow::Flow::Controlled {
+                state.controlled.show(
+                    ui,
+                    cwd,
+                    &state.native.config,
+                    trusted,
+                    state.busy(),
+                    &mut state.workflow,
+                );
+                if std::mem::take(&mut state.controlled.continue_requested) {
+                    if state.input.trim().is_empty() {
+                        state.input = "Continue controlled task.".into();
+                    }
+                    state.send(ui.ctx(), cwd, trusted);
+                }
             }
             if old_plan != state.workflow.plan {
                 state.chat_dirty = true;
@@ -1045,9 +1206,13 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
         });
     });
     if state.native.enabled != before {
+        state.controlled.reset();
         state.workflow.output.clear();
         state.workflow.preview = None;
         if state.native.enabled && state.workflow.flow == crate::ai_workflow::Flow::Direct {
+            state.workflow.flow = crate::ai_workflow::Flow::Ask;
+        }
+        if !state.native.enabled && state.workflow.flow == crate::ai_workflow::Flow::Controlled {
             state.workflow.flow = crate::ai_workflow::Flow::Ask;
         }
     }
