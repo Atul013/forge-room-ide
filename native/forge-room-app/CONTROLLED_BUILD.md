@@ -1,6 +1,6 @@
-﻿# Controlled native build sessions
+# Controlled native build sessions
 
-Choose Native HTTP, then **Controlled build**, select one to eight saved files, and enter a task. Review the complete outgoing request before sending. The first request contains selected path names, not their contents.
+Choose Native HTTP, then **Controlled build**, select one to eight saved files, and enter a task. Review the complete outgoing request before sending. The first request contains selected path names, not automatic file contents. Separately inspected and included context snapshots can also be sent when the session starts; they stay sealed for the session and grant no additional file or command access.
 
 Models return one strict JSON action: `read_file`, `propose_edits`, `run_check`, or `finish`. A read needs approval after its contents are shown locally. Edits require an approved read and use the existing exact replacement preview, dirty/stale guards, Apply, undo and recovery copies. No new-file, deletion, rename or arbitrary shell action is available in this protocol. Provider-native function/tool calls remain disabled.
 

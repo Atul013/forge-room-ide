@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Completed one connected AI context/project Skills batch. Nine regressions pass across explicit snapshot selection, Unicode/credential/root guards, real literal Git diffs, synthetic native request privacy/history revocation, CLI prompt capture and sealed controlled continuation. Full serial app suite 335 passed/9 ignored; build and Clippy pass. Final Windows CI/package, desktop and live native-provider acceptance remain separate.
+
+- 2026-11-17 Codex: Starting one combined AI context and project Skills batch from merged #70. Explicit workspace-scoped snapshots for selection, Git diff, diagnostics, terminal, debugger and local Room tasks; inspect/select project SKILL.md without script execution or automatic inclusion. Preserve request review and controlled-session grants; one substantive PR.
+
 - 2026-11-17 Codex: Controlled build source complete as one combined feature: strict proposed reads/edits/checks/finish, sealed grants, request review, exact Apply/undo, approved closed validation recipes, bounded evidence and session reservations. Nine new regressions pass; full serial app suite 326 passed/9 ignored, build and Clippy pass. Initial parallel suite search cancellation timing failure passed isolated/serial. CI/desktop/live native provider/two-machine gates remain distinct.
 
 - 2026-11-17 Codex: Started one substantive controlled-native-build batch on feat/native-controlled-build from current main. Provider-neutral structured actions, sealed selected-file grants, per-action approval/denial, exact edit review, approved validation with bounded output/evidence and session request/check/time/cost-reservation limits are connected scope. No automatic arbitrary shell or provider tool execution; one combined PR after verification.

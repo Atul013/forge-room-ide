@@ -70,6 +70,8 @@ struct Message {
 }
 
 pub struct State {
+    pub context: crate::ai_context::State,
+    sent_context: String,
     controlled: crate::controlled_build::State,
     native: crate::native_models::panel::State,
     workflow: crate::ai_workflow::Workflow,
@@ -116,6 +118,8 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            context: Default::default(),
+            sent_context: String::new(),
             controlled: Default::default(),
             native: Default::default(),
             workflow: Default::default(),
@@ -202,6 +206,8 @@ impl State {
         self.run = None;
         self.native.reset();
         self.controlled.reset();
+        self.context.clear();
+        self.sent_context.clear();
         self.run_provider = None;
         self.started = None;
         self.finish();
@@ -440,6 +446,9 @@ impl State {
         }
     }
 
+    pub fn context_locked(&self) -> bool {
+        self.controlled.active()
+    }
     pub fn busy(&self) -> bool {
         self.run.is_some() || self.native.busy() || self.controlled.busy()
     }
@@ -483,11 +492,13 @@ impl State {
             self.controlled
                 .current_prompt(&review.root, &self.native.config)
         } else {
-            self.workflow.prepare(&review.root, &review.instruction)
+            self.context
+                .augment(&review.root, &review.instruction)
+                .and_then(|instruction| self.workflow.prepare(&review.root, &instruction))
         };
         if current.as_ref().ok() != Some(&review.prepared.prompt) {
             self.workflow.run_flow = None;
-            self.fail("Attached files or plan changed; review a fresh request before sending");
+            self.fail("Attached files, selected context or plan changed; review a fresh request before sending");
             self.controlled.cancel_review();
             return;
         }
@@ -635,12 +646,38 @@ impl State {
             );
             return;
         }
+        let context_identity = match self.context.augment(cwd, "") {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
+        if context_identity != self.sent_context {
+            self.native.history.clear();
+            self.session = None;
+            self.codex_session = None;
+            self.sent_context = context_identity;
+            self.note("Selected context changed; provider conversation history starts fresh. Previously sent data may remain with the provider.");
+        }
+        let instruction = match self.context.augment(cwd, &text) {
+            Ok(instruction) => instruction,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
         if self.native.enabled {
             if self.image.is_some() {
                 self.fail("Native model connections currently accept text only; remove the image");
                 return;
             }
             let controlled = self.workflow.flow == crate::ai_workflow::Flow::Controlled;
+            let controlled_instruction = if self.controlled.active() {
+                text.as_str()
+            } else {
+                instruction.as_str()
+            };
             let prompt = if controlled {
                 self.native.history.clear();
                 crate::native_models::prepare(&self.native.config, String::new(), &[]).and_then(
@@ -649,12 +686,12 @@ impl State {
                             cwd,
                             &self.native.config,
                             &self.workflow.sources,
-                            &text,
+                            controlled_instruction,
                         )
                     },
                 )
             } else {
-                self.workflow.prepare(cwd, &text)
+                self.workflow.prepare(cwd, &instruction)
             };
             match prompt
                 .and_then(|prompt| self.native.prepare(cwd, self.workflow.flow, prompt, text))
@@ -727,7 +764,14 @@ impl State {
         } else {
             text.as_str()
         };
-        let prompt = match self.workflow.prepare(cwd, instruction) {
+        let instruction = match self.context.augment(cwd, instruction) {
+            Ok(value) => value,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
+        let prompt = match self.workflow.prepare(cwd, &instruction) {
             Ok(prompt) => prompt,
             Err(error) => {
                 self.fail(error);
@@ -980,6 +1024,8 @@ impl State {
         }
     }
     pub fn restrict(&mut self) {
+        self.context.clear();
+        self.sent_context.clear();
         self.controlled.reset();
         self.stop();
         self.run = None;
@@ -991,6 +1037,8 @@ impl State {
 
     /// Forget the conversation (and stop the agent): the next message starts fresh.
     pub fn new_chat(&mut self) {
+        self.context.clear();
+        self.sent_context.clear();
         self.controlled.reset();
         // Dropping the run stops the agent and its events no longer reach the new chat.
         self.run = None;
@@ -1084,6 +1132,9 @@ pub fn show(
             }
             state.recovery.show(ui, cwd, trusted, busy);
             let busy = state.busy();
+            state
+                .context
+                .show(ui, cwd, trusted && !busy && !state.controlled.active());
             let old_plan = state.workflow.plan.clone();
             let old_flow = state.workflow.flow;
             for note in state.workflow.show(
@@ -2486,5 +2537,208 @@ mod tests {
                 Block::Item(0, "1.".into(), "step".into()),
             ]
         );
+    }
+    #[test]
+    fn selected_context_is_reviewed_revoked_and_never_restored_from_native_history() {
+        let root =
+            std::env::temp_dir().join(format!("forge-selected-context-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let response=serde_json::json!({"choices":[{"message":{"content":"answer"},"finish_reason":"stop"}]}).to_string();
+        let (config, server) = crate::native_models::tests::mock(
+            crate::native_models::Protocol::Chat,
+            response,
+            false,
+            "200 OK",
+        );
+        let mut state = State::default();
+        state.set_workspace(&root);
+        state.native.enabled = true;
+        state.native.config = config;
+        state.native.config.history = true;
+        state.workflow.flow = crate::ai_workflow::Flow::Ask;
+        state
+            .context
+            .capture(
+                &root,
+                crate::ai_context::Kind::Selection,
+                "selected draft".into(),
+                "SELECTED_PRIVATE_DRAFT".into(),
+                false,
+            )
+            .unwrap();
+        state
+            .context
+            .capture(
+                &root,
+                crate::ai_context::Kind::Terminal,
+                "unselected terminal".into(),
+                "UNSELECTED_TERMINAL_SECRET".into(),
+                true,
+            )
+            .unwrap();
+        state.context.include(0, true).unwrap();
+        state
+            .native
+            .history
+            .push(serde_json::json!({"role":"user","content":"OLDER_CONTEXT"}));
+        state.codex_session = Some("old-cli-conversation".into());
+        state.input = "Explain context".into();
+        let context = egui::Context::default();
+        state.send(&context, Some(&root), true);
+        let review = state.native.review.take().unwrap();
+        let body = review.prepared.body.to_string();
+        assert!(body.contains("SELECTED_PRIVATE_DRAFT"));
+        assert!(!body.contains("UNSELECTED_TERMINAL_SECRET"));
+        assert!(!body.contains("OLDER_CONTEXT"));
+        assert!(state.codex_session.is_none());
+        state.context.include(0, false).unwrap();
+        state.accept_native(review, &context, Some(&root), true);
+        assert!(state.native.run.is_none());
+        state.context.include(0, true).unwrap();
+        state.send(&context, Some(&root), true);
+        let review = state.native.review.take().unwrap();
+        state.accept_native(review, &context, Some(&root), true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.busy() {
+            assert!(std::time::Instant::now() < deadline);
+            state.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let captured = server.join().unwrap().body.to_string();
+        assert!(captured.contains("SELECTED_PRIVATE_DRAFT"));
+        assert!(!captured.contains("UNSELECTED_TERMINAL_SECRET"));
+        assert!(!state.native.history.is_empty());
+        state.context.include(0, false).unwrap();
+        state.input = "Continue without snapshot".into();
+        state.send(&context, Some(&root), true);
+        assert!(
+            !state
+                .native
+                .review
+                .as_ref()
+                .unwrap()
+                .prepared
+                .body
+                .to_string()
+                .contains("SELECTED_PRIVATE_DRAFT")
+        );
+        assert!(state.native.history.is_empty());
+        state.new_chat();
+        assert_eq!(state.context.augment(&root, "task").unwrap(), "task");
+        let _ = std::fs::remove_file(chat_path(&root));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(windows)]
+    #[test]
+    fn cli_context_is_explicit_and_changing_it_starts_a_fresh_conversation() {
+        let root = std::env::temp_dir().join(format!("forge-cli-context-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let program = root.join("mock-codex.cmd");
+        std::fs::write(&program,"@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllText('prompt.txt',[Console]::In.ReadToEnd())\"\r\necho {\"type\":\"turn.completed\"}\r\n").unwrap();
+        let mut state = State::default();
+        state.set_workspace(&root);
+        state.provider = Provider::Codex;
+        state.programs = Some([None, Some(program)]);
+        state.workflow.flow = crate::ai_workflow::Flow::Ask;
+        state
+            .context
+            .capture(
+                &root,
+                crate::ai_context::Kind::Skills,
+                "skill".into(),
+                "SELECTED_SKILL_INSTRUCTIONS".into(),
+                false,
+            )
+            .unwrap();
+        state
+            .context
+            .capture(
+                &root,
+                crate::ai_context::Kind::Terminal,
+                "private terminal".into(),
+                "UNSELECTED_PRIVATE_TERMINAL".into(),
+                true,
+            )
+            .unwrap();
+        state.context.include(0, true).unwrap();
+        state.codex_session = Some("old-session".into());
+        state.input = "Explain".into();
+        state.send(&egui::Context::default(), Some(&root), true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.busy() {
+            assert!(std::time::Instant::now() < deadline);
+            state.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let prompt = std::fs::read_to_string(root.join("prompt.txt")).unwrap();
+        assert!(prompt.contains("SELECTED_SKILL_INSTRUCTIONS"));
+        assert!(!prompt.contains("UNSELECTED_PRIVATE_TERMINAL"));
+        assert!(state.codex_session.is_none());
+        state.new_chat();
+        let _ = std::fs::remove_file(chat_path(&root));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn controlled_continuations_keep_context_sealed_without_repeated_attachments() {
+        let root =
+            std::env::temp_dir().join(format!("forge-controlled-context-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("main.txt");
+        std::fs::write(&file, "saved baseline").unwrap();
+        // A malformed action leaves the bounded session able to accept a corrected next turn.
+        let response=serde_json::json!({"choices":[{"message":{"content":"{\"action\":\"unknown\"}"},"finish_reason":"stop"}]}).to_string();
+        let (config, server) = crate::native_models::tests::mock(
+            crate::native_models::Protocol::Chat,
+            response,
+            false,
+            "200 OK",
+        );
+        let mut state = State::default();
+        state.set_workspace(&root);
+        state.native.enabled = true;
+        state.native.config = config;
+        state.workflow.flow = crate::ai_workflow::Flow::Controlled;
+        state.workflow.attach(&root, &file).unwrap();
+        state
+            .context
+            .capture(
+                &root,
+                crate::ai_context::Kind::Selection,
+                "selection".into(),
+                "SEALED_CONTEXT_MARKER".into(),
+                false,
+            )
+            .unwrap();
+        state.context.include(0, true).unwrap();
+        state.input = "Plan a fix".into();
+        let context = egui::Context::default();
+        state.send(&context, Some(&root), true);
+        assert!(state.context_locked());
+        let review = state.native.review.take().unwrap();
+        assert!(!review.prepared.prompt.contains("saved baseline"));
+        state.accept_native(review, &context, Some(&root), true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.busy() {
+            assert!(std::time::Instant::now() < deadline);
+            state.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        server.join().unwrap();
+        state.input = "Continue controlled task.".into();
+        state.send(&context, Some(&root), true);
+        let review = state.native.review.as_ref().unwrap();
+        assert_eq!(
+            review
+                .prepared
+                .prompt
+                .matches("SEALED_CONTEXT_MARKER")
+                .count(),
+            1
+        );
+        state.restrict();
+        assert!(!state.context_locked());
+        assert_eq!(state.context.augment(&root, "task").unwrap(), "task");
+        let _ = std::fs::remove_file(chat_path(&root));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
