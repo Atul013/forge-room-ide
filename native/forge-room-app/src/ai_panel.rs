@@ -3,7 +3,7 @@
 //! program installed on this computer (see `agent.rs`); Forge Room itself sends nothing anywhere.
 
 use crate::agent::{self, Mode, Provider};
-use crate::{brand, fonts, icons, theme};
+use crate::{brand, fonts, icons, local_models, theme};
 use eframe::egui::{self, Align2, Color32, FontId, Key, Modifiers, RichText, Sense, Stroke};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -79,6 +79,9 @@ pub struct State {
     model: String,
     /// The model box is a free text field (a name that is not in the list).
     model_custom: bool,
+    local_models: Vec<String>,
+    local_model_status: String,
+    local_models_rx: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
     /// How hard to think; empty is the provider's default.
     effort: String,
     /// The choices as last written to the settings file.
@@ -114,6 +117,9 @@ impl Default for State {
             mode: Mode::Edit,
             model: String::new(),
             model_custom: false,
+            local_models: Vec::new(),
+            local_model_status: String::new(),
+            local_models_rx: None,
             effort: String::new(),
             saved: Default::default(),
             session: None,
@@ -321,6 +327,51 @@ impl State {
 
     pub fn busy(&self) -> bool {
         self.run.is_some()
+    }
+
+    fn refresh_local_models(&mut self, context: &egui::Context) {
+        if self.local_models_rx.is_some() {
+            return;
+        }
+        let provider = self.provider;
+        if !matches!(provider, Provider::Ollama | Provider::LmStudio) {
+            return;
+        }
+        self.local_model_status = format!("Checking {} models…", provider.name());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.local_models_rx = Some(receiver);
+        let context = context.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(local_models::discover(provider));
+            context.request_repaint();
+        });
+    }
+
+    fn poll_local_models(&mut self) {
+        let Some(receiver) = &self.local_models_rx else {
+            return;
+        };
+        let Ok(result) = receiver.try_recv() else {
+            return;
+        };
+        self.local_models_rx = None;
+        match result {
+            Ok(models) => {
+                self.local_model_status = if models.is_empty() {
+                    "No local models found; download or load one in the provider".into()
+                } else {
+                    format!("{} local model(s) available", models.len())
+                };
+                if models.iter().any(|model| model == &self.model) {
+                    self.model_custom = false;
+                }
+                self.local_models = models;
+            }
+            Err(error) => {
+                self.local_models.clear();
+                self.local_model_status = error;
+            }
+        }
     }
 
     fn fail(&mut self, text: impl Into<String>) {
@@ -661,6 +712,12 @@ fn header(ui: &mut egui::Ui) {
 
 /// Which agent, what it may do, and a fresh conversation.
 fn controls(ui: &mut egui::Ui, state: &mut State) {
+    state.poll_local_models();
+    if matches!(state.provider, Provider::Ollama | Provider::LmStudio)
+        && state.local_model_status.is_empty()
+    {
+        state.refresh_local_models(ui.ctx());
+    }
     ui.horizontal_wrapped(|ui| {
         ui.add_space(14.0);
         let busy = state.busy();
@@ -686,12 +743,18 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
             if state.provider != provider_before {
                 state.model.clear();
                 state.model_custom = false;
+                state.local_models.clear();
+                state.local_model_status.clear();
+                state.local_models_rx = None;
                 if !agent::efforts(state.provider).contains(&state.effort.as_str()) {
                     state.effort.clear();
                 }
+                state.refresh_local_models(ui.ctx());
             }
             let shown = if state.model_custom {
                 "Custom model".to_string()
+            } else if state.local_models.iter().any(|model| model == &state.model) {
+                state.model.clone()
             } else {
                 presets(state.provider)
                     .iter()
@@ -710,6 +773,12 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
                             state.model_custom = false;
                         }
                     }
+                    for model in &state.local_models {
+                        if ui.selectable_label(state.model == *model, model).clicked() {
+                            state.model = model.clone();
+                            state.model_custom = false;
+                        }
+                    }
                     if ui.selectable_label(state.model_custom, "Custom…").clicked() {
                         state.model_custom = true;
                         state.model.clear();
@@ -722,6 +791,12 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
                         .desired_width(130.0),
                 )
                 .on_hover_text("For example claude-opus-4-1 or gpt-5-codex");
+            }
+            if matches!(state.provider, Provider::Ollama | Provider::LmStudio) {
+                if ui.small_button("Refresh models").clicked() {
+                    state.refresh_local_models(ui.ctx());
+                }
+                ui.small(&state.local_model_status);
             }
             egui::ComboBox::from_id_salt("ai-effort")
                 .selected_text(if state.effort.is_empty() {
