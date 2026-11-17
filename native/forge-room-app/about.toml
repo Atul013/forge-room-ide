@@ -5,6 +5,8 @@ accepted = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    # Mozilla root-certificate data bundled by webpki-roots for native HTTPS.
+    "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
     "MPL-2.0",
