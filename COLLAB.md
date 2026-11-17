@@ -28,6 +28,14 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-18 Codex: PR #73 final code head `4170f6f` passed Windows CI run 44159960049 and package/install run 44160997835; package checksum manifest and all five ZIP entries verified locally. Upgrade/uninstall/data preservation and headless launch passed; interactive installer/visible app UI remain open. Final app 346/9, core 28 + six process trials; format/Clippy pass. Worktree clean after notes update; two-machine LAN remains open.
+
+- 2026-11-18 Codex: R05 Network Room awareness source includes activity seen cursor/search/member/task filters/task links, bounded local due reminders, and opt-in task focus/read-only follow in a separate view. Pre-header-extension local head: core 28 + six independent-process trials, app 345/9, both Clippy and fmt checks pass. Earlier final-head CI passed before this header extension; final-head Windows CI/package and visible desktop/two-machine acceptance remain open.
+
+- 2026-11-18 Codex: Starting one substantial R05 Network Room awareness PR: per-client since-last-seen activity/task links, in-panel shared deadline reminders, and opt-in task-ID focus/read-only follow. Keep local navigation separate; no file/editor state is shared. Two-client protocol test and app behavior tests are required; desktop/two-machine gates remain separate.
+
+- 2026-11-18 Codex: Expanded PR #73 with actor/task/text filters for the retained Activity feed and exact task jump matching; final expanded-head verification is in progress. The prior green CI/package head predates this extension and does not apply to the final head.
+
 - 2026-11-17 Codex: Final PR #72 scope includes approved local preflight, provenance-bearing local receipts and status-only Room evidence; full app suite now 341 passed/9 ignored with build and Clippy clean. Twelve new tests in this bundle, plus extended TCP-drop recovery/frame-bound fixtures. Desktop helper pipe is unavailable (os error 2), so no visible desktop claim. Superseded package run canceled; final expanded head gets fresh CI/package.
 
 - 2026-11-17 Codex: Extending the same PR #72 with owner-approved local Cargo/Python preflight and status-only self-attested evidence receipts; exact command review, bounded output/time/cancel, linked-file baselines and owner/root/revision/trust revocation. Raw output stays local. Real Cargo/stale-file/foreign-owner regressions pass; final combined head verification replaces the superseded package run.

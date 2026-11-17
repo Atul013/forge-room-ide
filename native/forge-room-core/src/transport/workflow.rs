@@ -32,6 +32,10 @@ pub enum Action {
         id: u64,
         accepted: bool,
     },
+    /// Publish one task as the member's current Room focus; this never shares file or editor data.
+    ShareFocus {
+        task: Option<String>,
+    },
     CreateMilestone {
         title: String,
         due_hours: Option<u64>,
@@ -118,6 +122,11 @@ pub struct Milestone {
     pub due_at_epoch_seconds: Option<u64>,
     pub done: bool,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskFocus {
+    pub actor: String,
+    pub task: String,
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SharedSnapshot {
     #[serde(default)]
@@ -129,6 +138,8 @@ pub struct SharedSnapshot {
     pub evidence: Vec<Evidence>,
     pub activity: Vec<ActivityEvent>,
     pub countdown: Countdown,
+    #[serde(default)]
+    pub task_focus: Vec<TaskFocus>,
 }
 pub(super) struct SharedRoom {
     readiness: super::readiness::Authority,
@@ -137,6 +148,7 @@ pub(super) struct SharedRoom {
     remaining: Duration,
     started: Option<Instant>,
     activity_sequence: u64,
+    task_focus: std::collections::HashMap<String, String>,
 }
 impl SharedRoom {
     pub(super) fn new() -> Result<Self, String> {
@@ -155,6 +167,7 @@ impl SharedRoom {
             remaining: Duration::ZERO,
             started: None,
             activity_sequence: 0,
+            task_focus: Default::default(),
         })
     }
     pub(super) fn sync_members(&mut self, members: Vec<Participant>) {
@@ -162,6 +175,14 @@ impl SharedRoom {
             .participants
             .retain(|p| p.id == self.state.host_id);
         self.state.participants.extend(members);
+        let joined: std::collections::HashSet<_> = self
+            .state
+            .participants
+            .iter()
+            .map(|person| person.id.as_str())
+            .collect();
+        self.task_focus
+            .retain(|actor, _| joined.contains(actor.as_str()));
     }
     pub(super) fn remaining(&self) -> Duration {
         self.started
@@ -190,6 +211,18 @@ impl SharedRoom {
                 remaining_seconds: self.remaining().as_secs(),
                 running: self.started.is_some() && !self.remaining().is_zero(),
             },
+            task_focus: {
+                let mut focus: Vec<_> = self
+                    .task_focus
+                    .iter()
+                    .map(|(actor, task)| TaskFocus {
+                        actor: actor.clone(),
+                        task: task.clone(),
+                    })
+                    .collect();
+                focus.sort_by(|left, right| left.actor.cmp(&right.actor));
+                focus
+            },
         }
     }
     pub(super) fn audit(&mut self, actor: &str, detail: &str) {
@@ -217,6 +250,24 @@ impl SharedRoom {
             | Action::DeclareImpact { .. }
             | Action::AcknowledgeImpact { .. } => {
                 unreachable!("readiness authority handled this action")
+            }
+            Action::ShareFocus { task } => {
+                if let Some(task_id) = task {
+                    if task_id.len() > 16
+                        || !self
+                            .state
+                            .tasks
+                            .iter()
+                            .any(|item| item.id == task_id && item.status != TaskStatus::Done)
+                    {
+                        return Err("Focus must reference an unfinished shared task".into());
+                    }
+                    self.task_focus.insert(actor.to_owned(), task_id.clone());
+                    self.audit(actor, &format!("shared task focus {task_id}"));
+                } else if self.task_focus.remove(actor).is_some() {
+                    self.audit(actor, "stopped sharing task focus");
+                }
+                return Ok(());
             }
             Action::CreateMilestone { title, due_hours } => {
                 if actor != self.state.host_id {
@@ -384,6 +435,12 @@ impl SharedRoom {
             self.activity_sequence += 1;
             event.id = format!("network-{}", self.activity_sequence);
         }
+        self.task_focus.retain(|_, task_id| {
+            self.state
+                .tasks
+                .iter()
+                .any(|task| task.id == *task_id && task.status != TaskStatus::Done)
+        });
         if self.state.activity.len() > 128 {
             self.state.activity.drain(..self.state.activity.len() - 128);
         }
@@ -411,6 +468,16 @@ pub(super) fn validate(snapshot: &SharedSnapshot) -> Result<(), String> {
         || snapshot.evidence.len() > 128
         || snapshot.activity.len() > 128
         || snapshot.countdown.remaining_seconds > 7 * 86400
+        || snapshot.task_focus.len() > 32
+        || snapshot.task_focus.iter().any(|focus| {
+            focus.actor.len() != 64
+                || focus.task.len() > 16
+                || !snapshot.tasks.iter().any(|task| task.id == focus.task)
+                || !snapshot
+                    .tasks
+                    .iter()
+                    .any(|task| task.id == focus.task && task.status != TaskStatus::Done)
+        })
         || snapshot.tasks.iter().any(|t| {
             t.id.len() > 16
                 || t.owner_id.len() != 64

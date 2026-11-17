@@ -100,7 +100,13 @@ impl NetworkRoom {
             .readiness
             .preflight
             .reconcile(root.filter(|_| trusted), &self.snapshot);
-        egui::CollapsingHeader::new("Network Room · host / join").default_open(false).show(ui, |ui| {
+        let unread_activity = self.workflow.observe_activity(&self.snapshot);
+        let header = if unread_activity > 0 {
+            format!("Network Room · {unread_activity} new activity")
+        } else {
+            "Network Room · host / join".to_owned()
+        };
+        egui::CollapsingHeader::new(header).default_open(false).show(ui, |ui| {
           egui::ScrollArea::vertical().id_salt("network-room-controls").max_height(panel_height).show(ui, |ui| {
             ui.label(&self.status);
             if let Some(notice)=&self.notice { ui.label(notice); }
@@ -158,7 +164,7 @@ impl NetworkRoom {
                 let mut actions=self.workflow.show(ui,&self.snapshot,self.host.is_some(),root.filter(|_|trusted));
                 actions.extend(self.changes.show(ui,&self.snapshot,root,trusted,dirty,self.status.starts_with("Connected")));
                 for action in actions {
-                    if !matches!(action,Action::Message {..}|Action::RequestHandoff {..}|Action::SharePatch {..}) && let Some(host)=&self.host {
+                    if !matches!(action,Action::Message {..}|Action::RequestHandoff {..}|Action::SharePatch {..}|Action::ShareFocus {..}) && let Some(host)=&self.host {
                         if let Err(error)=host.control(action.clone()) {self.workflow.restore(action);self.notice=Some(error);}
                     } else if let Some(connection)=&self.connection
                         && let Err(error)=connection.commands.try_send(Command::Action(action)) {
