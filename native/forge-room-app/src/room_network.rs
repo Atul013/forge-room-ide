@@ -62,6 +62,9 @@ impl Drop for NetworkRoom {
     }
 }
 impl NetworkRoom {
+    pub fn take_ai_brief(&mut self) -> Option<String> {
+        self.workflow.readiness.brief.take()
+    }
     pub fn take_files_changed(&mut self) -> bool {
         std::mem::take(&mut self.changes.changed)
     }
@@ -145,7 +148,7 @@ impl NetworkRoom {
                 for member in &self.snapshot.members {
                     ui.label(format!("{} ({}) · {}", member.name, member.id.chars().take(8).collect::<String>(), if member.online { "online" } else { "offline" }));
                 }
-                let mut actions=self.workflow.show(ui,&self.snapshot,self.host.is_some());
+                let mut actions=self.workflow.show(ui,&self.snapshot,self.host.is_some(),root.filter(|_|trusted));
                 actions.extend(self.changes.show(ui,&self.snapshot,root,trusted,dirty,self.status.starts_with("Connected")));
                 for action in actions {
                     if !matches!(action,Action::Message {..}|Action::RequestHandoff {..}|Action::SharePatch {..}) && let Some(host)=&self.host {

@@ -28,6 +28,12 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Larger connected readiness/assistance/impact bundle is source complete. Five new core policy/analysis tests, an independent two-owner process workflow and four app privacy/Git/draft tests pass; existing real connection-drop trial now verifies readiness/help recovery. Full results: 27 core + five process trials + 339 app tests/9 ignored, both Clippy clean. Final single-PR CI/package and desktop/two-machine/provider acceptance remain separate.
+
+- 2026-11-17 Codex: Expanded the same readiness/assistance/impact bundle with revision references, cancellable bounded local Git relationship suggestions, current-owner acknowledgement after handoff, and privacy-whitelisted AI task brief staging. First full tests passed before scan addition; final suites and one combined PR are pending. No automatic execution/takeover or verified-evidence claim.
+
+- 2026-11-17 Codex: Starting a larger single-PR Room readiness/assistance/impact bundle. Shared core and native app changes: owner-attributed estimates, blockers, linked paths and manual evidence status; dependency/deadline explanations; opt-in help requests; source/target owner impact acknowledgements. No automatic agent execution or takeover. Source/protocol/process tests remain distinct from desktop/two-machine acceptance.
+
 - 2026-11-17 Codex: Completed one connected AI context/project Skills batch. Nine regressions pass across explicit snapshot selection, Unicode/credential/root guards, real literal Git diffs, synthetic native request privacy/history revocation, CLI prompt capture and sealed controlled continuation. Full serial app suite 335 passed/9 ignored; build and Clippy pass. Final Windows CI/package, desktop and live native-provider acceptance remain separate.
 
 - 2026-11-17 Codex: Starting one combined AI context and project Skills batch from merged #70. Explicit workspace-scoped snapshots for selection, Git diff, diagnostics, terminal, debugger and local Room tasks; inspect/select project SKILL.md without script execution or automatic inclusion. Preserve request review and controlled-session grants; one substantive PR.

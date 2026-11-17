@@ -11,6 +11,7 @@ use std::{
 
 #[derive(Default)]
 pub struct Workflow {
+    pub readiness: crate::room_readiness::Panel,
     failed_drafts: Vec<Action>,
     milestone_title: String,
     milestone_due: Option<u64>,
@@ -89,7 +90,13 @@ impl Workflow {
             _ => {}
         }
     }
-    pub fn show(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot, host: bool) -> Vec<Action> {
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &Snapshot,
+        host: bool,
+        root: Option<&std::path::Path>,
+    ) -> Vec<Action> {
         let mut actions = Vec::new();
         if !self.failed_drafts.is_empty() {
             egui::CollapsingHeader::new(format!("Rejected drafts ({})", self.failed_drafts.len()))
@@ -159,7 +166,10 @@ impl Workflow {
         }
 
         ui.horizontal_wrapped(|ui| {
-            for (index, label) in ["Chat", "Tasks", "Activity"].iter().enumerate() {
+            for (index, label) in ["Chat", "Tasks", "Activity", "Readiness"]
+                .iter()
+                .enumerate()
+            {
                 ui.selectable_value(&mut self.tab, index, *label);
             }
         });
@@ -274,6 +284,9 @@ impl Workflow {
             }
         });
         match self.tab {
+            3 => self
+                .readiness
+                .show(ui, snapshot, root, remaining, &mut actions),
             0 => self.chat(ui, snapshot, &mut actions),
             1 => self.tasks(ui, snapshot, host, &mut actions),
             _ => {
