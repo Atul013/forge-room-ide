@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: PR #63 merged into `main` after Windows CI passed format, locked resolution, core and app check/test/Clippy. The integrated Python debugger workflow also passed an isolated self-started debugpy breakpoint/locals/step/stack/output trial. Desktop interaction remains unverified because the Windows control pipe was unavailable; native Room R01/R04 remains next.
+
 - 2026-11-17 Codex: Started one combined I04 debugger workflow PR from current `origin/main`: project debugpy adapter startup, per-workspace saved breakpoints, stack source navigation, bounded locals and Debug Console output. A self-started debugpy trial passed breakpoint/locals/step/stack/output; focused persistence and adapter tests, app check, format and Clippy passed locally. Desktop interaction and Windows CI remain open. R01/R04 remains the separate native transport milestone.
 
 - 2026-11-17 Codex: PR #61 merged after Windows CI passed. PR #62 adds Python launch and corrected verified-breakpoint ordering; live debugpy breakpoint, step, stack and output probe passed. Windows CI on the final #62 head and desktop interaction remain open.
