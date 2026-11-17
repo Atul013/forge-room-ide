@@ -1200,18 +1200,22 @@ impl ForgeRoomApp {
                 Some(root) if self.trusted => {
                     let shown = root.display().to_string();
                     let mut removed = Vec::new();
-                    let _ = settings::update(|settings| {
+                    let saved = settings::update(|settings| {
                         removed = settings::untrust(&mut settings.trusted_folders, &shown);
                     });
                     self.set_trust(false);
-                    self.status = match removed.as_slice() {
-                        [only] if settings::trust_matches(only, &shown) => {
-                            "Stopped trusting this folder: Git and project tools are off".into()
+                    let parent = removed
+                        .iter()
+                        .find(|entry| !settings::trust_matches(entry, &shown));
+                    self.status = match (&saved, parent, removed.is_empty()) {
+                        (Err(error), ..) => {
+                            format!("Could not save the trusted folders ({error}): trust returns at the next start")
                         }
-                        _ => format!(
-                            "Stopped trusting {}: it was trusted through an enclosing folder,                              and that folder is no longer trusted either",
-                            shown
+                        (_, Some(parent), _) => format!(
+                            "Stopped trusting {parent}, which held this folder: other folders inside it are no longer trusted either"
                         ),
+                        (_, None, true) => "This folder was only trusted for this session: Git and project tools are off now".into(),
+                        (_, None, false) => "Stopped trusting this folder: Git and project tools are off".into(),
                     };
                 }
                 Some(_) => self.status = "This folder is not trusted".into(),
@@ -2042,7 +2046,11 @@ impl ForgeRoomApp {
             } else if shortcut(ui, command_shift, Key::ArrowUp) {
                 // The way out of the terminal for a keyboard-only user: it keeps Tab and Escape.
                 self.focus_editor = true;
-                self.status = "Back in the editor".into();
+                self.status = if self.tabs.tabs.is_empty() {
+                    "No editor tab is open".into()
+                } else {
+                    "Back in the editor".into()
+                };
             } else if shortcut(ui, command_shift, Key::E) {
                 self.switch_view(SidebarView::Explorer);
             }
@@ -3305,31 +3313,19 @@ impl ForgeRoomApp {
         let note =
             (untracked > 0).then(|| format!("{untracked} untracked file(s) will be deleted."));
         let mut choice: Option<bool> = None;
-        let modal = egui::Modal::new(egui::Id::unique("discard-dialog")).show(context, |ui| {
-            ui.set_width(380.0);
-            ui.heading("Discard changes");
-            ui.add_space(6.0);
+        if dialog_shell(context, "discard-dialog", "Discard changes", 380.0, |ui| {
             ui.label(message);
             if let Some(note) = note {
                 ui.label(egui::RichText::new(note).color(theme::text_dim()));
             }
-            ui.add_space(14.0);
-            ui.horizontal(|ui| {
-                let discard = egui::Button::new(
-                    egui::RichText::new("Discard")
-                        .strong()
-                        .color(egui::Color32::WHITE),
-                )
-                .fill(egui::Color32::from_rgb(190, 70, 70));
-                if ui.add(discard).clicked() {
-                    choice = Some(true);
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(false);
-                }
-            });
-        });
-        if modal.should_close() && choice.is_none() {
+            let (yes, no) = dialog_buttons(ui, "Discard", true, true, None);
+            if yes {
+                choice = Some(true);
+            } else if no {
+                choice = Some(false);
+            }
+        }) && choice.is_none()
+        {
             choice = Some(false);
         }
         let Some(confirmed) = choice else {
@@ -3626,7 +3622,7 @@ impl ForgeRoomApp {
                     Ok(git::MergeOutcome::Merged(text)) => format!("Merged {name}: {text}"),
                     Ok(git::MergeOutcome::UpToDate) => format!("Already up to date with {name}"),
                     Ok(git::MergeOutcome::Conflicts) => format!(
-                        "Merging {name} has conflicts. Resolve them in Source Control,                          then commit, or run Git: Abort Merge"
+                        "Merging {name} has conflicts. Resolve them in Source Control, then commit, or run Git: Abort Merge"
                     ),
                     Err(error) => format!("Git: {}", git::explain(&error)),
                 };
@@ -3708,10 +3704,10 @@ impl ForgeRoomApp {
                 GitOp::Merge => (
                     "Merge branch",
                     format!(
-                        "Merge {name} into the current branch? Files in the folder and open tabs                          change. If it conflicts you resolve the conflicts or abort the merge."
+                        "Merge {name} into the current branch? Files in the folder and open tabs change. If it conflicts you resolve the conflicts or abort the merge."
                     ),
                     "Merge",
-                    false,
+                    true,
                 ),
                 GitOp::DeleteBranch => (
                     "Delete branch",
@@ -5246,7 +5242,7 @@ impl ForgeRoomApp {
         if self.status != self.status_shown {
             let new = self.status.clone();
             let holding = self.status_hold_until.is_some_and(|until| now < until);
-            if holding && !is_error_status(&new) {
+            if holding && is_background_status(&new) {
                 self.status_queued = Some(new);
                 self.status = self.status_shown.clone();
             } else {
@@ -5928,11 +5924,15 @@ fn dialog_buttons(
 
 /// Whether a status message reports a failure (it is then shown in red and held for a while).
 fn is_error_status(text: &str) -> bool {
-    text.starts_with("Git:")
-        || text.starts_with("Cannot ")
-        || text.starts_with("Could not ")
-        || text.contains(" failed")
-        || text.starts_with("Error")
+    ["Git:", "Cannot ", "Could not ", "Failed", "Unable", "Error"]
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
+}
+
+/// A message nobody asked for (an auto-save, an agent finishing): it waits behind a held error,
+/// while the result of something the user just did always replaces it.
+fn is_background_status(text: &str) -> bool {
+    text.starts_with("Auto-saved") || text.starts_with("The agent")
 }
 
 fn language_name(name: &str) -> Option<&'static str> {

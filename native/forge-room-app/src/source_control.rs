@@ -690,7 +690,6 @@ fn section(
             theme::text(),
         );
         // Always drawn: an action that shows only under the pointer cannot be found by keyboard.
-        let _ = &response;
         icon_button(painter, bulk, staged, bulk_response.hovered());
         if let Some(discard) = &discard_all_response {
             discard_icon(painter, discard_all, discard.hovered());

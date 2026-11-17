@@ -955,7 +955,7 @@ impl Lobby {
                                 if ui
                                     .add(egui::Button::new(label).frame(false))
                                     .on_hover_text(
-                                        "Click to change. Rooms are local to this computer for                                          now, so this is only a saved preference",
+                                        "Click to change. Rooms are local to this computer for now, so this is only a saved preference",
                                     )
                                     .clicked()
                                 {

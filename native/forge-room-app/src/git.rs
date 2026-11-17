@@ -583,7 +583,7 @@ pub fn push(root: &Path, has_upstream: bool) -> Result<String, String> {
 /// prefix.
 pub fn explain(error: &str) -> String {
     let lower = error.to_lowercase();
-    let known: [(&[&str], &str); 7] = [
+    let known: &[(&[&str], &str)] = &[
         (
             &[
                 "does not appear to be a git repository",
