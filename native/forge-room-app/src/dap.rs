@@ -11,6 +11,7 @@ const MAX_MESSAGE: usize = 1024 * 1024;
 #[derive(Debug)]
 pub enum Event {
     Connected,
+    Initialized,
     Message(String),
     Stopped { reason: String, thread: i64 },
     Stack(Vec<String>),
@@ -177,12 +178,7 @@ fn run(mut stream: TcpStream, commands: Receiver<Command>, events: Sender<Event>
                 } else if kind == Some("event") {
                     match value.get("event").and_then(Value::as_str).unwrap_or("") {
                         "initialized" => {
-                            let _ = write_request(
-                                &mut stream,
-                                &mut sequence,
-                                "configurationDone",
-                                json!({}),
-                            );
+                            let _ = events.send(Event::Initialized);
                         }
                         "stopped" => {
                             let reason = value
@@ -318,6 +314,13 @@ mod tests {
             assert_eq!(attach["arguments"]["justMyCode"], true);
             write_message(
                 &mut stream,
+                &json!({"seq":2,"type":"event","event":"initialized"}),
+            )
+            .unwrap();
+            let configured = read_message(&mut reader).unwrap();
+            assert_eq!(configured["command"], "configurationDone");
+            write_message(
+                &mut stream,
                 &json!({"seq":2,"type":"event","event":"stopped",
                 "body":{"reason":"breakpoint","threadId":7}}),
             )
@@ -345,6 +348,7 @@ mod tests {
                         connected = true;
                         session.request("attach", json!({"justMyCode":true}));
                     }
+                    Event::Initialized => session.request("configurationDone", json!({})),
                     Event::Stopped { reason, thread } => {
                         assert_eq!(reason, "breakpoint");
                         assert_eq!(thread, 7);

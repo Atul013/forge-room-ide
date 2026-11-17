@@ -3544,6 +3544,7 @@ impl ForgeRoomApp {
             ui.small("Trust this folder before connecting to an adapter.");
             return;
         }
+        self.debug_breakpoint_control(ui);
         if self.dap.is_none() {
             ui.horizontal(|ui| {
                 ui.label("Local port");
@@ -3601,6 +3602,12 @@ impl ForgeRoomApp {
         } else {
             ui.small("Step controls appear after the adapter reports a stopped thread.");
         }
+        for frame in &self.dap_stack {
+            ui.monospace(frame);
+        }
+    }
+
+    fn debug_breakpoint_control(&mut self, ui: &mut egui::Ui) {
         if let Some(path) = self.tabs.active_path().map(PathBuf::from)
             && let Some(root) = self.repo_root().and_then(|p| p.canonicalize().ok())
             && let Ok(file) = path.canonicalize()
@@ -3618,14 +3625,13 @@ impl ForgeRoomApp {
                     lines.push(line);
                     lines.sort_unstable();
                 }
-                session.request("setBreakpoints", serde_json::json!({
+                if let Some(session) = &self.dap {
+                    session.request("setBreakpoints", serde_json::json!({
                                 "source":{"path":file}, "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
                             }));
+                }
             }
             ui.small(format!("Breakpoints in this file: {:?}", lines));
-        }
-        for frame in &self.dap_stack {
-            ui.monospace(frame);
         }
     }
 
@@ -5344,6 +5350,16 @@ impl eframe::App for ForgeRoomApp {
                         let args = serde_json::from_str(&self.dap_attach_args).unwrap_or_default();
                         session.request("attach", args);
                         self.dap_status = "Adapter initialized; attach requested".into();
+                    }
+                    dap::Event::Initialized => {
+                        for (file, lines) in &self.dap_breakpoints {
+                            session.request("setBreakpoints", serde_json::json!({
+                                "source":{"path":file},
+                                "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
+                            }));
+                        }
+                        session.request("configurationDone", serde_json::json!({}));
+                        self.dap_status = "Breakpoints sent; debugger configured".into();
                     }
                     dap::Event::Message(message) => self.dap_status = message,
                     dap::Event::Stopped { reason, thread } => {
