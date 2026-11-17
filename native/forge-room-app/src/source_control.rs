@@ -624,10 +624,10 @@ fn section(
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
     let y = rect.center().y;
-    let bulk = Rect::from_center_size(egui::pos2(rect.right() - 20.0, y), egui::vec2(22.0, 22.0));
+    let bulk = Rect::from_center_size(egui::pos2(rect.right() - 20.0, y), egui::vec2(28.0, 28.0));
     let bulk_response = ui.interact(bulk, ui.scope_id().with(("bulk", title)), Sense::click());
     let discard_all =
-        Rect::from_center_size(egui::pos2(rect.right() - 44.0, y), egui::vec2(22.0, 22.0));
+        Rect::from_center_size(egui::pos2(rect.right() - 50.0, y), egui::vec2(28.0, 28.0));
     let discard_all_response = if staged || title == "MERGE CONFLICTS" {
         None
     } else {
@@ -673,14 +673,11 @@ fn section(
             FontId::proportional(10.5),
             theme::text(),
         );
-        let hot = response.hovered()
-            || bulk_response.hovered()
-            || discard_all_response.as_ref().is_some_and(|r| r.hovered());
-        if hot {
-            icon_button(painter, bulk, staged, bulk_response.hovered());
-            if let Some(discard) = &discard_all_response {
-                discard_icon(painter, discard_all, discard.hovered());
-            }
+        // Always drawn: an action that shows only under the pointer cannot be found by keyboard.
+        let _ = &response;
+        icon_button(painter, bulk, staged, bulk_response.hovered());
+        if let Some(discard) = &discard_all_response {
+            discard_icon(painter, discard_all, discard.hovered());
         }
     }
     let owned: Vec<git::Change> = changes.iter().map(|change| (*change).clone()).collect();
@@ -716,7 +713,14 @@ fn icon_button(painter: &egui::Painter, rect: Rect, minus: bool, hovered: bool) 
     if hovered {
         painter.rect_filled(rect, 5.0, theme::overlay(24));
     }
-    let stroke = Stroke::new(1.5, theme::text());
+    let stroke = Stroke::new(
+        1.5,
+        if hovered {
+            theme::text()
+        } else {
+            theme::text_dim()
+        },
+    );
     let c = rect.center();
     painter.line_segment(
         [c + egui::vec2(-4.5, 0.0), c + egui::vec2(4.5, 0.0)],
@@ -735,7 +739,14 @@ fn discard_icon(painter: &egui::Painter, rect: Rect, hovered: bool) {
     if hovered {
         painter.rect_filled(rect, 5.0, theme::overlay(24));
     }
-    let stroke = Stroke::new(1.5, theme::text());
+    let stroke = Stroke::new(
+        1.5,
+        if hovered {
+            theme::text()
+        } else {
+            theme::text_dim()
+        },
+    );
     let c = rect.center();
     let mut points = Vec::new();
     for step in 0..=9 {
@@ -765,14 +776,14 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
     let y = rect.center().y;
     let stage_rect =
-        Rect::from_center_size(egui::pos2(rect.right() - 20.0, y), egui::vec2(22.0, 22.0));
+        Rect::from_center_size(egui::pos2(rect.right() - 20.0, y), egui::vec2(28.0, 28.0));
     let stage_response = ui.interact(
         stage_rect,
         ui.scope_id().with(("stage", staged, change.path.as_str())),
         Sense::click(),
     );
     let discard_rect =
-        Rect::from_center_size(egui::pos2(rect.right() - 44.0, y), egui::vec2(22.0, 22.0));
+        Rect::from_center_size(egui::pos2(rect.right() - 50.0, y), egui::vec2(28.0, 28.0));
     let discard_response = (!staged && !change.is_conflict()).then(|| {
         ui.interact(
             discard_rect,
@@ -815,11 +826,11 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
     );
     let name_width = name_galley.size().x;
     let text_left = rect.left() + 46.0;
-    // Room for the hover buttons only while they are shown.
-    let reserved = match (hovered, staged) {
-        (false, _) => 12.0,
-        (true, true) => 44.0,
-        (true, false) => 68.0,
+    // Room for the stage (and discard) buttons, which are always shown.
+    let reserved = if staged || discard_response.is_none() {
+        44.0
+    } else {
+        74.0
     };
     let clip = Rect::from_min_max(rect.min, egui::pos2(rect.right() - reserved, rect.bottom()));
     let text_painter = painter.with_clip_rect(clip);
@@ -839,11 +850,27 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
             theme::mix(theme::bg_sidebar(), theme::text(), 0.45),
         );
     }
-    if hovered {
-        icon_button(painter, stage_rect, staged, stage_response.hovered());
-        if let Some(discard) = &discard_response {
-            discard_icon(painter, discard_rect, discard.hovered());
-        }
+    icon_button(painter, stage_rect, staged, stage_response.hovered());
+    if let Some(discard) = &discard_response {
+        discard_icon(painter, discard_rect, discard.hovered());
+    }
+    crate::icons::mark_button(
+        ui,
+        &stage_response,
+        stage_rect,
+        &format!(
+            "{} {}",
+            if staged { "Unstage" } else { "Stage" },
+            change.path
+        ),
+    );
+    if let Some(discard) = &discard_response {
+        crate::icons::mark_button(
+            ui,
+            discard,
+            discard_rect,
+            &format!("Discard changes to {}", change.path),
+        );
     }
 
     if stage_response
