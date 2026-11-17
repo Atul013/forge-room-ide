@@ -34,6 +34,7 @@ struct ImpactDraft {
 }
 #[derive(Default)]
 pub struct Panel {
+    pub preflight: crate::room_preflight::State,
     scan: crate::room_impact_scan::State,
     impact_drafts: HashMap<String, ImpactDraft>,
     help_drafts: HashMap<String, String>,
@@ -172,6 +173,7 @@ impl Panel {
             }
             ui.label(if a.help_allowed{"Owner allows assistance recommendations; starting an agent still needs separate approval."}else{"Assistance recommendations are opted out until the current owner publishes opt-in."});
         }
+        self.preflight.show(ui, root, snapshot, &task.id, actions);
         if ui
             .button("Stage task brief for AI context review")
             .clicked()
@@ -274,7 +276,7 @@ impl Panel {
 }
 pub fn brief(snapshot: &Snapshot, task: &str) -> String {
     let task_state = snapshot.shared.tasks.iter().find(|t| t.id == task);
-    serde_json::json!({"source":"explicit network Room coordination snapshot; manual declarations, not verified checks","room":snapshot.room,"task":task_state,"readiness":snapshot.shared.readiness.profile(task),"help":snapshot.shared.readiness.help.iter().filter(|h|h.task==task).collect::<Vec<_>>(),"impacts":snapshot.shared.readiness.impacts.iter().filter(|i|i.source==task||i.target==task).take(16).collect::<Vec<_>>(),"host_time":snapshot.server_time_epoch_seconds,"note":"No DMs, patches, local files or agent permission are included. Review and Include separately before sending to a provider."}).to_string()
+    serde_json::json!({"source":"explicit network Room coordination snapshot; manual declarations, not verified checks","room":snapshot.room,"task":task_state,"readiness":snapshot.shared.readiness.profile(task),"task_evidence":snapshot.shared.evidence.iter().rev().filter(|e|e.task_id==task).take(8).collect::<Vec<_>>(),"help":snapshot.shared.readiness.help.iter().filter(|h|h.task==task).collect::<Vec<_>>(),"impacts":snapshot.shared.readiness.impacts.iter().filter(|i|i.source==task||i.target==task).take(16).collect::<Vec<_>>(),"host_time":snapshot.server_time_epoch_seconds,"note":"No DMs, patches, local files or agent permission are included. Review and Include separately before sending to a provider."}).to_string()
 }
 
 #[cfg(test)]
@@ -304,7 +306,22 @@ mod tests {
             before: "PRIVATE_PATCH_BASE".into(),
             after: "PRIVATE_PATCH_AFTER".into(),
         });
-        let brief = brief(&snapshot, "missing-task");
+        for (task, text) in [
+            ("T1", "VISIBLE_TASK_RECEIPT"),
+            ("T2", "OTHER_TASK_EVIDENCE_PRIVATE"),
+        ] {
+            snapshot.shared.evidence.push(forge_room_core::Evidence {
+                id: task.into(),
+                task_id: task.into(),
+                actor_id: "b".repeat(64),
+                kind: forge_room_core::EvidenceKind::Check,
+                summary: text.into(),
+                recorded_at_epoch_seconds: 1,
+            });
+        }
+        let brief = brief(&snapshot, "T1");
+        assert!(brief.contains("VISIBLE_TASK_RECEIPT"));
+        assert!(!brief.contains("OTHER_TASK_EVIDENCE_PRIVATE"));
         assert!(!brief.contains("PRIVATE_DM_MARKER"));
         assert!(!brief.contains("PRIVATE_PATCH"));
         assert!(!brief.contains("private.rs"));

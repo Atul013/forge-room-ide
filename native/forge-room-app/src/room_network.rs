@@ -62,6 +62,9 @@ impl Drop for NetworkRoom {
     }
 }
 impl NetworkRoom {
+    pub fn cancel_local_checks(&mut self) {
+        self.workflow.readiness.preflight.reset();
+    }
     pub fn take_ai_brief(&mut self) -> Option<String> {
         self.workflow.readiness.brief.take()
     }
@@ -93,6 +96,10 @@ impl NetworkRoom {
             }
         }
         let panel_height = (ui.available_height() * 0.65).max(120.0);
+        self.workflow
+            .readiness
+            .preflight
+            .reconcile(root.filter(|_| trusted), &self.snapshot);
         egui::CollapsingHeader::new("Network Room · host / join").default_open(false).show(ui, |ui| {
           egui::ScrollArea::vertical().id_salt("network-room-controls").max_height(panel_height).show(ui, |ui| {
             ui.label(&self.status);

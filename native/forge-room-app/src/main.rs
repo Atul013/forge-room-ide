@@ -44,6 +44,7 @@ mod room_changes;
 mod room_impact_scan;
 mod room_network;
 mod room_network_workflow;
+mod room_preflight;
 mod room_readiness;
 mod room_state;
 mod rooms;
@@ -3061,6 +3062,7 @@ impl ForgeRoomApp {
         self.trusted = trusted;
         if !trusted {
             self.ai.restrict();
+            self.room.cancel_local_checks();
             self.stop_language_sessions();
             if let Some(session) = self.dap.take() {
                 if self.dap_owned {

@@ -169,6 +169,9 @@ const AMBER: Color32 = Color32::from_rgb(226, 192, 141);
 const RED: Color32 = Color32::from_rgb(240, 113, 120);
 
 impl RoomView {
+    pub fn cancel_local_checks(&mut self) {
+        self.network.cancel_local_checks();
+    }
     pub fn take_ai_brief(&mut self) -> Option<String> {
         self.network.take_ai_brief()
     }

@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Final PR #72 scope includes approved local preflight, provenance-bearing local receipts and status-only Room evidence; full app suite now 341 passed/9 ignored with build and Clippy clean. Twelve new tests in this bundle, plus extended TCP-drop recovery/frame-bound fixtures. Desktop helper pipe is unavailable (os error 2), so no visible desktop claim. Superseded package run canceled; final expanded head gets fresh CI/package.
+
+- 2026-11-17 Codex: Extending the same PR #72 with owner-approved local Cargo/Python preflight and status-only self-attested evidence receipts; exact command review, bounded output/time/cancel, linked-file baselines and owner/root/revision/trust revocation. Raw output stays local. Real Cargo/stale-file/foreign-owner regressions pass; final combined head verification replaces the superseded package run.
+
 - 2026-11-17 Codex: Larger connected readiness/assistance/impact bundle is source complete. Five new core policy/analysis tests, an independent two-owner process workflow and four app privacy/Git/draft tests pass; existing real connection-drop trial now verifies readiness/help recovery. Full results: 27 core + five process trials + 339 app tests/9 ignored, both Clippy clean. Final single-PR CI/package and desktop/two-machine/provider acceptance remain separate.
 
 - 2026-11-17 Codex: Expanded the same readiness/assistance/impact bundle with revision references, cancellable bounded local Git relationship suggestions, current-owner acknowledgement after handoff, and privacy-whitelisted AI task brief staging. First full tests passed before scan addition; final suites and one combined PR are pending. No automatic execution/takeover or verified-evidence claim.
