@@ -652,6 +652,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn text_on_a_fill_is_readable_and_stays_inside_the_range() {
+        for fill in [
+            Color32::from_rgb(217, 131, 127),
+            Color32::from_rgb(255, 242, 122),
+            Color32::from_rgb(20, 20, 20),
+            Color32::WHITE,
+        ] {
+            assert!(contrast(readable_on(fill), fill) >= 4.5, "{fill:?}");
+        }
+        assert!((contrast(Color32::WHITE, Color32::BLACK) - 21.0).abs() < 0.01);
+        assert!(contrast(Color32::GRAY, Color32::GRAY) - 1.0 < 0.001);
+        // A colour that already reads is left alone; a faint one moves toward the text colour.
+        let bg = Color32::from_rgb(20, 20, 20);
+        assert_eq!(
+            ensure_contrast(Color32::WHITE, &[bg], Color32::WHITE, 4.5),
+            Color32::WHITE
+        );
+        let faint = Color32::from_rgb(40, 40, 40);
+        assert!(contrast(ensure_contrast(faint, &[bg], Color32::WHITE, 4.5), bg) >= 4.5);
+    }
+
+    #[test]
     fn every_theme_keeps_its_text_and_status_colors_readable() {
         for theme in all() {
             let p = theme.palette;

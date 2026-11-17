@@ -380,6 +380,31 @@ mod tests {
     }
 
     #[test]
+    fn previous_wraps_from_the_first_tab_to_the_last_and_next_back() {
+        let (a, b, c) = (
+            temp_file("p1.txt"),
+            temp_file("p2.txt"),
+            temp_file("p3.txt"),
+        );
+        let mut tabs = Tabs::default();
+        tabs.previous(); // no tabs: nothing happens
+        for path in [&a, &b, &c] {
+            tabs.open_file(path).unwrap();
+        }
+        tabs.active = 0;
+        tabs.previous();
+        assert_eq!(tabs.active, 2);
+        tabs.previous();
+        assert_eq!(tabs.active, 1);
+        tabs.next();
+        tabs.next();
+        assert_eq!(tabs.active, 0);
+        for path in [a, b, c] {
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
     fn opening_the_same_file_twice_reuses_the_tab() {
         let path = temp_file("a.txt");
         let mut tabs = Tabs::default();

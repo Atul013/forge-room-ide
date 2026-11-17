@@ -1587,7 +1587,9 @@ impl ForgeRoomApp {
                         add_terminal = true;
                     }
                 }
-                if (exited || self.terminals.is_empty()) && ui.small_button("Restart").clicked() {
+                if (exited || self.terminals.is_empty())
+                    && crate::icons::small_button(ui, "Restart").clicked()
+                {
                     restart = true;
                 }
             });
@@ -6020,4 +6022,38 @@ fn underline_tab_padded(
         );
     }
     response
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::{is_background_status, is_error_status};
+
+    #[test]
+    fn failures_are_recognised_by_how_they_start_not_by_file_names() {
+        for text in [
+            "Git: The remote has newer commits. Pull first, then push",
+            "Cannot open a.txt: denied",
+            "Could not save the lobby settings",
+            "Failed to start",
+            "Error reading file",
+        ] {
+            assert!(is_error_status(text), "{text}");
+        }
+        for text in [
+            "Saved build failed.txt",
+            "Opened folder D:/work",
+            "Ready",
+            "Pushed",
+        ] {
+            assert!(!is_error_status(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn only_messages_nobody_asked_for_wait_behind_an_error() {
+        assert!(is_background_status("Auto-saved a.rs"));
+        assert!(is_background_status("The agent finished"));
+        assert!(!is_background_status("Pushed"));
+        assert!(!is_background_status("Switched to main"));
+    }
 }

@@ -624,7 +624,7 @@ pub fn show(
                         .size(13.0)
                         .color(theme::text_dim()),
                     );
-                    if ui.small_button("Stop").clicked() {
+                    if crate::icons::small_button(ui, "Stop").clicked() {
                         state.stop();
                     }
                 });
@@ -1239,8 +1239,7 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
                         markdown(ui, &message.text);
                     }
                     if !user
-                        && ui
-                            .small_button("Copy")
+                        && crate::icons::small_button(ui, "Copy")
                             .on_hover_text("Copy this answer")
                             .clicked()
                     {
@@ -1314,13 +1313,13 @@ fn composer(
                     .to_owned();
                 ui.horizontal(|ui| {
                     ui.label(format!("Image: {name}"));
-                    if ui.small_button("Remove").clicked() {
+                    if crate::icons::small_button(ui, "Remove").clicked() {
                         state.clear_image();
                     }
                 });
             }
             ui.horizontal(|ui| {
-                if ui.small_button("Attach image…").clicked()
+                if crate::icons::small_button(ui, "Attach image…").clicked()
                     && let Some(path) = rfd::FileDialog::new()
                         .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
                         .pick_file()

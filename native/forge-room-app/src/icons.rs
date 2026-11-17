@@ -269,6 +269,12 @@ pub fn mark_button(ui: &egui::Ui, response: &egui::Response, rect: egui::Rect, l
     }
 }
 
+/// A text button that is big enough to hit (28 x 26 at least): egui's own small button is 9 px text
+/// with almost no padding.
+pub fn small_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(egui::Button::new(label).min_size(egui::vec2(28.0, 26.0)))
+}
+
 /// A flat 28px icon button: no frame until hovered, dim until hovered.
 pub fn icon_button(
     ui: &mut egui::Ui,
