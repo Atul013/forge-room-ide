@@ -111,6 +111,16 @@ pub struct Patch {
     pub path: String,
     pub before: String,
     pub after: String,
+    #[serde(default)]
+    pub review: PatchReview,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchReview {
+    #[default]
+    Pending,
+    Reviewed,
+    Declined,
 }
 /// Best-effort credential/path filter; sharing still requires explicit human review.
 pub fn validate_patch(path: &str, before: &str, after: &str) -> Result<()> {
@@ -493,6 +503,9 @@ impl Authority {
                     .share_patch(&actor, recipient, path, before, after)
                     .err(),
                 Action::RevokePatch { id } => self.revoke_patch(&actor, *id, false).err(),
+                Action::ReviewPatch { id, decision } => {
+                    self.review_patch(&actor, *id, *decision).err()
+                }
                 Action::Message {
                     text,
                     recipient,
@@ -726,7 +739,23 @@ impl Authority {
             path: path.into(),
             before: before.into(),
             after: after.into(),
+            review: PatchReview::Pending,
         });
+        Ok(())
+    }
+    fn review_patch(&mut self, actor: &str, id: u64, decision: PatchReview) -> Result<()> {
+        if decision == PatchReview::Pending {
+            return Err("A review receipt must be Reviewed or Declined".into());
+        }
+        let patch = self
+            .patches
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or("Patch is unavailable")?;
+        if patch.recipient != actor {
+            return Err("Only the selected recipient can record a patch review".into());
+        }
+        patch.review = decision;
         Ok(())
     }
     fn revoke_patch(&mut self, actor: &str, id: u64, host: bool) -> Result<()> {
@@ -949,6 +978,9 @@ impl Host {
         let actor = state.shared.state.host_id.clone();
         if let Action::RevokePatch { id } = action {
             return state.revoke_patch(&actor, id, true);
+        }
+        if let Action::ReviewPatch { id, decision } = action {
+            return state.review_patch(&actor, id, decision);
         }
         state.shared.apply(&actor, action)
     }
@@ -1259,6 +1291,20 @@ fn secret() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_patch_snapshots_default_to_pending_review() {
+        let patch: Patch = serde_json::from_value(serde_json::json!({
+            "id": 1,
+            "actor": "a",
+            "recipient": "b",
+            "path": "src/lib.rs",
+            "before": "old",
+            "after": "new"
+        }))
+        .unwrap();
+        assert_eq!(patch.review, PatchReview::Pending);
+    }
     fn host() -> Host {
         Host::start("127.0.0.1:0".parse().unwrap(), "Private trial").unwrap()
     }
@@ -1430,6 +1476,7 @@ mod tests {
                 path: format!("file{index}.txt"),
                 before: "\"".repeat(64 * 1024),
                 after: "\\".repeat(128 * 1024),
+                review: PatchReview::Pending,
             });
         }
         let mut bytes = Vec::new();

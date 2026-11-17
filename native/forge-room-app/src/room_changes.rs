@@ -1,6 +1,6 @@
 //! Explicit recipient-scoped saved patch review. Receiving a patch never writes a file.
 use eframe::egui;
-use forge_room_core::transport::{Action, Snapshot};
+use forge_room_core::transport::{Action, PatchReview, Snapshot};
 use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver},
@@ -67,14 +67,21 @@ impl Changes {
             }
             if discard{self.draft=None;}
             for patch in &snapshot.patches{
-                ui.label(format!("Patch #{} | {} | {} -> {}",patch.id,patch.path,label(snapshot,&patch.actor),label(snapshot,&patch.recipient)));
+                ui.label(format!("Patch #{} | {} | {} -> {} | {}",patch.id,patch.path,label(snapshot,&patch.actor),label(snapshot,&patch.recipient),match patch.review {PatchReview::Pending=>"awaiting recipient review",PatchReview::Reviewed=>"reviewed",PatchReview::Declined=>"declined"}));
                 if patch.actor==snapshot.you&&ui.button(format!("Revoke patch #{}",patch.id)).clicked(){actions.push(Action::RevokePatch {id:patch.id});}
                 if patch.recipient==snapshot.you&&ui.add_enabled(trusted&&online&&root.is_some(),egui::Button::new(format!("Review patch #{} for this workspace",patch.id))).clicked()&&let Some(root)=root{
                     match crate::ai_workflow::Workflow::received_patch(root,patch){Ok(review)=>{self.review=review;self.review_id=Some(patch.id);},Err(error)=>self.notice=Some(error)}
                 }
             }
             let mut apply=false;
-            if let Some(preview)=&self.review.preview{for file in &preview.files{ui.label(file.path.display().to_string());versions(ui,&file.before,&file.after,"received-patch");}apply=ui.add_enabled(trusted&&online&&self.review_id.is_some(),egui::Button::new("Apply this received patch locally")).clicked();}
+            if let Some(preview)=&self.review.preview{for file in &preview.files{ui.label(file.path.display().to_string());versions(ui,&file.before,&file.after,"received-patch");}
+                if let Some(id)=self.review_id {
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(online,egui::Button::new("Mark patch reviewed")).clicked(){actions.push(Action::ReviewPatch{id,decision:PatchReview::Reviewed});self.notice=Some("Review receipt sent to the patch sender".into());}
+                        if ui.add_enabled(online,egui::Button::new("Decline patch")).clicked(){actions.push(Action::ReviewPatch{id,decision:PatchReview::Declined});self.notice=Some("Decline receipt sent to the patch sender".into());}
+                    });
+                }
+                apply=ui.add_enabled(trusted&&online&&self.review_id.is_some(),egui::Button::new("Apply this received patch locally")).clicked();}
             if apply&&let Some(root)=root{match self.review.apply(root,dirty,false){Ok(())=>{self.changed=true;self.notice=Some("Received patch applied locally; guarded undo is available".into());},Err(error)=>self.notice=Some(error)}}
             if self.review.undo.is_some()&&ui.add_enabled(trusted,egui::Button::new("Undo last received patch")).clicked()&&let Some(root)=root{match self.review.apply(root,dirty,true){Ok(())=>{self.changed=true;self.notice=Some("Received patch was undone".into());},Err(error)=>self.notice=Some(error)}}
             ui.small("Credential-path and content filters are best effort: inspect both versions. Only sender and recipient receive this patch. Sender revocation or either member leaving ends further delivery; copies already received cannot be withdrawn. Apply requires a matching local base and refuses dirty or changed files.");
