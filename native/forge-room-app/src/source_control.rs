@@ -174,7 +174,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo, compact: bool) -> 
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Amend last commit").clicked() {
+                    if ui
+                        .button("Amend last commit (uses the message above)")
+                        .clicked()
+                    {
                         action = Action::Amend;
                         ui.close();
                     }
@@ -327,10 +330,24 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                 && ui.input(|input| input.modifiers.command && input.key_pressed(egui::Key::Enter));
             ui.add_space(6.0);
 
-            let label = if staged.is_empty() {
-                "Commit".to_string()
+            // The reason a disabled button is disabled is part of its label, not only a tooltip.
+            let label = if !conflicts.is_empty() {
+                "Commit (resolve conflicts first)".to_string()
+            } else if staged.is_empty() {
+                "Commit (stage a file first)".to_string()
+            } else if !can_commit {
+                format!("Commit {} staged (add a message)", staged.len())
             } else {
                 format!("Commit {} staged", staged.len())
+            };
+            let hint = if !conflicts.is_empty() {
+                "Resolve the merge conflicts first"
+            } else if can_commit {
+                "Commit the staged changes"
+            } else if staged.is_empty() {
+                "Stage a file to commit"
+            } else {
+                "Write a commit message to commit"
             };
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -339,17 +356,13 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                         .fill(theme::button())
                         .corner_radius(6.0)
                         .min_size(egui::vec2((ui.available_width() - 32.0).max(80.0), 30.0));
-                let hint = if !conflicts.is_empty() {
-                    "Resolve the merge conflicts first"
-                } else if can_commit {
-                    "Commit the staged changes"
+                let commit = ui.add_enabled(can_commit, button);
+                let commit = if can_commit {
+                    commit.on_hover_text(hint)
                 } else {
-                    "Stage changes and write a message first"
+                    commit.on_disabled_hover_text(hint)
                 };
-                if ((ui.add(button).on_hover_text(hint).clicked() && can_commit)
-                    || (submit && can_commit))
-                    && action.is_none()
-                {
+                if (commit.clicked() || (submit && can_commit)) && action.is_none() {
                     action = Some(Action::Commit);
                 }
                 // Dropdown arrow drawn by hand: the UI font has no arrow glyph.
@@ -373,7 +386,10 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                     {
                         action = Some(Action::CommitAndPush);
                     }
-                    if ui.button("Amend last commit").clicked() {
+                    if ui
+                        .button("Amend last commit (uses the message above)")
+                        .clicked()
+                    {
                         action = Some(Action::Amend);
                     }
                     if ui.button("Undo last commit").clicked() {

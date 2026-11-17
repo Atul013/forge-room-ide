@@ -949,11 +949,14 @@ impl Lobby {
                                 let label = if self.config.private {
                                     "Private (Invite Only)"
                                 } else {
-                                    "Open to anyone with the link"
+                                    "Open to anyone with the link (planned)"
                                 };
+                                // A button, so the keyboard reaches it too.
                                 if ui
-                                    .add(egui::Label::new(label).sense(Sense::click()))
-                                    .on_hover_text("Click to change")
+                                    .add(egui::Button::new(label).frame(false))
+                                    .on_hover_text(
+                                        "Click to change. Rooms are local to this computer for                                          now, so this is only a saved preference",
+                                    )
                                     .clicked()
                                 {
                                     self.config.private = !self.config.private;
@@ -1529,6 +1532,13 @@ impl Lobby {
                         ui.label(granted.join(" · "));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.menu_button("Manage", |ui| {
+                                ui.label(
+                                    RichText::new(
+                                        "Saved as preferences. Not enforced yet: rooms are local.",
+                                    )
+                                    .size(12.0)
+                                    .color(theme::text_dim()),
+                                );
                                 for (name, on) in
                                     PERMISSIONS.iter().zip(self.config.permissions.iter_mut())
                                 {
@@ -1570,6 +1580,11 @@ impl Lobby {
                     for (name, on) in SHARING.iter().zip(self.config.sharing.iter_mut()) {
                         ui.checkbox(on, *name);
                     }
+                    ui.label(
+                        RichText::new("Saved as preferences. Not active yet: rooms are local.")
+                            .size(12.0)
+                            .color(theme::text_dim()),
+                    );
                 };
                 let heading = |ui: &mut Ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
