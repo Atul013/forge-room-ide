@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Started native DAP debugger attach slice on `feat/native-dap-protocol` from current `origin/main`. Loopback adapter connection, bounded framing, explicit attach JSON, workspace breakpoints, stopped stack and step controls are in progress. Fake adapter and app checks are the source gate; live adapter and desktop acceptance remain separate.
+
 - 2026-11-16 Codex: Added guarded LSP Rename Symbol preview/apply on feat/native-lsp-rename. Focused stale-file/apply test, real rust-analyzer proposal on rerun, app check and Clippy passed; desktop and two-language acceptance pending.
 
 - 2026-11-16 Codex: Added trusted-folder Interactive agent terminal entry on feat/agent-interactive-terminal, stacked after Codex resume. This provides an answerable permission-prompt path; app check and Clippy passed, desktop/provider acceptance pending.
