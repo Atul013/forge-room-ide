@@ -48,6 +48,10 @@ pub struct Workflow {
     shared_focus: Option<String>,
     focus_initialized: bool,
     following: Option<String>,
+    location_path: String,
+    location_line: String,
+    location_initialized: bool,
+    following_location: Option<String>,
 }
 impl Workflow {
     pub fn observe_activity(&mut self, snapshot: &Snapshot) -> usize {
@@ -601,6 +605,94 @@ impl Workflow {
             } else {
                 self.following = None;
             }
+        }
+        ui.separator();
+        ui.heading("Code location sharing");
+        ui.label("Share a workspace-relative path and line with every joined member. Confirm it is a saved file; the Room does not check your disk. Source text, unsaved content, cursor selection and edits stay private.");
+        if !self.location_initialized {
+            if let Some(location) = snapshot
+                .shared
+                .code_locations
+                .iter()
+                .find(|location| location.actor == snapshot.you)
+            {
+                self.location_path = location.path.clone();
+                self.location_line = location.line.to_string();
+            }
+            self.location_initialized = true;
+        }
+        ui.horizontal(|ui| {
+            ui.label("Workspace-relative saved path");
+            ui.add(egui::TextEdit::singleline(&mut self.location_path).char_limit(512));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Line");
+            ui.add(egui::TextEdit::singleline(&mut self.location_line).char_limit(10));
+            if ui.button("Share code location").clicked() {
+                match self.location_line.trim().parse::<u32>() {
+                    Ok(line) if !self.location_path.trim().is_empty() => {
+                        actions.push(Action::ShareLocation {
+                            path: Some(self.location_path.trim().to_owned()),
+                            line: Some(line),
+                        });
+                    }
+                    _ => {
+                        ui.label("Enter a path and positive line number.");
+                    }
+                };
+            }
+            if ui.button("Stop sharing code location").clicked() {
+                actions.push(Action::ShareLocation {
+                    path: None,
+                    line: None,
+                });
+            }
+        });
+        let locations = &snapshot.shared.code_locations;
+        let available_actors: HashSet<_> =
+            locations.iter().map(|item| item.actor.as_str()).collect();
+        if self
+            .following_location
+            .as_deref()
+            .is_some_and(|actor| !available_actors.contains(actor))
+        {
+            self.following_location = None;
+        }
+        ui.label("Members sharing a code location");
+        if locations.is_empty() {
+            ui.label("No one is sharing a code location.");
+        }
+        for location in locations {
+            let member_name = name(snapshot, &location.actor);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!(
+                    "{member_name} · {}:{}",
+                    location.path, location.line
+                ));
+                if ui
+                    .selectable_label(
+                        self.following_location.as_deref() == Some(&location.actor),
+                        "Follow location",
+                    )
+                    .clicked()
+                {
+                    self.following_location = Some(location.actor.clone());
+                }
+                if self.following_location.as_deref() == Some(&location.actor)
+                    && ui.small_button("Stop following location").clicked()
+                {
+                    self.following_location = None;
+                }
+            });
+        }
+        if let Some(actor) = self.following_location.as_deref()
+            && let Some(location) = locations.iter().find(|location| location.actor == actor)
+        {
+            ui.group(|ui| {
+                ui.heading(format!("Following {}", name(snapshot, actor)));
+                ui.monospace(format!("{}:{}", location.path, location.line));
+                ui.label("Read-only location preview. Following does not open files or change your editor selection.");
+            });
         }
     }
     fn remember_reminder(&mut self, key: String) -> bool {

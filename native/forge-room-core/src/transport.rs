@@ -22,7 +22,7 @@ pub use readiness::{
     assess, Assessment, Declaration, HelpRequest, Impact, ReadinessProfile, ReadinessState,
     TaskReadiness,
 };
-pub use workflow::{Action, Countdown, Milestone, SharedSnapshot, TaskFocus};
+pub use workflow::{Action, CodeLocation, Countdown, Milestone, SharedSnapshot, TaskFocus};
 
 const VERSION: u32 = 3;
 // Includes escaped text for bounded shared tasks, messages and eight private patches.
@@ -1096,6 +1096,22 @@ impl Client {
         {
             return Err("Task focus belongs to a member who is no longer in the Room".into());
         }
+        let location_actors: std::collections::HashSet<_> = snapshot
+            .shared
+            .code_locations
+            .iter()
+            .map(|location| location.actor.as_str())
+            .collect();
+        if location_actors.len() != snapshot.shared.code_locations.len()
+            || snapshot.shared.code_locations.iter().any(|location| {
+                !snapshot
+                    .members
+                    .iter()
+                    .any(|member| member.id == location.actor)
+            })
+        {
+            return Err("Code location belongs to a member who is no longer in the Room".into());
+        }
         if snapshot.patches.len() > 8
             || snapshot.patches.iter().any(|p| {
                 p.actor.len() != 64
@@ -1230,6 +1246,31 @@ mod tests {
             actor: format!("{index:064x}"),
             task: "T1".into(),
         }));
+        assert!(workflow::validate(&invalid).is_err());
+    }
+
+    #[test]
+    fn code_location_field_is_backward_compatible_and_rejects_invalid_or_oversized_state() {
+        let mut old = serde_json::to_value(SharedSnapshot::default()).unwrap();
+        old.as_object_mut().unwrap().remove("code_locations");
+        let decoded: SharedSnapshot = serde_json::from_value(old).unwrap();
+        assert!(decoded.code_locations.is_empty());
+
+        let mut invalid = SharedSnapshot::default();
+        invalid.code_locations.push(CodeLocation {
+            actor: "a".repeat(64),
+            path: "../outside.rs".into(),
+            line: 10,
+        });
+        assert!(workflow::validate(&invalid).is_err());
+        invalid.code_locations.clear();
+        invalid
+            .code_locations
+            .extend((0..33).map(|index| CodeLocation {
+                actor: format!("{index:064x}"),
+                path: "src/main.rs".into(),
+                line: 1,
+            }));
         assert!(workflow::validate(&invalid).is_err());
     }
 

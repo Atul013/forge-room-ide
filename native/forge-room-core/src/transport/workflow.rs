@@ -36,6 +36,11 @@ pub enum Action {
     ShareFocus {
         task: Option<String>,
     },
+    /// Explicitly share a workspace-relative saved-file location without contents or selection.
+    ShareLocation {
+        path: Option<String>,
+        line: Option<u32>,
+    },
     CreateMilestone {
         title: String,
         due_hours: Option<u64>,
@@ -141,6 +146,12 @@ pub struct TaskFocus {
     pub actor: String,
     pub task: String,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeLocation {
+    pub actor: String,
+    pub path: String,
+    pub line: u32,
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SharedSnapshot {
     #[serde(default)]
@@ -154,6 +165,9 @@ pub struct SharedSnapshot {
     pub countdown: Countdown,
     #[serde(default)]
     pub task_focus: Vec<TaskFocus>,
+    /// Explicitly shared workspace-relative saved-file locations; no source text is included.
+    #[serde(default)]
+    pub code_locations: Vec<CodeLocation>,
 }
 pub(super) struct SharedRoom {
     readiness: super::readiness::Authority,
@@ -163,6 +177,7 @@ pub(super) struct SharedRoom {
     started: Option<Instant>,
     activity_sequence: u64,
     task_focus: std::collections::HashMap<String, String>,
+    code_locations: std::collections::HashMap<String, (String, u32)>,
 }
 impl SharedRoom {
     pub(super) fn new() -> Result<Self, String> {
@@ -182,6 +197,7 @@ impl SharedRoom {
             started: None,
             activity_sequence: 0,
             task_focus: Default::default(),
+            code_locations: Default::default(),
         })
     }
     pub(super) fn sync_members(&mut self, members: Vec<Participant>) {
@@ -196,6 +212,8 @@ impl SharedRoom {
             .map(|person| person.id.as_str())
             .collect();
         self.task_focus
+            .retain(|actor, _| joined.contains(actor.as_str()));
+        self.code_locations
             .retain(|actor, _| joined.contains(actor.as_str()));
     }
     pub(super) fn remaining(&self) -> Duration {
@@ -236,6 +254,19 @@ impl SharedRoom {
                     .collect();
                 focus.sort_by(|left, right| left.actor.cmp(&right.actor));
                 focus
+            },
+            code_locations: {
+                let mut locations: Vec<_> = self
+                    .code_locations
+                    .iter()
+                    .map(|(actor, (path, line))| CodeLocation {
+                        actor: actor.clone(),
+                        path: path.clone(),
+                        line: *line,
+                    })
+                    .collect();
+                locations.sort_by(|left, right| left.actor.cmp(&right.actor));
+                locations
             },
         }
     }
@@ -280,6 +311,22 @@ impl SharedRoom {
                     self.audit(actor, &format!("shared task focus {task_id}"));
                 } else if self.task_focus.remove(actor).is_some() {
                     self.audit(actor, "stopped sharing task focus");
+                }
+                return Ok(());
+            }
+            Action::ShareLocation { path, line } => {
+                match (path, line) {
+                    (Some(path), Some(line)) => {
+                        let path = validate_code_location(&path, line)?;
+                        self.code_locations.insert(actor.to_owned(), (path, line));
+                        self.audit(actor, "shared a saved-file code location");
+                    }
+                    (None, None) => {
+                        if self.code_locations.remove(actor).is_some() {
+                            self.audit(actor, "stopped sharing code location");
+                        }
+                    }
+                    _ => return Err("A code location needs both a path and line".into()),
                 }
                 return Ok(());
             }
@@ -494,6 +541,11 @@ pub(super) fn validate(snapshot: &SharedSnapshot) -> Result<(), String> {
                     .iter()
                     .any(|task| task.id == focus.task && task.status != TaskStatus::Done)
         })
+        || snapshot.code_locations.len() > 32
+        || snapshot.code_locations.iter().any(|location| {
+            location.actor.len() != 64
+                || validate_code_location(&location.path, location.line).is_err()
+        })
         || snapshot.tasks.iter().any(|t| {
             t.id.len() > 16
                 || t.owner_id.len() != 64
@@ -525,4 +577,27 @@ pub(super) fn validate(snapshot: &SharedSnapshot) -> Result<(), String> {
         return Err("Invalid shared Room state".into());
     }
     Ok(())
+}
+
+fn validate_code_location(path: &str, line: u32) -> Result<String, String> {
+    if path.is_empty()
+        || path.len() > 512
+        || path.contains(['\\', ':'])
+        || path.chars().any(char::is_control)
+        || path.starts_with('/')
+        || path.split('/').any(|part| {
+            part.is_empty()
+                || part == "."
+                || part == ".."
+                || part.starts_with('.')
+                || [".git", ".ssh"].contains(&part.to_ascii_lowercase().as_str())
+        })
+        || line == 0
+        || line > 10_000_000
+    {
+        return Err(
+            "Code location must be a safe workspace-relative path and bounded positive line".into(),
+        );
+    }
+    Ok(path.to_owned())
 }

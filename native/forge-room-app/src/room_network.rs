@@ -202,7 +202,7 @@ impl NetworkRoom {
                 let mut actions=self.workflow.show(ui,&self.snapshot,self.host.is_some(),root.filter(|_|trusted));
                 actions.extend(self.changes.show(ui,&self.snapshot,root,trusted,dirty,self.status.starts_with("Connected")));
                 for action in actions {
-                    if !matches!(action,Action::Message {..}|Action::MentionMessage {..}|Action::React {..}|Action::RequestHandoff {..}|Action::SharePatch {..}|Action::ShareFocus {..}) && let Some(host)=&self.host {
+                    if !matches!(action,Action::Message {..}|Action::MentionMessage {..}|Action::React {..}|Action::RequestHandoff {..}|Action::SharePatch {..}|Action::ShareFocus {..}|Action::ShareLocation {..}) && let Some(host)=&self.host {
                         if let Err(error)=host.control(action.clone()) {self.workflow.restore(action);self.notice=Some(error);}
                     } else if let Some(connection)=&self.connection
                         && let Err(error)=connection.commands.try_send(Command::Action(action)) {

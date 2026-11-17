@@ -16,6 +16,14 @@ A member can explicitly share one unfinished shared task ID as their current Roo
 
 This is task-level awareness, not file/cursor spectating, edit access or co-editing. The data remains subject to the existing self-hosted Room host visibility model.
 
+## Explicit saved-file location sharing (protocol v3)
+
+A member can manually share one workspace-relative saved-file path and positive line number up to 10 million, then update or clear it. The server rejects absolute, traversal, hidden and oversized paths, invalid line numbers and malformed snapshots. Locations are visible to all joined members, cleared when their member leaves or is revoked, and use the same authenticated invite/session boundary as other shared Room state. A viewer can follow one member in a separate read-only location preview and stop following at any time. Following never opens a file, moves the local caret or changes the viewer's editor selection.
+
+The feature shares path and line metadata only. It does not read or validate that path against the sender's disk, transmit file contents, unsaved buffers, cursor selection, diagnostics, or edits. It is an explicit location share, not automatic cursor streaming or collaborative editing. Receivers must have their own workspace copy to navigate manually.
+
+The independent-process test checks delivery to a second client, no content/selection fields, traversal/hidden-path and line rejection, opt-out, and cleanup after leave. Windows CI and desktop acceptance remain separate; two-machine LAN and visible UI trials are still required.
+
 ## Verification boundaries
 
 Core compatibility/validation and an independent-process two-client trial cover opt-in, recipient visibility, invalid task rejection, clearing and payload shape. App tests cover unread sequence counting and reminder window/deduplication. Windows CI can establish source/test/package results; visible desktop use and a two-machine LAN session remain separate acceptance gates.
