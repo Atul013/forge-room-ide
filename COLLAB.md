@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Windows CI exposed short/long path alias mismatch in explicit AI file attachments (RUNNER~1). Fixed canonical containment while retaining original-chain symlink/junction checks. Added native Windows short-path regression; affected AI review/stand-in CLI tests pass locally. Final CI rerun pending; no desktop acceptance claim.
+
 - 2026-11-17 Codex: Added the remaining bounded shared timing workflow to the same PR #64: twenty host-owned milestones with deadlines/completion and client-visible overdue state. Independent clients test host-only creation/update and synchronized results. Final combined CI remains separate from native desktop/provider/two-machine acceptance.
 
 - 2026-11-17 Codex: Grouped the A02 reviewed-AI workflow and R06 recipient-scoped saved patch fallback into the existing substantive PR #64 because both share exact baseline review/apply/undo machinery. Protocol v3; existing local rooms stay private. Stand-in CLI read-only/session separation, stale/dirty/undo tests and four independent-process transport/privacy/workflow trials pass locally. Local total: 21 core tests, four process trials, 289 app tests/7 ignored, build/format/core+app Clippy passed. Extended Windows CI and native desktop/provider/two-machine gates are tracked separately.

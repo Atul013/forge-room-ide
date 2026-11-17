@@ -120,18 +120,32 @@ fn checked(root: &Path, path: &Path) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 fn source(root: &Path, path: &Path) -> Result<Source, String> {
+    let supplied_root = root;
     let root = root.canonicalize().map_err(|e| e.to_string())?;
-    // Normalize an absolute dialog path, but validate every original child component first.
-    let normalized = crate::tabs::normalize(&root);
-    let input = if path.starts_with(&root) {
-        path.to_path_buf()
-    } else {
-        root.join(
-            path.strip_prefix(&normalized)
-                .map_err(|_| "File is outside the open folder")?,
-        )
-    };
-    let path = checked(&root, &input)?;
+    let candidate = path.canonicalize().map_err(|e| e.to_string())?;
+    if !candidate.starts_with(&root)
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    {
+        return Err("File is outside the open folder".into());
+    }
+    // Resolve drive/short-name aliases for containment, but inspect the original chain too:
+    // canonicalizing alone would hide a child symlink or junction pointing inside the root.
+    let mut ancestor = Some(path);
+    while let Some(current) = ancestor {
+        if current == supplied_root {
+            break;
+        }
+        if linked(&fs::symlink_metadata(current).map_err(|e| e.to_string())?) {
+            return Err("Linked files and directories are not supported".into());
+        }
+        if current.canonicalize().map_err(|e| e.to_string())? == root {
+            break;
+        }
+        ancestor = current.parent();
+    }
+    let path = checked(&root, &candidate)?;
     if fs::metadata(&path).map_err(|e| e.to_string())?.len() > 64 * 1024 {
         return Err("Attached files must be at most 64 KiB".into());
     }
@@ -462,6 +476,37 @@ fn proposal(root: &Path, baseline: &[Source], text: &str) -> Result<Preview, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn attachment_accepts_windows_short_root_and_long_file_aliases() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetShortPathNameW(long: *const u16, short: *mut u16, size: u32) -> u32;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "forge-long-context-directory-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("long-context-name.txt");
+        fs::write(&file, "context").unwrap();
+        let long: Vec<_> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut short = vec![0u16; 32768];
+        let length =
+            unsafe { GetShortPathNameW(long.as_ptr(), short.as_mut_ptr(), short.len() as u32) };
+        assert!(length > 0 && (length as usize) < short.len());
+        let alias = PathBuf::from(std::ffi::OsString::from_wide(&short[..length as usize]));
+        let mut workflow = Workflow::default();
+        workflow.attach(&alias, &file).unwrap();
+        assert_eq!(workflow.sources[0].before, "context");
+        let mut other = Workflow::default();
+        other
+            .attach(&root, &alias.join("long-context-name.txt"))
+            .unwrap();
+        assert_eq!(other.sources[0].relative, "long-context-name.txt");
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn proposal_requires_attached_unchanged_files_and_undo_preserves_later_work() {
         let root = std::env::temp_dir().join(format!("forge-ai-review-{}", std::process::id()));
