@@ -1,6 +1,6 @@
 //! Native controls for the isolated network Room. Network work never blocks egui polling.
 use eframe::egui;
-use forge_room_core::transport::{Client, Host, Invite, Snapshot};
+use forge_room_core::transport::{Action, Client, Host, Invite, Snapshot};
 use std::{
     sync::mpsc::{self, Receiver, SyncSender},
     thread,
@@ -8,12 +8,13 @@ use std::{
 };
 
 enum Command {
-    Post(String),
+    Action(Action),
     Stop,
 }
+type Update = Result<(Snapshot, Option<(String, Action)>), String>;
 struct Connection {
     commands: SyncSender<Command>,
-    updates: Receiver<Result<Snapshot, String>>,
+    updates: Receiver<Update>,
 }
 impl Drop for Connection {
     fn drop(&mut self) {
@@ -28,7 +29,8 @@ pub struct NetworkRoom {
     bind: String,
     name: String,
     invite_text: String,
-    draft: String,
+    workflow: crate::room_network_workflow::Workflow,
+    notice: Option<String>,
     snapshot: Snapshot,
     status: String,
 }
@@ -41,7 +43,8 @@ impl Default for NetworkRoom {
             bind: "127.0.0.1:0".into(),
             name: crate::room_state::local_user_name(),
             invite_text: String::new(),
-            draft: String::new(),
+            workflow: Default::default(),
+            notice: None,
             snapshot: Snapshot::default(),
             status: "Offline".into(),
         }
@@ -61,7 +64,11 @@ impl NetworkRoom {
             ui.ctx().request_repaint_after(Duration::from_millis(250));
             while let Ok(update) = connection.updates.try_recv() {
                 match update {
-                    Ok(snapshot) => {
+                    Ok((snapshot, notice)) => {
+                        if let Some((error, action)) = notice {
+                            self.workflow.restore(action);
+                            self.notice = Some(error);
+                        }
                         self.snapshot = snapshot;
                         self.status = "Connected · TLS · invite identity".into();
                     }
@@ -73,7 +80,9 @@ impl NetworkRoom {
         egui::CollapsingHeader::new("Network Room · host / join").default_open(false).show(ui, |ui| {
           egui::ScrollArea::vertical().id_salt("network-room-controls").max_height(panel_height).show(ui, |ui| {
             ui.label(&self.status);
-            ui.label("Shares only your display name, network roster and messages typed below. Local tasks, chat, files, terminals and agents stay private.");
+            if let Some(notice)=&self.notice { ui.label(notice); }
+            if self.notice.is_some() && ui.small_button("Dismiss notice").clicked() {self.notice=None;}
+            ui.label("Shares your name and items created in this network Room: roster, tasks, handoffs, evidence, activity and public messages. Direct messages go only to sender and recipient. Saved local Room data, files, terminals and agents stay private.");
             if self.connection.is_none() {
                 ui.label("Your display name");
                 ui.add(egui::TextEdit::singleline(&mut self.name).char_limit(64));
@@ -123,22 +132,16 @@ impl NetworkRoom {
                 for member in &self.snapshot.members {
                     ui.label(format!("{} ({}) · {}", member.name, member.id.chars().take(8).collect::<String>(), if member.online { "online" } else { "offline" }));
                 }
-                egui::ScrollArea::vertical().id_salt("network-room-chat").max_height(180.0).stick_to_bottom(true).show(ui, |ui| {
-                    for event in &self.snapshot.events {
-                        let name = self.snapshot.members.iter().find(|m| m.id == event.actor).map(|m| m.name.as_str()).unwrap_or("Former member");
-                        ui.label(format!("{name}: {}", event.text));
+                for action in self.workflow.show(ui,&self.snapshot,self.host.is_some()) {
+                    if !matches!(action,Action::Message {..}|Action::RequestHandoff {..}) && let Some(host)=&self.host {
+                        if let Err(error)=host.control(action.clone()) {self.workflow.restore(action);self.notice=Some(error);}
+                    } else if let Some(connection)=&self.connection
+                        && let Err(error)=connection.commands.try_send(Command::Action(action)) {
+                            if let Command::Action(action)=match error {mpsc::TrySendError::Full(command)|mpsc::TrySendError::Disconnected(command)=>command} {self.workflow.restore(action);}
+                            self.notice=Some("Action queue busy or disconnected; try again".into());
                     }
-                });
-                ui.label("Public network message");
-                ui.add(egui::TextEdit::multiline(&mut self.draft).desired_rows(2).char_limit(2000));
-                if ui.add_enabled(!self.draft.trim().is_empty(), egui::Button::new("Send to network Room")).clicked()
-                    && let Some(connection) = &self.connection {
-                        match connection.commands.try_send(Command::Post(self.draft.clone())) {
-                            Ok(()) => self.draft.clear(),
-                            Err(_) => self.status = "Message queue busy; try again".into(),
-                        }
                 }
-                ui.label("Presence expires after 10 seconds offline. Reconnect retains identity for up to 1 hour while the host runs. Recent history is bounded to 128 messages. DMs and local task sync are unavailable.");
+                ui.label("Presence expires after 10 seconds offline. Reconnect retains identity for one hour while host and client run. Local Room tasks and files are not imported.");
             }
           });
         });
@@ -161,7 +164,8 @@ impl NetworkRoom {
                 }
             };
             let mut pending = std::collections::VecDeque::new();
-            let _ = sender.try_send(Ok(snapshot.clone()));
+            let mut last_rejection = None;
+            let _ = sender.try_send(Ok((snapshot.clone(), None)));
             loop {
                 let command = if pending.len() < 4 {
                     receiver.recv_timeout(Duration::from_millis(500))
@@ -174,18 +178,25 @@ impl NetworkRoom {
                         let _ = client.leave();
                         break;
                     }
-                    Ok(Command::Post(text)) => {
+                    Ok(Command::Action(text)) => {
                         pending.push_back(text);
                     }
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                 }
                 let result = if let Some(text) = pending.front() {
-                    client.post(text)
+                    client
+                        .execute(text.clone())
+                        .map(|outcome| (outcome.snapshot, outcome.rejection))
                 } else {
-                    client.poll()
+                    client.poll().map(|snapshot| (snapshot, None))
                 };
                 match result {
-                    Ok(mut update) => {
+                    Ok((mut update, rejection)) => {
+                        if let Some(error) = rejection
+                            && let Some(action) = pending.front()
+                        {
+                            last_rejection = Some((error, action.clone()));
+                        }
                         pending.pop_front();
                         if update.reset {
                             snapshot.events.clear();
@@ -196,11 +207,12 @@ impl NetworkRoom {
                         }
                         snapshot.members = update.members;
                         snapshot.cursor = update.cursor;
-                        if matches!(
-                            sender.try_send(Ok(snapshot.clone())),
-                            Err(mpsc::TrySendError::Disconnected(_))
-                        ) {
-                            break;
+                        snapshot.shared = update.shared;
+                        snapshot.server_time_epoch_seconds = update.server_time_epoch_seconds;
+                        match sender.try_send(Ok((snapshot.clone(), last_rejection.clone()))) {
+                            Ok(()) => last_rejection = None,
+                            Err(mpsc::TrySendError::Disconnected(_)) => break,
+                            Err(mpsc::TrySendError::Full(_)) => {}
                         }
                     }
                     Err(error) => {

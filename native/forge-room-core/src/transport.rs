@@ -16,7 +16,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-const VERSION: u32 = 1;
+mod workflow;
+pub use workflow::{Action, Countdown, SharedSnapshot};
+
+const VERSION: u32 = 2;
 // 128 messages × 2000 Unicode characters plus roster and JSON framing fit below 2 MiB.
 const MAX_FRAME: usize = 2 * 1024 * 1024;
 const MAX_MEMBERS: usize = 32;
@@ -74,10 +77,17 @@ pub struct Event {
     pub sequence: u64,
     pub actor: String,
     pub text: String,
+    pub recipient: Option<String>,
+    pub task: Option<String>,
+    pub decision: bool,
+    pub parent: Option<u64>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub room: String,
+    pub you: String,
+    pub shared: SharedSnapshot,
+    pub server_time_epoch_seconds: u64,
     pub members: Vec<Member>,
     pub events: Vec<Event>,
     pub cursor: u64,
@@ -101,12 +111,19 @@ enum Request {
         text: String,
         cursor: u64,
     },
+    Execute {
+        session: String,
+        operation: u64,
+        action: Action,
+        cursor: u64,
+    },
     Leave {
         session: String,
     },
 }
 #[derive(Serialize, Deserialize)]
 struct Response {
+    rejection: Option<String>,
     error: Option<String>,
     session: Option<String>,
     identity: Option<String>,
@@ -124,6 +141,8 @@ struct Session {
     seen: Instant,
     expires: Instant,
     operation: u64,
+    last_action: Option<Action>,
+    last_rejection: Option<String>,
 }
 struct Authority {
     room: String,
@@ -131,9 +150,10 @@ struct Authority {
     sessions: HashMap<String, Session>,
     events: VecDeque<Event>,
     sequence: u64,
+    shared: workflow::SharedRoom,
 }
 impl Authority {
-    fn snapshot(&self, cursor: u64) -> Snapshot {
+    fn snapshot(&self, cursor: u64, viewer: Option<&str>) -> Snapshot {
         let now = Instant::now();
         let mut members: Vec<_> = self
             .sessions
@@ -153,11 +173,20 @@ impl Authority {
                 .is_some_and(|e| cursor.saturating_add(1) < e.sequence);
         Snapshot {
             room: self.room.clone(),
+            you: viewer.unwrap_or_default().into(),
+            shared: self.shared.snapshot(),
+            server_time_epoch_seconds: crate::now_epoch_seconds(),
             members,
             events: self
                 .events
                 .iter()
-                .filter(|e| reset || e.sequence > cursor)
+                .filter(|e| {
+                    (reset || e.sequence > cursor)
+                        && (e.recipient.is_none()
+                            || viewer.is_some_and(|id| {
+                                e.actor == id || e.recipient.as_deref() == Some(id)
+                            }))
+                })
                 .cloned()
                 .collect(),
             cursor: self.sequence,
@@ -167,8 +196,11 @@ impl Authority {
     fn handle(&mut self, request: Request) -> Result<Response> {
         let now = Instant::now();
         self.sessions.retain(|_, s| s.expires > now);
+        self.sync_members();
         let mut credential = None;
         let mut identity = None;
+        let mut rejection = None;
+        let viewer;
         let cursor = match request {
             Request::Join {
                 version,
@@ -190,6 +222,7 @@ impl Authority {
                 let id = secret()?;
                 grant.used = true;
                 identity = Some(id.clone());
+                viewer = id.clone();
                 credential = Some(token.clone());
                 self.sessions.insert(
                     token,
@@ -200,12 +233,16 @@ impl Authority {
                         seen: now,
                         expires: now + SESSION,
                         operation: 0,
+                        last_action: None,
+                        last_rejection: None,
                     },
                 );
+                self.sync_members();
+                self.shared.audit(&viewer, "joined the network Room");
                 0
             }
             Request::Poll { session, cursor } => {
-                self.authenticate(&session, now)?;
+                viewer = self.authenticate(&session, now)?.id.clone();
                 cursor
             }
             Request::Post {
@@ -214,30 +251,32 @@ impl Authority {
                 text,
                 cursor,
             } => {
-                let text = bounded(&text, 2000)?;
-                let session = self.authenticate(&session, now)?;
-                if operation == 0 || operation > session.operation.saturating_add(1) {
-                    return Err("Invalid operation sequence".into());
-                }
-                if operation == session.operation + 1 {
-                    session.operation = operation;
-                    let actor = session.id.clone();
-                    self.sequence += 1;
-                    self.events.push_back(Event {
-                        sequence: self.sequence,
-                        actor,
-                        text,
-                    });
-                    if self.events.len() > MAX_EVENTS {
-                        self.events.pop_front();
-                    }
-                }
+                let action = Action::message(&text);
+                viewer = self.authenticate(&session, now)?.id.clone();
+                rejection = self.execute(&session, operation, action)?;
+                cursor
+            }
+            Request::Execute {
+                session,
+                operation,
+                action,
+                cursor,
+            } => {
+                viewer = self.authenticate(&session, now)?.id.clone();
+                rejection = self.execute(&session, operation, action)?;
                 cursor
             }
             Request::Leave { session } => {
                 self.authenticate(&session, now)?;
-                self.sessions.remove(&session);
+                let actor = self
+                    .sessions
+                    .remove(&session)
+                    .expect("authenticated session")
+                    .id;
+                self.sync_members();
+                self.shared.audit(&actor, "left the network Room");
                 return Ok(Response {
+                    rejection: None,
                     error: None,
                     session: None,
                     identity: None,
@@ -246,11 +285,127 @@ impl Authority {
             }
         };
         Ok(Response {
+            rejection,
             error: None,
             session: credential,
             identity,
-            snapshot: Some(self.snapshot(cursor)),
+            snapshot: Some(self.snapshot(cursor, Some(&viewer))),
         })
+    }
+    fn sync_members(&mut self) {
+        self.shared.sync_members(
+            self.sessions
+                .values()
+                .map(|s| crate::Participant {
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    role: crate::Role::Human,
+                    owner_id: None,
+                })
+                .collect(),
+        );
+    }
+    fn execute(&mut self, token: &str, operation: u64, action: Action) -> Result<Option<String>> {
+        let session = self.sessions.get(token).ok_or("Session denied")?;
+        if operation == session.operation && session.last_action.as_ref() == Some(&action) {
+            return Ok(session.last_rejection.clone());
+        }
+        if operation == 0 || operation != session.operation.saturating_add(1) {
+            return Err("Invalid operation sequence or changed retry".into());
+        }
+        let actor = session.id.clone();
+        let rejection = match &action {
+            Action::Message {
+                text,
+                recipient,
+                task,
+                decision,
+                parent,
+            } => self
+                .message(
+                    &actor,
+                    text,
+                    recipient.clone(),
+                    task.clone(),
+                    *decision,
+                    *parent,
+                )
+                .err(),
+            _ => self.shared.apply(&actor, action.clone()).err(),
+        };
+        let session = self
+            .sessions
+            .get_mut(token)
+            .expect("session held under authority lock");
+        session.operation = operation;
+        session.last_action = Some(action);
+        session.last_rejection = rejection.clone();
+        Ok(rejection)
+    }
+    fn message(
+        &mut self,
+        actor: &str,
+        text: &str,
+        recipient: Option<String>,
+        task: Option<String>,
+        decision: bool,
+        parent: Option<u64>,
+    ) -> Result<()> {
+        let text = bounded(text, 2000)?;
+        if recipient
+            .as_ref()
+            .is_some_and(|id| !self.sessions.values().any(|s| &s.id == id))
+        {
+            return Err("Recipient is no longer joined".into());
+        }
+        if task
+            .as_ref()
+            .is_some_and(|id| !self.shared.state.tasks.iter().any(|t| &t.id == id))
+        {
+            return Err("Task is not a shared Room task".into());
+        }
+        if let Some(parent) = parent {
+            let event = self
+                .events
+                .iter()
+                .find(|e| e.sequence == parent)
+                .ok_or("Reply target is unavailable")?;
+            let same_channel = match (&event.recipient, &recipient) {
+                (None, None) => true,
+                (Some(old), Some(new)) => {
+                    (event.actor == actor && old == new) || (event.actor == *new && old == actor)
+                }
+                _ => false,
+            };
+            if !same_channel {
+                return Err("Reply target is unavailable".into());
+            }
+        }
+        self.sequence += 1;
+        let public = recipient.is_none();
+        self.events.push_back(Event {
+            sequence: self.sequence,
+            actor: actor.into(),
+            text,
+            recipient,
+            task,
+            decision,
+            parent,
+        });
+        if self.events.len() > MAX_EVENTS {
+            self.events.pop_front();
+        }
+        if public {
+            self.shared.audit(
+                actor,
+                if decision {
+                    "recorded a public Room decision"
+                } else {
+                    "posted a public Room message"
+                },
+            );
+        }
+        Ok(())
     }
     fn authenticate(&mut self, token: &str, now: Instant) -> Result<&mut Session> {
         let session = self
@@ -303,6 +458,7 @@ impl Host {
             sessions: HashMap::new(),
             events: VecDeque::new(),
             sequence: 0,
+            shared: workflow::SharedRoom::new()?,
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let (state, stopping) = (authority.clone(), stop.clone());
@@ -387,14 +543,28 @@ impl Host {
             grant.revoked = true;
         }
         state.sessions.retain(|_, s| s.invite != invite.token);
+        state.sync_members();
+        let host = state.shared.state.host_id.clone();
+        state
+            .shared
+            .audit(&host, "revoked an invite and its joined session");
         Ok(())
+    }
+    /// Host-local authority only. No serialized request can select the host actor.
+    pub fn control(&self, action: Action) -> Result<()> {
+        let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        let now = Instant::now();
+        state.sessions.retain(|_, s| s.expires > now);
+        state.sync_members();
+        let actor = state.shared.state.host_id.clone();
+        state.shared.apply(&actor, action)
     }
     pub fn snapshot(&self) -> Result<Snapshot> {
         Ok(self
             .authority
             .lock()
             .map_err(|_| "Room unavailable")?
-            .snapshot(0))
+            .snapshot(0, None))
     }
 }
 impl Drop for Host {
@@ -406,6 +576,11 @@ impl Drop for Host {
     }
 }
 
+pub struct Outcome {
+    pub snapshot: Snapshot,
+    pub rejection: Option<String>,
+}
+
 pub struct Client {
     invite: Invite,
     config: Arc<ClientConfig>,
@@ -413,7 +588,7 @@ pub struct Client {
     pub identity: String,
     cursor: u64,
     operation: u64,
-    pending: Option<String>,
+    pending: Option<Action>,
 }
 impl Client {
     pub fn join(invite: Invite, name: &str) -> Result<(Self, Snapshot)> {
@@ -457,23 +632,33 @@ impl Client {
         })?;
         self.accept(response.snapshot)
     }
-    /// On uncertain delivery only the same text may be retried, with the same operation ID.
-    pub fn post(&mut self, text: &str) -> Result<Snapshot> {
-        let text = bounded(text, 2000)?;
-        if self.pending.as_ref().is_some_and(|p| p != &text) {
-            return Err("Retry the pending message before sending another".into());
+    /// Acknowledged rejections consume an operation; interrupted delivery retains it for retry.
+    pub fn execute(&mut self, action: Action) -> Result<Outcome> {
+        if self.pending.as_ref().is_some_and(|p| p != &action) {
+            return Err("Retry the pending action before sending another".into());
         }
-        self.pending = Some(text.clone());
-        let response = self.exchange(Request::Post {
+        self.pending = Some(action.clone());
+        let response = self.exchange(Request::Execute {
             session: self.session.clone(),
             operation: self.operation + 1,
-            text,
+            action,
             cursor: self.cursor,
         })?;
         let snapshot = self.accept(response.snapshot)?;
         self.operation += 1;
         self.pending = None;
-        Ok(snapshot)
+        Ok(Outcome {
+            snapshot,
+            rejection: response.rejection,
+        })
+    }
+    pub fn post(&mut self, text: &str) -> Result<Snapshot> {
+        let text = bounded(text, 2000)?;
+        let outcome = self.execute(Action::message(&text))?;
+        match outcome.rejection {
+            Some(error) => Err(error),
+            None => Ok(outcome.snapshot),
+        }
     }
     pub fn leave(&mut self) -> Result<()> {
         self.exchange(Request::Leave {
@@ -495,6 +680,12 @@ impl Client {
                 e.actor.len() != 64
                     || bounded(&e.text, 2000).is_err()
                     || e.sequence > snapshot.cursor
+                    || e.recipient.as_ref().is_some_and(|recipient| {
+                        recipient.len() != 64
+                            || (e.actor != self.identity && recipient != &self.identity)
+                    })
+                    || e.task.as_ref().is_some_and(|task| task.len() > 16)
+                    || e.parent.is_some_and(|parent| parent >= e.sequence)
             })
             || snapshot
                 .events
@@ -502,6 +693,10 @@ impl Client {
                 .any(|pair| pair[0].sequence >= pair[1].sequence)
         {
             return Err("Invalid room snapshot".into());
+        }
+        workflow::validate(&snapshot.shared)?;
+        if snapshot.you.len() != 64 {
+            return Err("Invalid session identity".into());
         }
         self.cursor = snapshot.cursor;
         Ok(snapshot)
@@ -544,6 +739,7 @@ fn serve(socket: TcpStream, config: Arc<ServerConfig>, state: Arc<Mutex<Authorit
         .map_err(|_| "Room unavailable")?
         .handle(request)
         .unwrap_or_else(|error| Response {
+            rejection: None,
             error: Some(error),
             session: None,
             identity: None,

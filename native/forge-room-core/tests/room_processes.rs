@@ -13,6 +13,9 @@ struct Peer {
     output: Receiver<Value>,
 }
 impl Peer {
+    fn execute(&mut self, action: forge_room_core::transport::Action) -> Value {
+        self.request(json!({"command":"execute","action":action}))
+    }
     fn start() -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_forge-room-peer"))
             .stdin(Stdio::piped())
@@ -48,6 +51,184 @@ impl Peer {
             .recv_timeout(Duration::from_secs(10))
             .expect("independent client responded within deadline")
     }
+}
+
+#[test]
+fn independent_clients_share_tasks_handoffs_clock_and_private_conversations() {
+    use forge_room_core::{transport::Action, EvidenceKind, TaskPriority, TaskStatus};
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "shared workflow").unwrap();
+    let (mut a, mut b, mut outsider) = (Peer::start(), Peer::start(), Peer::start());
+    let a_join=a.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    let b_invite = host.invite(Duration::from_secs(60)).unwrap();
+    let b_join = b.request(json!({"command":"join","invite":b_invite.encode(),"name":"Grace"}));
+    let a_id = a_join["identity"].as_str().unwrap().to_string();
+    let b_id = b_join["identity"].as_str().unwrap().to_string();
+    outsider.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Third client"}));
+    let create = |title: &str, dependencies: Vec<String>| Action::CreateTask {
+        title: title.into(),
+        owner: a_id.clone(),
+        criteria: vec!["checks passed".into()],
+        dependencies,
+        priority: TaskPriority::High,
+        due_hours: Some(1),
+    };
+    assert!(a.execute(create("Protocol", vec![]))["rejection"].is_null());
+    assert!(a.execute(create("UI", vec!["T1".into()]))["rejection"].is_null());
+    let shared = b.request(json!({"command":"poll"}));
+    assert_eq!(
+        shared["snapshot"]["shared"]["tasks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(outsider.execute(Action::Transition {
+        task: "T1".into(),
+        status: TaskStatus::Done,
+        completed: vec!["checks passed".into()]
+    })["rejection"]
+        .is_string());
+    // A domain rejection is acknowledged and does not poison the client's next action.
+    assert!(
+        outsider.request(json!({"command":"post","text":"still connected after denial"}))["error"]
+            .is_null()
+    );
+    assert!(a.execute(Action::Transition {
+        task: "T2".into(),
+        status: TaskStatus::InProgress,
+        completed: vec![]
+    })["rejection"]
+        .is_string());
+    assert!(a.execute(Action::Transition {
+        task: "T1".into(),
+        status: TaskStatus::Done,
+        completed: vec![]
+    })["rejection"]
+        .is_string());
+    assert!(a.execute(Action::Evidence {
+        task: "T1".into(),
+        kind: EvidenceKind::Check,
+        text: "focused protocol trial passed".into()
+    })["rejection"]
+        .is_null());
+    assert!(a.execute(Action::Transition {
+        task: "T1".into(),
+        status: TaskStatus::Done,
+        completed: vec!["checks passed".into()]
+    })["rejection"]
+        .is_null());
+    assert!(a.execute(Action::RequestHandoff {
+        task: "T2".into(),
+        target: b_id.clone()
+    })["rejection"]
+        .is_null());
+    assert!(b.execute(Action::ApproveHandoff { task: "T2".into() })["rejection"].is_string());
+    host.control(Action::ApproveHandoff { task: "T2".into() })
+        .unwrap();
+    assert!(a.execute(Action::Priority {
+        task: "T2".into(),
+        priority: TaskPriority::Critical
+    })["rejection"]
+        .is_string());
+    let started = b.execute(Action::Transition {
+        task: "T2".into(),
+        status: TaskStatus::InProgress,
+        completed: vec![],
+    });
+    assert!(started["rejection"].is_null());
+    assert_eq!(started["snapshot"]["shared"]["tasks"][1]["ownerId"], b_id);
+    assert!(outsider.execute(Action::Countdown {
+        seconds: Some(10),
+        running: true
+    })["rejection"]
+        .is_string());
+    host.control(Action::Countdown {
+        seconds: Some(90),
+        running: true,
+    })
+    .unwrap();
+    let clock = a.request(json!({"command":"poll"}));
+    assert_eq!(clock["snapshot"]["shared"]["countdown"]["running"], true);
+    assert!(
+        clock["snapshot"]["shared"]["countdown"]["remaining_seconds"]
+            .as_u64()
+            .unwrap()
+            <= 90
+    );
+    host.control(Action::Countdown {
+        seconds: None,
+        running: false,
+    })
+    .unwrap();
+    let paused = b.request(json!({"command":"poll"}));
+    assert_eq!(paused["snapshot"]["shared"]["countdown"]["running"], false);
+    let private = "private-content-must-never-reach-third-client";
+    let sent = a.execute(Action::Message {
+        text: private.into(),
+        recipient: Some(b_id.clone()),
+        task: Some("T1".into()),
+        decision: true,
+        parent: None,
+    });
+    let parent = sent["snapshot"]["events"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()["sequence"]
+        .as_u64()
+        .unwrap();
+    let received = b.request(json!({"command":"poll"}));
+    assert!(received.to_string().contains(private));
+    assert!(b.execute(Action::Message {
+        text: "private reply".into(),
+        recipient: Some(a_id.clone()),
+        task: None,
+        decision: false,
+        parent: Some(parent)
+    })["rejection"]
+        .is_null());
+    let hidden = outsider.request(json!({"command":"poll"}));
+    assert!(!hidden.to_string().contains(private));
+    assert!(!hidden.to_string().contains("private reply"));
+    assert!(!serde_json::to_string(&host.snapshot().unwrap())
+        .unwrap()
+        .contains(private));
+    let denied = outsider.execute(Action::Message {
+        text: "attempt to quote private thread".into(),
+        recipient: None,
+        task: None,
+        decision: false,
+        parent: Some(parent),
+    });
+    assert!(denied["rejection"].is_string());
+    let mut late = Peer::start();
+    let late_join=late.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Late guest"}));
+    assert!(!late_join.to_string().contains(private));
+    assert_eq!(
+        late_join["snapshot"]["shared"]["tasks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    host.revoke(&b_invite).unwrap();
+    assert!(b.execute(Action::Due {
+        task: "T2".into(),
+        hours: Some(1)
+    })["error"]
+        .is_string());
+    assert!(a.execute(Action::Message {
+        text: "revoked recipient".into(),
+        recipient: Some(b_id),
+        task: None,
+        decision: false,
+        parent: None
+    })["rejection"]
+        .is_string());
+    assert!(
+        a.request(json!({"command":"post","text":"public after a rejected private send"}))["error"]
+            .is_null()
+    );
 }
 impl Drop for Peer {
     fn drop(&mut self) {

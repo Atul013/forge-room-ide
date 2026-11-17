@@ -38,6 +38,14 @@ fn main() {
                 "post" => Ok(
                     serde_json::json!({"snapshot":client.as_mut().ok_or("Not joined")?.post(value["text"].as_str().ok_or("Missing text")?)?}),
                 ),
+                "execute" => {
+                    let action = serde_json::from_value(value["action"].clone())
+                        .map_err(|_| "Invalid action")?;
+                    let outcome = client.as_mut().ok_or("Not joined")?.execute(action)?;
+                    Ok(
+                        serde_json::json!({"snapshot":outcome.snapshot,"rejection":outcome.rejection}),
+                    )
+                }
                 "leave" => {
                     client.as_mut().ok_or("Not joined")?.leave()?;
                     client = None;
