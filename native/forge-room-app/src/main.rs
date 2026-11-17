@@ -3552,6 +3552,10 @@ impl ForgeRoomApp {
             ui.small("Trust this folder before connecting to an adapter.");
             return;
         }
+        if self.repo_root().is_none() {
+            ui.small("Open a project folder before connecting to an adapter.");
+            return;
+        }
         self.debug_breakpoint_control(ui);
         if self.dap.is_none() {
             ui.horizontal(|ui| {
