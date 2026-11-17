@@ -22,6 +22,7 @@ mod gutter;
 mod icons;
 mod line_ops;
 mod lobby;
+mod local_models;
 mod lsp;
 mod lsp_rename;
 mod mark;
