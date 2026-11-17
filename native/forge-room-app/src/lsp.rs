@@ -1,5 +1,6 @@
-//! An on-demand native LSP diagnostics connection for a saved editor file.
-//! The server process is bounded and never writes to the workspace.
+//! Native language protocol helpers and an on-demand navigation fallback.
+//! `live` owns persistent trusted-workspace sessions. Language servers have ambient OS rights;
+//! refusing server edit requests does not sandbox the server process.
 use crate::diagnostics::{Problem, Report};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -10,6 +11,8 @@ use std::time::{Duration, Instant};
 
 const LIMIT: Duration = Duration::from_secs(45);
 const MAX_MESSAGE: usize = 4 * 1024 * 1024;
+
+pub mod live;
 
 fn language(path: &Path) -> Option<(&'static str, &'static str, &'static [&'static str])> {
     match path.extension()?.to_str()? {
@@ -55,20 +58,38 @@ fn write_message(writer: &mut impl Write, message: &Value) -> std::io::Result<()
 
 fn read_message(reader: &mut impl BufRead) -> std::io::Result<Value> {
     let mut length = None;
+    let mut headers = 0usize;
     loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
+        let mut bytes = Vec::new();
+        if reader
+            .take((8193usize.saturating_sub(headers)) as u64)
+            .read_until(b'\n', &mut bytes)?
+            == 0
+        {
             return Err(std::io::ErrorKind::UnexpectedEof.into());
         }
+        headers += bytes.len();
+        if headers > 8192 || !bytes.ends_with(b"\n") {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        let line = std::str::from_utf8(&bytes).map_err(std::io::Error::other)?;
         if line == "\r\n" || line == "\n" {
             break;
         }
-        if let Some(value) = line.strip_prefix("Content-Length:") {
-            length = value
-                .trim()
-                .parse::<usize>()
-                .ok()
-                .filter(|size| *size <= MAX_MESSAGE);
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("Content-Length")
+        {
+            if length.is_some() {
+                return Err(std::io::ErrorKind::InvalidData.into());
+            }
+            length = Some(
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|size| *size <= MAX_MESSAGE)
+                    .ok_or(std::io::ErrorKind::InvalidData)?,
+            );
         }
     }
     let size = length.ok_or(std::io::ErrorKind::InvalidData)?;
@@ -99,6 +120,7 @@ fn parse_diagnostics(value: &Value, file: &Path) -> Vec<Problem> {
         .collect()
 }
 
+#[cfg(test)]
 pub fn check(root: &Path, file: &Path, text: &str) -> Report {
     let mut report = Report {
         source: "language server",
@@ -615,6 +637,22 @@ pub fn query_with_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn framing_rejects_duplicate_or_oversized_headers_and_payloads() {
+        for bytes in [
+            b"Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}".to_vec(),
+            b"Content-Length: 4194305\r\n\r\n".to_vec(),
+            vec![b'x'; 8193],
+            b"Content-Length: 2\r\n\r\n{".to_vec(),
+        ] {
+            assert!(read_message(&mut std::io::Cursor::new(bytes)).is_err());
+        }
+        assert_eq!(
+            read_message(&mut std::io::Cursor::new(b"content-length: 2\r\n\r\n{}")).unwrap(),
+            json!({})
+        );
+    }
 
     #[test]
     #[ignore = "requires an installed rust-analyzer server"]
