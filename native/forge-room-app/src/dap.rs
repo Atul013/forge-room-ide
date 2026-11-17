@@ -77,24 +77,27 @@ fn read_message(reader: &mut impl BufRead) -> io::Result<Value> {
     let mut length = None;
     let mut header_bytes = 0;
     loop {
-        let mut line = String::new();
-        let read = reader.read_line(&mut line)?;
-        if read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "adapter closed",
-            ));
+        let mut line = Vec::new();
+        loop {
+            if header_bytes == 4096 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "DAP headers too large",
+                ));
+            }
+            let mut byte = [0];
+            reader.read_exact(&mut byte)?;
+            header_bytes += 1;
+            line.push(byte[0]);
+            if byte[0] == b'\n' {
+                break;
+            }
         }
-        header_bytes += read;
-        if header_bytes > 4096 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "DAP headers too large",
-            ));
-        }
-        if line == "\r\n" || line == "\n" {
+        if line == b"\r\n" || line == b"\n" {
             break;
         }
+        let line = std::str::from_utf8(&line)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         if let Some(value) = line
             .split_once(':')
             .filter(|(key, _)| key.eq_ignore_ascii_case("Content-Length"))
