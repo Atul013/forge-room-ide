@@ -36,6 +36,9 @@ pub struct Workflow {
     minutes: u64,
     clock_sample: Option<(u64, bool, Instant)>,
     activity_seen: Option<u64>,
+    activity_query: String,
+    activity_actor: Option<String>,
+    activity_task: Option<String>,
     remind_minutes: u64,
     reminded: HashSet<String>,
     reminder_order: VecDeque<String>,
@@ -364,7 +367,78 @@ impl Workflow {
                 } else {
                     "New shared activity since you last opened this feed."
                 });
-                for event in snapshot.shared.activity.iter().rev() {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.activity_query)
+                        .hint_text("Search shared activity")
+                        .char_limit(200),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    egui::ComboBox::from_id_salt("network-activity-actor")
+                        .selected_text(
+                            self.activity_actor
+                                .as_ref()
+                                .map(|id| name(snapshot, id))
+                                .unwrap_or("All members".into()),
+                        )
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.activity_actor, None, "All members");
+                            for member in &snapshot.members {
+                                ui.selectable_value(
+                                    &mut self.activity_actor,
+                                    Some(member.id.clone()),
+                                    &member.name,
+                                );
+                            }
+                        });
+                    egui::ComboBox::from_id_salt("network-activity-task")
+                        .selected_text(self.activity_task.as_deref().unwrap_or("All tasks"))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.activity_task, None, "All tasks");
+                            for task in &snapshot.shared.tasks {
+                                ui.selectable_value(
+                                    &mut self.activity_task,
+                                    Some(task.id.clone()),
+                                    format!("{}: {}", task.id, task.title),
+                                );
+                            }
+                        });
+                    if (!self.activity_query.is_empty()
+                        || self.activity_actor.is_some()
+                        || self.activity_task.is_some())
+                        && ui.small_button("Clear activity filters").clicked()
+                    {
+                        self.activity_query.clear();
+                        self.activity_actor = None;
+                        self.activity_task = None;
+                    }
+                });
+                let query = self.activity_query.clone();
+                let actor = self.activity_actor.clone();
+                let task_filter = self.activity_task.clone();
+                let matches: Vec<_> = snapshot
+                    .shared
+                    .activity
+                    .iter()
+                    .rev()
+                    .filter(|event| {
+                        activity_matches(
+                            snapshot,
+                            event,
+                            &query,
+                            actor.as_deref(),
+                            task_filter.as_deref(),
+                        )
+                    })
+                    .collect();
+                ui.small(format!(
+                    "Showing {} of {} retained events",
+                    matches.len(),
+                    snapshot.shared.activity.len()
+                ));
+                if matches.is_empty() {
+                    ui.label("No shared activity matches these filters.");
+                }
+                for event in matches {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(format!(
                             "{}: {}",
@@ -886,6 +960,32 @@ fn unread_activity(activity: &[ActivityEvent], after: u64) -> usize {
         .count()
 }
 
+fn activity_matches(
+    snapshot: &Snapshot,
+    event: &ActivityEvent,
+    query: &str,
+    actor: Option<&str>,
+    task: Option<&str>,
+) -> bool {
+    if actor.is_some_and(|actor| event.actor_id != actor) {
+        return false;
+    }
+    if task.is_some_and(|task| {
+        !event
+            .detail
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|part| part == task)
+    }) {
+        return false;
+    }
+    let query = query.trim().to_lowercase();
+    query.is_empty()
+        || event.detail.to_lowercase().contains(&query)
+        || name(snapshot, &event.actor_id)
+            .to_lowercase()
+            .contains(&query)
+}
+
 fn reminder_items(
     snapshot: &Snapshot,
     reminder_seconds: u64,
@@ -1027,6 +1127,34 @@ mod draft_tests {
         ];
         assert_eq!(unread_activity(&activity, 4), 1);
         assert_eq!(unread_activity(&activity, 5), 0);
+    }
+    #[test]
+    fn activity_filters_match_exact_task_member_and_text_without_prefix_leaks() {
+        let actor = "a".repeat(64);
+        let event = ActivityEvent {
+            id: "network-9".into(),
+            actor_id: actor.clone(),
+            detail: "started task T10".into(),
+            recorded_at_epoch_seconds: 0,
+        };
+        let snapshot = Snapshot {
+            members: vec![forge_room_core::transport::Member {
+                id: actor.clone(),
+                name: "Ada".into(),
+                online: true,
+            }],
+            ..Snapshot::default()
+        };
+        assert!(activity_matches(
+            &snapshot,
+            &event,
+            "started",
+            Some(&actor),
+            Some("T10")
+        ));
+        assert!(!activity_matches(&snapshot, &event, "", None, Some("T1")));
+        assert!(!activity_matches(&snapshot, &event, "other", None, None));
+        assert!(activity_matches(&snapshot, &event, "ada", None, None));
     }
     #[test]
     fn due_task_milestone_and_countdown_reminders_are_bounded_and_repeatable_by_key() {
