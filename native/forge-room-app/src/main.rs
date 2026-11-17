@@ -2,6 +2,7 @@
 
 mod agent;
 mod agent_workspaces;
+mod ai_context;
 mod ai_panel;
 mod ai_workflow;
 mod autosave;
@@ -4586,6 +4587,116 @@ impl ForgeRoomApp {
         }
     }
 
+    fn capture_ai_context(&mut self, kind: ai_context::Kind) -> Result<(), String> {
+        use ai_context::Kind;
+        if !self.trusted || self.ai.busy() || self.ai.context_locked() {
+            return Err(
+                "Context changes require an idle, trusted workspace outside a controlled session"
+                    .into(),
+            );
+        }
+        let root = self
+            .repo_root()
+            .ok_or("Open a project folder first")?
+            .canonicalize()
+            .map_err(|e| e.to_string())?;
+        let (title, text, tail) = match kind {
+            Kind::Selection => {
+                let tab = self
+                    .tabs
+                    .tabs
+                    .get(self.tabs.active)
+                    .ok_or("Open a source file and select text first")?;
+                let path = tab
+                    .doc
+                    .path()
+                    .ok_or("Save the file inside this workspace before capturing its selection")?;
+                let range = egui::TextEdit::load_state(
+                    &self.egui_ctx,
+                    egui::Id::unique(("editor", tab.id)),
+                )
+                .and_then(|state| state.cursor.char_range())
+                .ok_or("Select editor text first")?
+                .as_sorted_char_range();
+                let (title, text) = ai_context::selection(
+                    &root,
+                    path,
+                    tab.doc.text(),
+                    usize::from(range.start)..usize::from(range.end),
+                )?;
+                (title, text, false)
+            }
+            Kind::GitDiff => {
+                let path = self
+                    .tabs
+                    .active_path()
+                    .ok_or("Open a saved source file first")?;
+                return self.ai.context.start_diff(&root, path);
+            }
+            Kind::Diagnostics => {
+                let report = self
+                    .problems
+                    .as_ref()
+                    .ok_or("Run a compiler or language-server check first")?;
+                let entries = report.problems.iter().take(100).filter_map(|problem|{
+                    let source = ai_workflow::source(&root,&problem.file).ok()?;
+                    Some(serde_json::json!({"file":source.relative,"line":problem.line,"column":problem.column,"severity":if problem.error{"error"}else{"warning"},"message":problem.message}))
+                }).collect::<Vec<_>>();
+                if entries.is_empty() {
+                    return Err("No in-workspace Problems entries are available".into());
+                }
+                (format!("{}: last displayed Problems (not a fresh check)",report.source),serde_json::json!({"entries":entries,"source_truncated":report.truncated,"entry_limit":100,"note":"Captured from last displayed report; saved/unsaved source may have changed."}).to_string(),false)
+            }
+            Kind::Terminal => {
+                let terminal = self
+                    .terminals
+                    .get(self.active_terminal)
+                    .ok_or("Open a terminal first")?;
+                if terminal.initial_root.as_ref() != Some(&root) {
+                    return Err("This terminal started outside the current workspace; choose a terminal created here".into());
+                }
+                (
+                    format!(
+                        "Terminal {} tail: initial workspace only; current cwd unverified",
+                        self.active_terminal + 1
+                    ),
+                    terminal.all_text(),
+                    true,
+                )
+            }
+            Kind::Debugger => {
+                if self.dap_stack.is_empty() {
+                    return Err("Pause a debugger session to capture its stack".into());
+                }
+                let frames = self.dap_stack.iter().take(64).filter_map(|frame|{
+                    let source=ai_workflow::source(&root,frame.path.as_ref()?).ok()?;
+                    Some(serde_json::json!({"function":frame.name,"file":source.relative,"line":frame.line}))
+                }).collect::<Vec<_>>();
+                if frames.is_empty() {
+                    return Err("No in-workspace debugger frames are available".into());
+                }
+                ("Debugger stack snapshot (no variable values or evaluation)".into(),serde_json::json!({"frames":frames,"status":self.dap_status,"note":"Snapshot only; execution may have resumed."}).to_string(),false)
+            }
+            Kind::RoomTasks => {
+                let room = self
+                    .room
+                    .state()
+                    .ok_or("No local Room task state is available")?;
+                if room.tasks.is_empty() {
+                    return Err("No local Room tasks are available".into());
+                }
+                (
+                    "Local Room tasks (excludes messages, DMs and network Room)".into(),
+                    serde_json::to_string(&room.tasks.iter().take(50).collect::<Vec<_>>())
+                        .map_err(|e| e.to_string())?,
+                    false,
+                )
+            }
+            Kind::Skills => return self.ai.context.discover(&root),
+        };
+        self.ai.context.capture(&root, kind, title, text, tail)
+    }
+
     fn editor(&mut self, ui: &mut egui::Ui) {
         let focus = std::mem::take(&mut self.focus_editor);
         let mut font_id = egui::TextStyle::Monospace.resolve(ui.style());
@@ -5196,6 +5307,15 @@ impl ForgeRoomApp {
                     cwd.as_deref(),
                     self.trusted,
                 );
+                if let Some(kind) = self.ai.context.requested.take()
+                    && let Err(error) = self.capture_ai_context(kind)
+                {
+                    self.ai.context.error(error);
+                }
+                if let Some(root) = &cwd {
+                    let accept = self.trusted && !self.ai.busy() && !self.ai.context_locked();
+                    self.ai.context.poll(root, accept);
+                }
                 if let Some(path) = self.ai.take_workspace_open_request() {
                     let result =
                         std::env::current_exe()

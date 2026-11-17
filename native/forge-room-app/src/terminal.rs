@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub struct Terminal {
+    pub initial_root: Option<PathBuf>,
     parser: Arc<Mutex<vt100::Parser>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Box<dyn MasterPty + Send>,
@@ -135,6 +136,7 @@ impl Terminal {
             });
         }
         Ok(Self {
+            initial_root: cwd.and_then(|path| path.canonicalize().ok()),
             visible,
             parser,
             writer,
