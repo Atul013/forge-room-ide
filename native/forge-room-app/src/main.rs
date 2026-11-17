@@ -261,8 +261,11 @@ struct ForgeRoomApp {
     problems: Option<diagnostics::Report>,
     checking: background::Latest<diagnostics::Report>,
     lsp_query: background::Latest<lsp::QueryAnswer>,
+    lsp_live: lsp::live::Manager,
+    lsp_sync_at: Option<std::time::Instant>,
+    lsp_query_context: Option<(PathBuf, PathBuf, String)>,
     lsp_hover: Option<String>,
-    lsp_completion_context: Option<(PathBuf, usize, usize)>,
+    lsp_completion_context: Option<(PathBuf, usize, usize, String)>,
     lsp_completions: Vec<(String, String)>,
     lsp_references: Vec<(PathBuf, usize, usize)>,
     lsp_rename_name: Option<String>,
@@ -427,6 +430,9 @@ impl ForgeRoomApp {
             problems: None,
             checking: background::Latest::default(),
             lsp_query: background::Latest::default(),
+            lsp_live: lsp::live::Manager::default(),
+            lsp_sync_at: None,
+            lsp_query_context: None,
             lsp_hover: None,
             lsp_completion_context: None,
             lsp_completions: Vec::new(),
@@ -791,6 +797,7 @@ impl ForgeRoomApp {
             }
             self.explorer_state = explorer::State::default();
             self.problems = None;
+            self.stop_language_sessions();
             // Keep each folder's local agent conversation separate and restore it on return.
             self.ai.set_workspace(&folder);
             self.workspace = Some(Workspace::new(normalize(&path)));
@@ -995,6 +1002,11 @@ impl ForgeRoomApp {
             Command::Save => self.save_active(false),
             Command::SaveAs => self.save_active(true),
             Command::LspHover => self.start_lsp_query(lsp::QueryKind::Hover),
+            Command::LspStart => self.start_lsp_check(),
+            Command::LspStop => {
+                self.stop_language_sessions();
+                self.status = "Language sessions stopped".into();
+            }
             Command::LspDefinition => self.start_lsp_query(lsp::QueryKind::Definition),
             Command::LspCompletion => self.start_lsp_query(lsp::QueryKind::Completion),
             Command::LspReferences => self.start_lsp_query(lsp::QueryKind::References),
@@ -1346,13 +1358,90 @@ impl ForgeRoomApp {
             self.status = "Save this file before checking it with a language server".into();
             return;
         };
-        let text = tab.doc.text().to_owned();
-        let context = self.egui_ctx.clone();
-        if self
-            .checking
-            .request(&context, move || lsp::check(&root, &file, &text))
-        {
-            self.status = "Running language server diagnostics…".into();
+        self.lsp_query.discard();
+        self.lsp_query_context = None;
+        match self.lsp_live.start(&root, &file) {
+            Ok(()) => {
+                self.sync_language_sessions();
+                self.status = self.lsp_live.notice.clone();
+            }
+            Err(error) => self.status = error,
+        }
+    }
+
+    fn stop_language_sessions(&mut self) {
+        self.lsp_live.stop();
+        self.lsp_query.discard();
+        self.lsp_query_context = None;
+        self.lsp_completions.clear();
+        self.lsp_completion_context = None;
+        self.lsp_hover = None;
+        self.lsp_references.clear();
+        self.lsp_rename_preview = None;
+    }
+
+    fn sync_language_sessions(&mut self) {
+        let root = self.repo_root();
+        let mut bytes = 0;
+        let mut count = 0;
+        let mut excluded = 0;
+        let documents = self
+            .tabs
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i == self.tabs.active)
+            .chain(
+                self.tabs
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| *i != self.tabs.active),
+            )
+            .map(|(_, tab)| tab)
+            .filter(|t| !t.readonly)
+            .filter_map(|tab| {
+                let path = tab.doc.path()?;
+                if !self.lsp_live.captures(path) {
+                    return None;
+                }
+                // Avoid copying huge buffers only to reject them in the session manager.
+                let size = tab.doc.text().len();
+                if size > 256 * 1024 || bytes + size > 2 * 1024 * 1024 || count >= 16 {
+                    excluded += 1;
+                    return None;
+                }
+                bytes += size;
+                count += 1;
+                Some(lsp::live::Document::new(
+                    path.to_path_buf(),
+                    tab.doc.text().to_owned(),
+                    !tab.doc.is_dirty(),
+                ))
+            })
+            .collect();
+        self.lsp_live.sync(root.as_deref(), self.trusted, documents);
+        if excluded > 0 {
+            self.lsp_live.notice = format!(
+                "{excluded} buffer(s) omitted by the live session limits; active file has priority"
+            );
+        }
+        self.lsp_sync_at = Some(std::time::Instant::now());
+    }
+
+    fn poll_language_sessions(&mut self) {
+        if self.lsp_live.running() {
+            if self
+                .lsp_sync_at
+                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_millis(350))
+            {
+                self.sync_language_sessions();
+            }
+            self.egui_ctx
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        if let Some(report) = self.lsp_live.report() {
+            self.problems = Some(report);
         }
     }
 
@@ -1376,13 +1465,31 @@ impl ForgeRoomApp {
         let text = tab.doc.text().to_owned();
         let (line, column) = self.cursor;
         let completion_file = file.clone();
+        self.lsp_query_context = Some((root.clone(), file.clone(), text.clone()));
+        if self.lsp_live.running() {
+            self.sync_language_sessions();
+            match self.lsp_live.query(&file, &text, line, column, kind, None) {
+                Ok(()) => {
+                    self.status = "Querying live language server".into();
+                    if matches!(kind, lsp::QueryKind::Completion) {
+                        self.lsp_completion_context =
+                            Some((completion_file, line, column, text.clone()));
+                        self.lsp_completions.clear();
+                    }
+                }
+                Err(error) => self.status = error,
+            }
+            return;
+        }
         let context = self.egui_ctx.clone();
+        let completion_text = text.clone();
         if self.lsp_query.request(&context, move || {
             lsp::query(&root, &file, &text, line, column, kind)
         }) {
             self.status = "Querying language server…".into();
             if matches!(kind, lsp::QueryKind::Completion) {
-                self.lsp_completion_context = Some((completion_file, line, column));
+                self.lsp_completion_context =
+                    Some((completion_file, line, column, completion_text));
                 self.lsp_completions.clear();
             }
         }
@@ -1420,6 +1527,22 @@ impl ForgeRoomApp {
         let text = tab.doc.text().to_owned();
         let (line, column) = self.cursor;
         let context = self.egui_ctx.clone();
+        self.lsp_query_context = Some((root.clone(), file.clone(), text.clone()));
+        if self.lsp_live.running() {
+            self.sync_language_sessions();
+            self.status = match self.lsp_live.query(
+                &file,
+                &text,
+                line,
+                column,
+                lsp::QueryKind::Rename,
+                Some(name),
+            ) {
+                Ok(()) => "Asking live language server for rename edits".into(),
+                Err(error) => error,
+            };
+            return;
+        }
         if self.lsp_query.request(&context, move || {
             lsp::query_with_name(
                 &root,
@@ -1436,7 +1559,46 @@ impl ForgeRoomApp {
     }
 
     fn poll_lsp_query(&mut self) {
-        if let Some(answer) = self.lsp_query.poll() {
+        if self.lsp_live.has_answer() {
+            self.sync_language_sessions();
+        }
+        let live = self.lsp_live.take_answer();
+        let answer = if let Some(live) = live {
+            if self.trusted
+                && self.tabs.tabs.get(self.tabs.active).is_some_and(|tab| {
+                    tab.doc
+                        .path()
+                        .is_some_and(|p| tabs::normalize(p) == tabs::normalize(&live.file))
+                        && tab.doc.text() == live.text
+                })
+            {
+                Some(live.result)
+            } else {
+                self.status = "Discarded language result after the active buffer changed".into();
+                None
+            }
+        } else {
+            self.lsp_query.poll()
+        };
+        if let Some(answer) = answer {
+            if !self.trusted
+                || !self
+                    .lsp_query_context
+                    .as_ref()
+                    .is_some_and(|(root, file, text)| {
+                        self.repo_root().as_ref() == Some(root)
+                            && self.tabs.tabs.get(self.tabs.active).is_some_and(|tab| {
+                                tab.doc
+                                    .path()
+                                    .is_some_and(|p| tabs::normalize(p) == tabs::normalize(file))
+                                    && tab.doc.text() == text
+                            })
+                    })
+            {
+                self.status =
+                    "Discarded language result after the workspace or buffer changed".into();
+                return;
+            }
             self.status = answer.message.clone();
             if let Some((file, line, column)) = answer.location {
                 self.open_path(file.clone());
@@ -1884,6 +2046,7 @@ impl ForgeRoomApp {
     fn problems_view(&mut self, ui: &mut egui::Ui) {
         let mut run = false;
         let mut run_lsp = false;
+        let mut stop_lsp = false;
         let mut open: Option<diagnostics::Problem> = None;
         ui.horizontal(|ui| {
             ui.add_space(12.0);
@@ -1895,10 +2058,13 @@ impl ForgeRoomApp {
                 run = true;
             }
             if ui
-                .add_enabled(!busy, egui::Button::new("Run language server"))
+                .add_enabled(self.trusted, egui::Button::new("Start language session"))
                 .clicked()
             {
                 run_lsp = true;
+            }
+            if self.lsp_live.running() {
+                stop_lsp = ui.button("Stop language sessions").clicked();
             }
             if busy {
                 ui.spinner();
@@ -1920,6 +2086,16 @@ impl ForgeRoomApp {
                 ui.label(egui::RichText::new(text).color(theme::text_dim()));
             }
         });
+        if self.lsp_live.running() {
+            ui.label(self.lsp_live.status());
+            ui.small("Live diagnostics follow open buffers (16 files, 256 KiB each, 2 MiB total). Start each language explicitly.");
+        }
+        if !self.lsp_live.notice.is_empty() {
+            ui.small(&self.lsp_live.notice);
+        }
+        if stop_lsp {
+            self.stop_language_sessions();
+        }
         let Some(report) = &self.problems else {
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
@@ -2876,6 +3052,7 @@ impl ForgeRoomApp {
     fn set_trust(&mut self, trusted: bool) {
         self.trusted = trusted;
         if !trusted {
+            self.stop_language_sessions();
             if let Some(session) = self.dap.take() {
                 if self.dap_owned {
                     session.stop();
@@ -5609,6 +5786,7 @@ impl eframe::App for ForgeRoomApp {
         }
         self.auto_save_tabs();
         self.poll_check();
+        self.poll_language_sessions();
         self.poll_lsp_query();
         if let Some(session) = &self.dap {
             for event in session.drain() {
@@ -5708,10 +5886,11 @@ impl eframe::App for ForgeRoomApp {
                         });
                 });
             if let Some(insert) = chosen {
-                if let Some((file, line, column)) = &self.lsp_completion_context
+                if let Some((file, line, column, snapshot)) = &self.lsp_completion_context
                     && self.tabs.active_path() == Some(file.as_path())
                     && self.cursor == (*line, *column)
                     && let Some(tab) = self.tabs.active_tab()
+                    && tab.doc.text() == snapshot
                     && !tab.readonly
                 {
                     let text = tab.doc.text();

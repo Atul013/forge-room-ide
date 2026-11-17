@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Completed persistent language sessions source: explicit Problems/palette start/stop, bounded coalesced open-buffer full/incremental sync, versioned diagnostics, shared navigation/reviewed rename, latest-request and changed-buffer rejection, UTF-16 positions and owned-process shutdown/watchdog cleanup. Seven protocol/lifecycle regressions pass; real rust-analyzer and isolated pylsp trials passed unsaved syntax diagnostics/navigation while saved source stayed unchanged. Full local app suite 302 passed/9 ignored; final Windows CI/visible desktop tracked separately.
+
+- 2026-11-17 Codex: Started substantive native persistent-language-session batch stacked on PR #65. Explicit trusted start/stop, coalesced open-buffer synchronization, versioned diagnostics, shared navigation requests and lifecycle cleanup are in scope. #64 and #65 remain open with final Windows CI passed; upstream UX remains separate. No visible desktop or two-language acceptance claim yet.
+
 - 2026-11-17 Codex: Integrated safety fixes with recovery: preserve Ask/Plan/Reviewed flow across New Chat/folder changes, retain rejected drafts without overwriting newer input, keep evidence text task-scoped, renew active Room sessions by idle deadline for long rooms, reject duplicate criteria, and bind client snapshot identity to the authenticated actor. These are code/test changes in the A04 follow-on, not new desktop acceptance claims.
 
 - 2026-11-17 Codex: Extended PR #65 with durable workspace-scoped recovery copies saved/flushed before reviewed AI/Room patch apply or undo. Native checkpoint preview/explicit restore survives chat/app restart; matching, already-original and missing targets are handled while later edits/dirty buffers/changed recovery data are refused. Partial recovery and no-overwrite temporary-file tests pass; local full app suite 293 passed/7 ignored, build/Clippy passed. Source #64 is green; final extended #65 CI pending. Direct CLI per-action journaling and native desktop/provider acceptance remain open.

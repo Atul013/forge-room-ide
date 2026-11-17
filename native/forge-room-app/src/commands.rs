@@ -58,6 +58,8 @@ pub enum Command {
     ToggleTerminal,
     CheckProject,
     LspHover,
+    LspStart,
+    LspStop,
     LspDefinition,
     LspCompletion,
     LspReferences,
@@ -71,6 +73,12 @@ pub enum Command {
 
 /// (command, title shown in the palette, shortcut hint)
 pub const ALL: &[(Command, &str, &str)] = &[
+    (
+        Command::LspStart,
+        "Language: Start Session for Active File",
+        "",
+    ),
+    (Command::LspStop, "Language: Stop All Sessions", ""),
     (Command::LspHover, "Language: Show Hover", ""),
     (Command::LspDefinition, "Language: Go to Definition", ""),
     (Command::LspCompletion, "Language: Show Completions", ""),
