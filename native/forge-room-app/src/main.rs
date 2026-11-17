@@ -34,6 +34,7 @@ mod position;
 mod preview;
 mod project_tools;
 mod recovery;
+mod room_network;
 mod room_state;
 mod rooms;
 mod search;

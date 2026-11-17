@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Completed combined R01/R04 source on feat/native-room-transport: TLS-pinned host/join and network public chat, single-use/expiry/revocation enforcement, session identities, presence leases, idempotency and reconnect/replay. Twenty core tests plus two independent-process trials passed, including an injected connection drop. App tests: 284 passed/7 ignored; build, format and both Clippy gates passed. Windows CI pending. Desktop control pipe unavailable; visible desktop and two-machine LAN acceptance remain open. Interface and sharing contract: docs/native/ROOM_TRANSPORT.md; legacy/local Room data preserved.
+
+- 2026-11-17 Codex: Started combined R01/R04 native Room transport on feat/native-room-transport from origin/main after fetching both remotes and confirming PR #63 merged with Windows CI. Claiming shared core transport contract and native Room connection UI. Atul's new upstream UX commits are separate, unintegrated work; no core transport changes overlap. TLS-pinned self-hosted host/join, bounded invite/session enforcement, reconnect/replay and independent process clients are the intended source gate. Desktop and two-machine acceptance stay separate.
+
 - 2026-11-17 Codex: PR #63 merged into `main` after Windows CI passed format, locked resolution, core and app check/test/Clippy. The integrated Python debugger workflow also passed an isolated self-started debugpy breakpoint/locals/step/stack/output trial. Desktop interaction remains unverified because the Windows control pipe was unavailable; native Room R01/R04 remains next.
 
 - 2026-11-17 Codex: Started one combined I04 debugger workflow PR from current `origin/main`: project debugpy adapter startup, per-workspace saved breakpoints, stack source navigation, bounded locals and Debug Console output. A self-started debugpy trial passed breakpoint/locals/step/stack/output; focused persistence and adapter tests, app check, format and Clippy passed locally. Desktop interaction and Windows CI remain open. R01/R04 remains the separate native transport milestone.

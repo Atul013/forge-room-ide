@@ -1,4 +1,5 @@
 mod persistence;
+pub mod transport;
 
 pub use persistence::{LoadOutcome, StateStore, StoreError};
 

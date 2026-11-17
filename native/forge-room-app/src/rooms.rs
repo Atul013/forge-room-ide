@@ -87,6 +87,7 @@ pub enum Section {
 }
 
 pub struct RoomView {
+    network: crate::room_network::NetworkRoom,
     state: Option<RoomState>,
     filter: Option<Role>,
     store: Option<StateStore>,
@@ -124,6 +125,7 @@ pub struct RoomView {
 impl Default for RoomView {
     fn default() -> Self {
         Self {
+            network: crate::room_network::NetworkRoom::default(),
             state: None,
             filter: None,
             store: None,
@@ -430,6 +432,9 @@ impl RoomView {
             return;
         }
         let mut intents: Vec<Intent> = Vec::new();
+        if matches!(part, Section::Team | Section::Chat) {
+            self.network.show(ui, &self.workspace_name);
+        }
 
         if let Some(error) = self.error.clone() {
             egui::Frame::new()
