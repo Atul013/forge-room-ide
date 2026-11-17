@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
+mod agent_workspaces;
 mod ai_panel;
 mod ai_workflow;
 mod autosave;
@@ -5010,6 +5011,22 @@ impl ForgeRoomApp {
                     cwd.as_deref(),
                     self.trusted,
                 );
+                if let Some(path) = self.ai.take_workspace_open_request() {
+                    let result =
+                        std::env::current_exe()
+                            .map_err(|e| e.to_string())
+                            .and_then(|program| {
+                                std::process::Command::new(program)
+                                    .arg(path)
+                                    .spawn()
+                                    .map(|_| ())
+                                    .map_err(|e| e.to_string())
+                            });
+                    self.status = match result {
+                        Ok(()) => "Opened isolated workspace in another Forge Room window".into(),
+                        Err(error) => format!("Could not open isolated workspace: {error}"),
+                    };
+                }
                 // "Sign in" in the panel opens a terminal that runs the provider's own login.
                 if let Some(command) = self.ai.take_login_request() {
                     self.show_terminal = true;
