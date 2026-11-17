@@ -351,6 +351,13 @@ impl Tabs {
             self.active = (self.active + 1) % self.tabs.len();
         }
     }
+
+    /// The tab before the active one, wrapping from the first to the last.
+    pub fn previous(&mut self) {
+        if !self.tabs.is_empty() {
+            self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
+        }
+    }
 }
 
 #[cfg(test)]

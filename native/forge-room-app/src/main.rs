@@ -1047,6 +1047,10 @@ impl ForgeRoomApp {
                 self.tabs.next();
                 self.focus_editor = true;
             }
+            Command::PreviousTab => {
+                self.tabs.previous();
+                self.focus_editor = true;
+            }
             Command::ToggleSidebar => self.show_sidebar = !self.show_sidebar,
             Command::ShowExplorer => self.switch_view(SidebarView::Explorer),
             Command::ShowSourceControl => self.switch_view(SidebarView::SourceControl),
@@ -2035,12 +2039,20 @@ impl ForgeRoomApp {
                 self.run_command(Command::ToggleTerminal, false);
             } else if shortcut(ui, command_shift, Key::P) {
                 self.run_command(Command::GoToLine, true);
+            } else if shortcut(ui, command_shift, Key::ArrowUp) {
+                // The way out of the terminal for a keyboard-only user: it keeps Tab and Escape.
+                self.focus_editor = true;
+                self.status = "Back in the editor".into();
+            } else if shortcut(ui, command_shift, Key::E) {
+                self.switch_view(SidebarView::Explorer);
             }
             return;
         }
         // Most specific first: every Ctrl+Shift chord is tested before its plain Ctrl twin,
         // otherwise Ctrl+G would swallow Ctrl+Shift+G.
-        if shortcut(ui, command_shift, Key::P) {
+        if shortcut(ui, command_shift, Key::Tab) {
+            self.run_command(Command::PreviousTab, false);
+        } else if shortcut(ui, command_shift, Key::P) {
             self.run_command(Command::GoToLine, true);
         } else if shortcut(ui, command_shift, Key::F) {
             self.run_command(Command::ShowSearch, false);
@@ -3719,7 +3731,7 @@ impl ForgeRoomApp {
             let (mut yes, mut no) = (false, false);
             if dialog_shell(&self.egui_ctx, "git-confirm-dialog", title, 380.0, |ui| {
                 ui.label(text);
-                (yes, no) = dialog_buttons(ui, button, destructive, true);
+                (yes, no) = dialog_buttons(ui, button, destructive, true, None);
             }) {
                 no = true;
             }
@@ -3826,7 +3838,7 @@ impl ForgeRoomApp {
             let destructive = !matches!(question, Confirm::RunCheck);
             if dialog_shell(&self.egui_ctx, "confirm-dialog", title, 380.0, |ui| {
                 ui.label(text);
-                (yes, no) = dialog_buttons(ui, button, destructive, true);
+                (yes, no) = dialog_buttons(ui, button, destructive, true, None);
             }) {
                 no = true;
             }
@@ -3906,7 +3918,7 @@ impl ForgeRoomApp {
                     egui::RichText::new("You can restore it from the Recycle Bin.")
                         .color(theme::text_dim()),
                 );
-                (confirm, cancel) = dialog_buttons(ui, "Move to Recycle Bin", false, true);
+                (confirm, cancel) = dialog_buttons(ui, "Move to Recycle Bin", false, true, None);
             }) {
                 cancel = true;
             }
@@ -3944,18 +3956,14 @@ impl ForgeRoomApp {
             if dialog_shell(&self.egui_ctx, "rename-dialog", "Rename", 420.0, |ui| {
                 ui.label(format!("{}", path.display()));
                 let field = ui.text_edit_singleline(&mut name);
-                // Focus the name once, when the box opens: asking every frame would keep Tab from
-                // ever reaching the buttons.
-                if ui.memory(|memory| memory.focused().is_none()) {
-                    field.request_focus();
-                }
                 if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
                     confirm = true;
                 }
                 if let Some(error) = &error {
                     ui.colored_label(theme::danger(), error);
                 }
-                let (yes, no) = dialog_buttons(ui, "Rename", false, error.is_none());
+                let (yes, no) =
+                    dialog_buttons(ui, "Rename", false, error.is_none(), Some(field.id));
                 confirm |= yes;
                 cancel = no;
             }) {
@@ -4005,7 +4013,8 @@ impl ForgeRoomApp {
                     if let (Some(error), false) = (&error, typed.is_empty()) {
                         ui.colored_label(theme::danger(), error);
                     }
-                    let (yes, no) = dialog_buttons(ui, "Create", false, error.is_none());
+                    let (yes, no) =
+                        dialog_buttons(ui, "Create", false, error.is_none(), Some(field.id));
                     create |= yes;
                     cancel = no;
                 },
@@ -5879,15 +5888,17 @@ fn dialog_shell(
 
 /// The confirm and Cancel buttons of a question: `(confirmed, cancelled)`. A destructive confirm is
 /// red and Cancel takes the keyboard focus first, so a stray Enter does the safe thing; otherwise
-/// the confirm button does. `enabled` greys the confirm button out.
+/// the confirm button does. `enabled` greys the confirm button out. A question with a text field
+/// passes its id as `field`: the field gets the focus first. Focus is only placed while it is not
+/// already on one of the question's own widgets, so Tab can move between them.
 fn dialog_buttons(
     ui: &mut egui::Ui,
     confirm: &str,
     destructive: bool,
     enabled: bool,
+    field: Option<egui::Id>,
 ) -> (bool, bool) {
     ui.add_space(10.0);
-    let first_frame = ui.memory(|memory| memory.focused().is_none());
     ui.horizontal(|ui| {
         let (fill, text) = if destructive {
             (theme::danger(), theme::readable_on(theme::danger()))
@@ -5898,11 +5909,16 @@ fn dialog_buttons(
             egui::Button::new(egui::RichText::new(confirm).strong().color(text)).fill(fill);
         let yes = ui.add_enabled(enabled, yes_button);
         let no = ui.button("Cancel");
-        if first_frame {
-            if destructive || !enabled {
-                no.request_focus();
-            } else {
-                yes.request_focus();
+        let inside = ui.memory(|memory| {
+            memory.has_focus(yes.id)
+                || memory.has_focus(no.id)
+                || field.is_some_and(|id| memory.has_focus(id))
+        });
+        if !inside {
+            match field {
+                Some(id) => ui.memory_mut(|memory| memory.request_focus(id)),
+                None if destructive || !enabled => no.request_focus(),
+                None => yes.request_focus(),
             }
         }
         (yes.clicked(), no.clicked())
