@@ -70,6 +70,7 @@ struct Message {
 }
 
 pub struct State {
+    workflow: crate::ai_workflow::Workflow,
     messages: Vec<Message>,
     input: String,
     focus_input: bool,
@@ -110,6 +111,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            workflow: Default::default(),
             messages: Vec::new(),
             input: String::new(),
             focus_input: false,
@@ -158,6 +160,8 @@ const CODEX_MODELS: [(&str, &str); 1] = [("Default model", "")];
 
 #[derive(Serialize, Deserialize)]
 struct StoredChat {
+    #[serde(default)]
+    plan: String,
     messages: Vec<Message>,
     session: Option<String>,
     #[serde(default)]
@@ -190,6 +194,7 @@ impl State {
         self.started = None;
         self.finish();
         self.messages.clear();
+        self.workflow = Default::default();
         self.session = None;
         self.codex_session = None;
         self.workspace = Some(workspace.to_path_buf());
@@ -198,6 +203,7 @@ impl State {
             && let Ok(bytes) = std::fs::read(path)
             && let Ok(saved) = serde_json::from_slice::<StoredChat>(&bytes)
         {
+            self.workflow.plan = saved.plan.chars().take(64 * 1024).collect();
             self.messages = saved
                 .messages
                 .into_iter()
@@ -231,6 +237,7 @@ impl State {
             })
             .collect();
         let mut saved = StoredChat {
+            plan: self.workflow.plan.clone(),
             messages,
             session: self.session.clone(),
             codex_session: self.codex_session.clone(),
@@ -317,6 +324,37 @@ impl State {
     }
 
     /// The sign-in command the user asked for with the panel's button, once.
+    pub fn set_active_file(&mut self, path: Option<PathBuf>) {
+        self.workflow.active_file = path;
+    }
+    pub fn take_review_request(&mut self) -> Option<bool> {
+        let apply = std::mem::take(&mut self.workflow.apply_requested);
+        let undo = std::mem::take(&mut self.workflow.undo_requested);
+        if apply {
+            Some(false)
+        } else if undo {
+            Some(true)
+        } else {
+            None
+        }
+    }
+    pub fn apply_review(
+        &mut self,
+        root: &Path,
+        dirty: &[PathBuf],
+        undo: bool,
+    ) -> Result<(), String> {
+        if self.busy() {
+            return Err("Stop the running agent before applying edits".into());
+        }
+        self.workflow.apply(root, dirty, undo)?;
+        self.note(if undo {
+            "Last reviewed proposal was undone"
+        } else {
+            "Reviewed proposal applied; guarded undo is available in this chat"
+        });
+        Ok(())
+    }
     pub fn take_login_request(&mut self) -> Option<&'static str> {
         self.login_requested.take()
     }
@@ -447,21 +485,33 @@ impl State {
             ));
             return;
         };
+        let instruction = if text.is_empty() {
+            "Describe this image."
+        } else {
+            text.as_str()
+        };
+        let prompt = match self.workflow.prepare(cwd, instruction) {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                self.fail(error);
+                return;
+            }
+        };
         let request = agent::Request {
             provider,
             model: self.model.clone(),
             effort: self.effort.clone(),
-            mode: self.mode,
-            prompt: if text.is_empty() {
-                "Describe this image.".into()
-            } else {
-                text.clone()
-            },
+            mode: self.workflow.flow.mode(self.mode),
+            prompt,
             cwd: cwd.to_path_buf(),
-            session: match provider {
-                Provider::Claude => self.session.clone(),
-                Provider::Codex => self.codex_session.clone(),
-                _ => None,
+            session: if self.workflow.flow != crate::ai_workflow::Flow::Direct {
+                None
+            } else {
+                match provider {
+                    Provider::Claude => self.session.clone(),
+                    Provider::Codex => self.codex_session.clone(),
+                    _ => None,
+                }
             },
             image: self.image.clone(),
         };
@@ -497,11 +547,19 @@ impl State {
             return false;
         };
         let mut finished = false;
+        let mut succeeded = false;
         let events = run.poll();
         if !events.is_empty() {
             self.chat_dirty = true;
         }
         for event in events {
+            if let agent::Event::Text(text) = &event {
+                self.workflow.output = if text.len() <= 1024 * 1024 {
+                    text.clone()
+                } else {
+                    String::new()
+                };
+            }
             match event {
                 agent::Event::Text(text) => match self.messages.last_mut() {
                     Some(last) if last.author == Author::Assistant => {
@@ -518,12 +576,17 @@ impl State {
                     author: Author::Tool,
                     text: line,
                 }),
-                agent::Event::Session(id) => match self.run_provider {
-                    Some(Provider::Claude) => self.session = Some(id),
-                    Some(Provider::Codex) => self.codex_session = Some(id),
-                    _ => {}
-                },
+                agent::Event::Session(id) => {
+                    if self.workflow.run_flow == Some(crate::ai_workflow::Flow::Direct) {
+                        match self.run_provider {
+                            Some(Provider::Claude) => self.session = Some(id),
+                            Some(Provider::Codex) => self.codex_session = Some(id),
+                            _ => {}
+                        }
+                    }
+                }
                 agent::Event::Done { cost, error } => {
+                    succeeded = error.is_none();
                     finished = true;
                     match error {
                         Some(error) if error == "Stopped" => self.note("Stopped"),
@@ -531,10 +594,16 @@ impl State {
                             self.fail(error);
                             // A conversation that failed (an expired or unknown session) is not
                             // continued by the next message: that would fail the same way for ever.
-                            let old = match self.run_provider {
-                                Some(Provider::Claude) => self.session.take(),
-                                Some(Provider::Codex) => self.codex_session.take(),
-                                _ => None,
+                            let old = if self.workflow.run_flow
+                                == Some(crate::ai_workflow::Flow::Direct)
+                            {
+                                match self.run_provider {
+                                    Some(Provider::Claude) => self.session.take(),
+                                    Some(Provider::Codex) => self.codex_session.take(),
+                                    _ => None,
+                                }
+                            } else {
+                                None
                             };
                             if old.is_some() {
                                 self.note(
@@ -552,6 +621,15 @@ impl State {
             }
         }
         if finished {
+            if succeeded {
+                match self.workflow.complete() {
+                    Ok(Some(note)) => self.note(note),
+                    Err(error) => self.fail(error),
+                    _ => {}
+                }
+            } else {
+                self.workflow.run_flow = None;
+            }
             self.run = None;
             self.run_provider = None;
             self.started = None;
@@ -575,6 +653,7 @@ impl State {
         self.run_provider = None;
         self.started = None;
         self.messages.clear();
+        self.workflow = Default::default();
         self.session = None;
         self.codex_session = None;
         self.confirm_full = false;
@@ -646,6 +725,18 @@ pub fn show(
             header(ui);
             ui.add_space(8.0);
             controls(ui, state);
+            let busy = state.busy();
+            let old_plan = state.workflow.plan.clone();
+            for note in state.workflow.show(ui, cwd, busy, trusted) {
+                state.note(note);
+            }
+            if old_plan != state.workflow.plan {
+                state.chat_dirty = true;
+            }
+            if std::mem::take(&mut state.workflow.generate_requested) {
+                state.input = "Implement the reviewed plan in the attached files.".into();
+                state.send(ui.ctx(), cwd, trusted);
+            }
             ui.add_space(10.0);
             if state.messages.is_empty() {
                 quick_actions(ui, state);
@@ -1463,7 +1554,7 @@ fn composer(
                             .size(13.0)
                             .color(theme::text_dim()),
                     );
-                    if state.mode == Mode::Full {
+                    if state.workflow.flow.mode(state.mode) == Mode::Full {
                         ui.label(
                             RichText::new("Full access")
                                 .size(12.0)
@@ -1486,16 +1577,71 @@ mod tests {
         let mut first = State::default();
         first.set_workspace(&folder);
         first.note("saved for this folder");
+        first.workflow.plan = "Reviewed implementation plan".into();
         first.finish();
         let mut second = State::default();
         second.set_workspace(&folder);
         assert_eq!(second.messages.len(), 1);
         assert_eq!(second.messages[0].text, "saved for this folder");
+        assert_eq!(second.workflow.plan, "Reviewed implementation plan");
         second.new_chat();
         let mut third = State::default();
         third.set_workspace(&folder);
         assert!(third.messages.is_empty());
+        assert!(third.workflow.plan.is_empty());
         let _ = std::fs::remove_file(chat_path(&folder));
+    }
+
+    #[test]
+    fn older_chat_files_load_without_a_plan() {
+        let chat: StoredChat = serde_json::from_str(r#"{"messages":[],"session":null}"#).unwrap();
+        assert!(chat.plan.is_empty() && chat.codex_session.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn read_only_provider_draft_waits_for_apply_and_keeps_direct_session_separate() {
+        use crate::ai_workflow::Flow;
+        let root = std::env::temp_dir().join(format!("forge-ai-pipeline-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("main.txt");
+        std::fs::write(&file, "before\n").unwrap();
+        let program = root.join("mock-codex.cmd");
+        let proposal=serde_json::json!({"summary":"reviewed change","edits":[{"path":"main.txt","after":"after\n"}]}).to_string();
+        let event=serde_json::json!({"type":"item.completed","item":{"type":"agent_message","text":proposal}}).to_string();
+        std::fs::write(&program,format!("@echo off\r\necho %* > arguments.txt\r\necho {{\"type\":\"thread.started\",\"thread_id\":\"draft-thread\"}}\r\necho {event}\r\necho {{\"type\":\"turn.completed\"}}\r\n")).unwrap();
+        let mut state = State::default();
+        state.set_workspace(&root);
+        state.provider = Provider::Codex;
+        state.mode = Mode::Full;
+        state.programs = Some([None, Some(program)]);
+        state.codex_session = Some("direct-thread".into());
+        state.workflow.flow = Flow::Propose;
+        state.workflow.plan = "Update the attached file".into();
+        state.workflow.attach(&root, &file).unwrap();
+        state.input = "Implement the plan".into();
+        state.send(&egui::Context::default(), Some(&root), true);
+        let started = std::time::Instant::now();
+        while state.busy() && started.elapsed() < std::time::Duration::from_secs(8) {
+            state.poll();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!state.busy(), "mock provider finished within its deadline");
+        assert!(
+            state.workflow.preview.is_some(),
+            "draft produced a reviewable proposal"
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "before\n");
+        let args = std::fs::read_to_string(root.join("arguments.txt")).unwrap();
+        assert!(args.contains("--sandbox read-only"));
+        assert!(!args.contains("danger-full-access") && !args.contains("resume"));
+        assert_eq!(state.codex_session.as_deref(), Some("direct-thread"));
+        state.apply_review(&root, &[], false).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "after\n");
+        state.apply_review(&root, &[], true).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "before\n");
+        let _ = std::fs::remove_file(chat_path(&root));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

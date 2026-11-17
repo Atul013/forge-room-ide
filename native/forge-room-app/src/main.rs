@@ -2,6 +2,7 @@
 
 mod agent;
 mod ai_panel;
+mod ai_workflow;
 mod autosave;
 mod background;
 #[allow(dead_code)] // Keep optional brand artwork available to the AI panel and future themes.
@@ -34,6 +35,9 @@ mod position;
 mod preview;
 mod project_tools;
 mod recovery;
+mod room_changes;
+mod room_network;
+mod room_network_workflow;
 mod room_state;
 mod rooms;
 mod search;
@@ -3473,7 +3477,13 @@ impl ForgeRoomApp {
             }
             SidebarView::Room => {
                 let has_workspace = self.workspace.is_some();
-                self.room.show(ui, has_workspace, rooms::Section::Team);
+                self.room.show(
+                    ui,
+                    has_workspace,
+                    rooms::Section::Team,
+                    self.trusted,
+                    &self.tabs.dirty_paths(),
+                );
             }
             SidebarView::SourceControl => self.source_control_view(ui, false),
             SidebarView::Project(page) => {
@@ -4980,11 +4990,19 @@ impl ForgeRoomApp {
                     RightTab::Activity => rooms::Section::Activity,
                     _ => rooms::Section::Team,
                 };
-                self.room.show(ui, has_workspace, part);
+                self.room.show(
+                    ui,
+                    has_workspace,
+                    part,
+                    self.trusted,
+                    &self.tabs.dirty_paths(),
+                );
             }
             RightTab::Ai => {
                 let name = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.title());
                 let cwd = self.repo_root();
+                self.ai
+                    .set_active_file(self.tabs.active_path().map(|path| path.to_path_buf()));
                 ai_panel::show(
                     ui,
                     &mut self.ai,
@@ -5507,7 +5525,37 @@ impl eframe::App for ForgeRoomApp {
         }
         // An agent that was started from the AI panel: show what it says, and when it ends look at
         // the files again (it may have edited some).
+        if self.room.take_network_files_changed() {
+            self.reload_clean_tabs();
+            self.refresh_git();
+            self.status = "Received Room patch updated local files".into();
+        }
         let finished = self.ai.poll();
+        if let Some(undo) = self.ai.take_review_request() {
+            let root = self.repo_root();
+            let dirty: Vec<_> = self
+                .tabs
+                .tabs
+                .iter()
+                .filter(|tab| tab.doc.is_dirty())
+                .filter_map(|tab| tab.doc.path().map(|path| path.to_path_buf()))
+                .collect();
+            let result = if !self.trusted {
+                Err("Trust this folder before applying reviewed edits".into())
+            } else if let Some(root) = root {
+                self.ai.apply_review(&root, &dirty, undo)
+            } else {
+                Err("Open the original workspace first".into())
+            };
+            self.status = match result {
+                Ok(()) => {
+                    self.reload_clean_tabs();
+                    self.refresh_git();
+                    "Reviewed AI edits updated".into()
+                }
+                Err(error) => format!("Reviewed edits not applied: {error}"),
+            };
+        }
         let busy = self.ai.busy();
         // A run is started from the AI panel, so it is already in front; it is not pulled up again
         // when the run ends (the user may have gone elsewhere meanwhile).

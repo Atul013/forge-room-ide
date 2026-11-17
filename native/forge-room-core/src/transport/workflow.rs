@@ -1,0 +1,396 @@
+//! Shared Room policy. Saved local rooms are never imported into this authority.
+use crate::{
+    now_epoch_seconds, ActivityEvent, Evidence, EvidenceKind, HandoffRequest, Participant, Role,
+    RoomState, Task, TaskPriority, TaskStatus,
+};
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Action {
+    CreateMilestone {
+        title: String,
+        due_hours: Option<u64>,
+    },
+    MilestoneDone {
+        id: String,
+        done: bool,
+    },
+    SharePatch {
+        recipient: String,
+        path: String,
+        before: String,
+        after: String,
+    },
+    RevokePatch {
+        id: u64,
+    },
+    Message {
+        text: String,
+        recipient: Option<String>,
+        task: Option<String>,
+        decision: bool,
+        parent: Option<u64>,
+    },
+    CreateTask {
+        title: String,
+        owner: String,
+        criteria: Vec<String>,
+        dependencies: Vec<String>,
+        priority: TaskPriority,
+        due_hours: Option<u64>,
+    },
+    Transition {
+        task: String,
+        status: TaskStatus,
+        completed: Vec<String>,
+    },
+    Priority {
+        task: String,
+        priority: TaskPriority,
+    },
+    Due {
+        task: String,
+        hours: Option<u64>,
+    },
+    RequestHandoff {
+        task: String,
+        target: String,
+    },
+    ApproveHandoff {
+        task: String,
+    },
+    Evidence {
+        task: String,
+        kind: EvidenceKind,
+        text: String,
+    },
+    Countdown {
+        seconds: Option<u64>,
+        running: bool,
+    },
+}
+impl Action {
+    pub fn message(text: &str) -> Self {
+        Self::Message {
+            text: text.into(),
+            recipient: None,
+            task: None,
+            decision: false,
+            parent: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Countdown {
+    pub remaining_seconds: u64,
+    pub running: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Milestone {
+    pub id: String,
+    pub title: String,
+    pub due_at_epoch_seconds: Option<u64>,
+    pub done: bool,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SharedSnapshot {
+    #[serde(default)]
+    pub milestones: Vec<Milestone>,
+    pub tasks: Vec<Task>,
+    pub handoffs: Vec<HandoffRequest>,
+    pub evidence: Vec<Evidence>,
+    pub activity: Vec<ActivityEvent>,
+    pub countdown: Countdown,
+}
+pub(super) struct SharedRoom {
+    milestones: Vec<Milestone>,
+    pub(super) state: RoomState,
+    remaining: Duration,
+    started: Option<Instant>,
+    activity_sequence: u64,
+}
+impl SharedRoom {
+    pub(super) fn new() -> Result<Self, String> {
+        Ok(Self {
+            milestones: Vec::new(),
+            state: RoomState::new(
+                "network",
+                Participant {
+                    id: super::secret()?,
+                    name: "Host authority".into(),
+                    role: Role::Human,
+                    owner_id: None,
+                },
+            ),
+            remaining: Duration::ZERO,
+            started: None,
+            activity_sequence: 0,
+        })
+    }
+    pub(super) fn sync_members(&mut self, members: Vec<Participant>) {
+        self.state
+            .participants
+            .retain(|p| p.id == self.state.host_id);
+        self.state.participants.extend(members);
+    }
+    pub(super) fn remaining(&self) -> Duration {
+        self.started
+            .map(|start| self.remaining.saturating_sub(start.elapsed()))
+            .unwrap_or(self.remaining)
+    }
+    pub(super) fn snapshot(&self) -> SharedSnapshot {
+        SharedSnapshot {
+            milestones: self.milestones.clone(),
+            tasks: self.state.tasks.clone(),
+            handoffs: self.state.pending_handoffs.clone(),
+            evidence: self.state.evidence.clone(),
+            activity: self
+                .state
+                .activity
+                .iter()
+                .rev()
+                .take(128)
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect(),
+            countdown: Countdown {
+                remaining_seconds: self.remaining().as_secs(),
+                running: self.started.is_some() && !self.remaining().is_zero(),
+            },
+        }
+    }
+    pub(super) fn audit(&mut self, actor: &str, detail: &str) {
+        self.activity_sequence += 1;
+        self.state.activity.push(ActivityEvent {
+            id: format!("network-{}", self.activity_sequence),
+            actor_id: actor.into(),
+            detail: detail.into(),
+            recorded_at_epoch_seconds: now_epoch_seconds(),
+        });
+        if self.state.activity.len() > 128 {
+            self.state.activity.remove(0);
+        }
+    }
+    pub(super) fn apply(&mut self, actor: &str, action: Action) -> Result<(), String> {
+        let before = self.state.activity.len();
+        match action {
+            Action::CreateMilestone { title, due_hours } => {
+                if actor != self.state.host_id {
+                    return Err("Only the host can create milestones".into());
+                }
+                if self.milestones.len() >= 20 {
+                    return Err("Room milestone limit reached".into());
+                }
+                let title = super::bounded(&title, 200)?;
+                let deadline = due(due_hours)?;
+                let id = format!("M{}", self.milestones.len() + 1);
+                self.milestones.push(Milestone {
+                    id: id.clone(),
+                    title,
+                    due_at_epoch_seconds: deadline,
+                    done: false,
+                });
+                self.audit(actor, &format!("created milestone {id}"));
+                return Ok(());
+            }
+            Action::MilestoneDone { id, done } => {
+                if actor != self.state.host_id {
+                    return Err("Only the host can update milestones".into());
+                }
+                self.milestones
+                    .iter_mut()
+                    .find(|m| m.id == id)
+                    .ok_or("Milestone not found")?
+                    .done = done;
+                self.audit(
+                    actor,
+                    &format!(
+                        "marked milestone {id} {}",
+                        if done { "complete" } else { "open" }
+                    ),
+                );
+                return Ok(());
+            }
+            Action::Message { .. } => return Err("Use the message channel".into()),
+            Action::SharePatch { .. } | Action::RevokePatch { .. } => {
+                return Err("Use the patch channel".into())
+            }
+            Action::CreateTask {
+                title,
+                owner,
+                criteria,
+                dependencies,
+                priority,
+                due_hours,
+            } => {
+                if self.state.tasks.len() >= 100 {
+                    return Err("Room task limit reached".into());
+                }
+                let title = super::bounded(&title, 200)?;
+                if criteria.len() > 8 || dependencies.len() > 16 {
+                    return Err("Too many criteria or dependencies".into());
+                }
+                let criteria = criteria
+                    .iter()
+                    .map(|c| super::bounded(c, 200))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if dependencies
+                    .iter()
+                    .any(|id| !self.state.tasks.iter().any(|t| &t.id == id))
+                {
+                    return Err("Dependency must be a shared Room task".into());
+                }
+                let owner_name = self
+                    .state
+                    .participants
+                    .iter()
+                    .find(|p| p.id == owner)
+                    .ok_or("Owner is no longer joined")?
+                    .name
+                    .clone();
+                let task = Task {
+                    id: format!("T{}", self.state.tasks.len() + 1),
+                    title,
+                    owner_id: owner,
+                    owner_name,
+                    status: TaskStatus::Open,
+                    priority,
+                    dependencies,
+                    acceptance_criteria: criteria,
+                    completed_criteria: Vec::new(),
+                    worktree_branch: None,
+                    due_at_epoch_seconds: due(due_hours)?,
+                    updated_at_epoch_seconds: now_epoch_seconds(),
+                };
+                self.state
+                    .create_task(actor, task)
+                    .map_err(|e| e.to_string())?;
+            }
+            Action::Transition {
+                task,
+                status,
+                completed,
+            } => {
+                if completed.len() > 8 || completed.iter().any(|c| c.chars().count() > 200) {
+                    return Err("Invalid completion checklist".into());
+                }
+                self.state
+                    .transition_task(actor, &task, status, completed)
+                    .map_err(|e| e.to_string())?;
+            }
+            Action::Priority { task, priority } => self
+                .state
+                .set_task_priority(actor, &task, priority)
+                .map_err(|e| e.to_string())?,
+            Action::Due { task, hours } => {
+                let deadline = due(hours)?;
+                self.state
+                    .set_task_due(actor, &task, deadline)
+                    .map_err(|e| e.to_string())?;
+            }
+            Action::RequestHandoff { task, target } => self
+                .state
+                .request_handoff(actor, &task, &target)
+                .map_err(|e| e.to_string())?,
+            Action::ApproveHandoff { task } => self
+                .state
+                .approve_handoff(actor, &task)
+                .map_err(|e| e.to_string())?,
+            Action::Evidence { task, kind, text } => {
+                if self.state.evidence.len() >= 128 {
+                    return Err("Room evidence limit reached".into());
+                }
+                let text = super::bounded(&text, 500)?;
+                self.state
+                    .record_evidence(actor, &task, kind, text)
+                    .map_err(|e| e.to_string())?;
+            }
+            Action::Countdown { seconds, running } => {
+                if actor != self.state.host_id {
+                    return Err("Only the host can control the countdown".into());
+                }
+                let remaining = match seconds {
+                    Some(seconds) if seconds <= 7 * 86400 => Duration::from_secs(seconds),
+                    Some(_) => return Err("Countdown limit is seven days".into()),
+                    None => self.remaining(),
+                };
+                self.remaining = remaining;
+                self.started = running.then(Instant::now);
+                self.audit(
+                    actor,
+                    if running {
+                        "started or resumed the countdown"
+                    } else {
+                        "paused or reset the countdown"
+                    },
+                );
+                return Ok(());
+            }
+        }
+        // Replace domain-local activity IDs with a stable sequence for this shared session.
+        for event in &mut self.state.activity[before..] {
+            self.activity_sequence += 1;
+            event.id = format!("network-{}", self.activity_sequence);
+        }
+        if self.state.activity.len() > 128 {
+            self.state.activity.drain(..self.state.activity.len() - 128);
+        }
+        Ok(())
+    }
+}
+fn due(hours: Option<u64>) -> Result<Option<u64>, String> {
+    if hours.is_some_and(|h| h > 30 * 24) {
+        return Err("Due time limit is thirty days".into());
+    }
+    Ok(hours.map(|h| now_epoch_seconds().saturating_add(h * 3600)))
+}
+pub(super) fn validate(snapshot: &SharedSnapshot) -> Result<(), String> {
+    if snapshot.milestones.len() > 20
+        || snapshot
+            .milestones
+            .iter()
+            .any(|m| m.id.len() > 16 || super::bounded(&m.title, 200).is_err())
+    {
+        return Err("Invalid milestone state".into());
+    }
+    if snapshot.tasks.len() > 100
+        || snapshot.handoffs.len() > 100
+        || snapshot.evidence.len() > 128
+        || snapshot.activity.len() > 128
+        || snapshot.countdown.remaining_seconds > 7 * 86400
+        || snapshot.tasks.iter().any(|t| {
+            t.id.len() > 16
+                || t.owner_id.len() != 64
+                || super::bounded(&t.title, 200).is_err()
+                || t.owner_name.chars().count() > 64
+                || t.dependencies.len() > 16
+                || t.dependencies.iter().any(|d| d.len() > 16)
+                || t.acceptance_criteria.len() > 8
+                || t.acceptance_criteria
+                    .iter()
+                    .any(|c| super::bounded(c, 200).is_err())
+                || t.completed_criteria.len() > 8
+                || t.completed_criteria.iter().any(|c| c.chars().count() > 200)
+                || t.worktree_branch.is_some()
+        })
+        || snapshot.evidence.iter().any(|e| {
+            super::bounded(&e.summary, 500).is_err()
+                || e.task_id.len() > 16
+                || e.actor_id.len() != 64
+        })
+        || snapshot
+            .activity
+            .iter()
+            .any(|e| e.detail.chars().count() > 500 || e.actor_id.len() != 64)
+        || snapshot.handoffs.iter().any(|h| {
+            h.task_id.len() > 16 || h.from_owner_id.len() != 64 || h.target_owner_id.len() != 64
+        })
+    {
+        return Err("Invalid shared Room state".into());
+    }
+    Ok(())
+}

@@ -206,6 +206,7 @@ pub fn apply(preview: &Preview) -> Result<(), String> {
     }
     let mut backups = Vec::new();
     for (index, file) in preview.files.iter().enumerate() {
+        let mut current_restore_failed = false;
         let backup = file
             .path
             .with_extension(format!("forge-rename-{stamp}-{index}.bak"));
@@ -214,16 +215,23 @@ pub fn apply(preview: &Preview) -> Result<(), String> {
                 return Err(std::io::Error::other("file changed during rename"));
             }
             fs::rename(&file.path, &backup)?;
+            if fs::read_to_string(&backup).map_or(true, |text| text != file.before) {
+                current_restore_failed = fs::rename(&backup, &file.path).is_err();
+                return Err(std::io::Error::other("file changed while staging the edit"));
+            }
             if let Err(error) = fs::rename(&staged[index], &file.path) {
-                let _ = fs::rename(&backup, &file.path);
+                current_restore_failed = fs::rename(&backup, &file.path).is_err();
                 return Err(error);
             }
             Ok::<(), std::io::Error>(())
         })();
         if let Err(error) = result {
-            let mut restore_failed = false;
-            for (path, backup) in backups.iter().rev() {
-                if fs::remove_file(path).is_err() || fs::rename(backup, path).is_err() {
+            let mut restore_failed = current_restore_failed;
+            for (path, backup, expected) in backups.iter().rev() {
+                if fs::read_to_string(path).map_or(true, |text| &text != expected)
+                    || fs::remove_file(path).is_err()
+                    || fs::rename(backup, path).is_err()
+                {
                     restore_failed = true;
                 }
             }
@@ -236,9 +244,9 @@ pub fn apply(preview: &Preview) -> Result<(), String> {
                 format!("Rename stopped; prior files were restored: {error}")
             });
         }
-        backups.push((file.path.clone(), backup));
+        backups.push((file.path.clone(), backup, file.after.clone()));
     }
-    for (_, backup) in backups {
+    for (_, backup, _) in backups {
         let _ = fs::remove_file(backup);
     }
     Ok(())
@@ -248,6 +256,46 @@ pub fn apply(preview: &Preview) -> Result<(), String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_second_file_restores_the_first_file_after_partial_apply() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = std::env::temp_dir().join(format!("forge-edit-rollback-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("one.txt");
+        let second = root.join("two.txt");
+        fs::write(&first, "one").unwrap();
+        fs::write(&second, "two").unwrap();
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&second)
+            .unwrap();
+        let preview = Preview {
+            edit_count: 2,
+            files: vec![
+                FileChange {
+                    path: first.clone(),
+                    before: "one".into(),
+                    after: "changed one".into(),
+                    lines: vec![],
+                },
+                FileChange {
+                    path: second.clone(),
+                    before: "two".into(),
+                    after: "changed two".into(),
+                    lines: vec![],
+                },
+            ],
+        };
+        let error = apply(&preview).unwrap_err();
+        assert!(error.contains("prior files were restored"));
+        assert_eq!(fs::read_to_string(first).unwrap(), "one");
+        assert_eq!(fs::read_to_string(second).unwrap(), "two");
+        drop(locked);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn rename_preview_applies_and_rejects_stale_files() {
