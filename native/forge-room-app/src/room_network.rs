@@ -2,6 +2,7 @@
 use eframe::egui;
 use forge_room_core::transport::{Action, Client, Host, Invite, Snapshot};
 use std::{
+    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, SyncSender},
     thread,
     time::Duration,
@@ -30,6 +31,7 @@ pub struct NetworkRoom {
     name: String,
     invite_text: String,
     workflow: crate::room_network_workflow::Workflow,
+    changes: crate::room_changes::Changes,
     notice: Option<String>,
     snapshot: Snapshot,
     status: String,
@@ -44,6 +46,7 @@ impl Default for NetworkRoom {
             name: crate::room_state::local_user_name(),
             invite_text: String::new(),
             workflow: Default::default(),
+            changes: Default::default(),
             notice: None,
             snapshot: Snapshot::default(),
             status: "Offline".into(),
@@ -59,7 +62,17 @@ impl Drop for NetworkRoom {
     }
 }
 impl NetworkRoom {
-    pub fn show(&mut self, ui: &mut egui::Ui, workspace: &str) {
+    pub fn take_files_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changes.changed)
+    }
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        workspace: &str,
+        root: Option<&Path>,
+        trusted: bool,
+        dirty: &[PathBuf],
+    ) {
         if let Some(connection) = &self.connection {
             ui.ctx().request_repaint_after(Duration::from_millis(250));
             while let Ok(update) = connection.updates.try_recv() {
@@ -82,7 +95,7 @@ impl NetworkRoom {
             ui.label(&self.status);
             if let Some(notice)=&self.notice { ui.label(notice); }
             if self.notice.is_some() && ui.small_button("Dismiss notice").clicked() {self.notice=None;}
-            ui.label("Shares your name and items created in this network Room: roster, tasks, handoffs, evidence, activity and public messages. Direct messages go only to sender and recipient. Saved local Room data, files, terminals and agents stay private.");
+            ui.label("Shares your name and items created in this network Room: roster, tasks, handoffs, evidence, activity and public messages. Direct messages go only to sender and recipient. Saved local Room data, files, terminals and agents are not shared by joining. Saved patches require a separate reviewed recipient grant.");
             if self.connection.is_none() {
                 ui.label("Your display name");
                 ui.add(egui::TextEdit::singleline(&mut self.name).char_limit(64));
@@ -132,8 +145,10 @@ impl NetworkRoom {
                 for member in &self.snapshot.members {
                     ui.label(format!("{} ({}) · {}", member.name, member.id.chars().take(8).collect::<String>(), if member.online { "online" } else { "offline" }));
                 }
-                for action in self.workflow.show(ui,&self.snapshot,self.host.is_some()) {
-                    if !matches!(action,Action::Message {..}|Action::RequestHandoff {..}) && let Some(host)=&self.host {
+                let mut actions=self.workflow.show(ui,&self.snapshot,self.host.is_some());
+                actions.extend(self.changes.show(ui,&self.snapshot,root,trusted,dirty,self.status.starts_with("Connected")));
+                for action in actions {
+                    if !matches!(action,Action::Message {..}|Action::RequestHandoff {..}|Action::SharePatch {..}) && let Some(host)=&self.host {
                         if let Err(error)=host.control(action.clone()) {self.workflow.restore(action);self.notice=Some(error);}
                     } else if let Some(connection)=&self.connection
                         && let Err(error)=connection.commands.try_send(Command::Action(action)) {
@@ -208,6 +223,7 @@ impl NetworkRoom {
                         snapshot.members = update.members;
                         snapshot.cursor = update.cursor;
                         snapshot.shared = update.shared;
+                        snapshot.patches = update.patches;
                         snapshot.server_time_epoch_seconds = update.server_time_epoch_seconds;
                         match sender.try_send(Ok((snapshot.clone(), last_rejection.clone()))) {
                             Ok(()) => last_rejection = None,

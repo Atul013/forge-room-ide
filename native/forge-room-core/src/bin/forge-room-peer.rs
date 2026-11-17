@@ -10,11 +10,11 @@ fn main() {
     loop {
         let mut line = String::new();
         // Bound input before parsing, including malformed diagnostic commands.
-        let read = (&mut input).take(20_001).read_line(&mut line);
+        let read = (&mut input).take(1024 * 1024 + 1).read_line(&mut line);
         if matches!(read, Ok(0)) {
             break;
         }
-        if read.is_err() || line.len() > 20_000 {
+        if read.is_err() || line.len() > 1024 * 1024 {
             break;
         }
         let result = (|| -> Result<serde_json::Value, String> {

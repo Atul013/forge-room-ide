@@ -1,4 +1,4 @@
-# Native Room transport v1 — R01/R04
+# Native Room transport v3 - connected Room workflows and saved patches
 
 This is an ephemeral self-hosted native transport, implemented in `forge-room-core::transport`
 and exposed by **Team / Chat → Network Room → host / join**. It is independent of the
@@ -37,12 +37,12 @@ agents, join approval queue, relay, discovery or hosted service here.
 - TLS uses rustls with its ring provider; rcgen creates a fresh self-signed certificate for
   each Host. The client trusts only its invite certificate and verifies the fixed TLS name
   `forge-room.local`. No insecure verifier or operating-system trust-store bypass is used.
-- Frames are four-byte big-endian lengths followed by UTF-8 serde JSON, bounded to 4 MiB
+- Frames are four-byte big-endian lengths followed by UTF-8 serde JSON, bounded to 8 MiB
   before allocation. Each connection handles one request and one response. Up to 16
   connections run concurrently, with two-second socket read/write timeouts; clients use
   a two-second connect timeout. This preview has no public-service abuse protection.
 - Request variants are `Join { version, invite, name }`, `Poll { session, cursor }`,
-  `Post { session, operation, text, cursor }` and `Leave { session }`. Version is 2. Version-1 invites are rejected; sessions are ephemeral and require a fresh invite after upgrade.
+  `Post { session, operation, text, cursor }` and `Leave { session }`. Version is 3. Version-1/2 invites are rejected; sessions are ephemeral and require a fresh invite after upgrade.
   A new `Execute { session, operation, action, cursor }` request carries typed workflow actions.
   Responses contain an optional error or snapshot; only a successful Join returns a
   session credential and assigned identity. Authentication/transport errors return no snapshot or credential. Domain rejections
@@ -100,8 +100,8 @@ agents, join approval queue, relay, discovery or hosted service here.
   persistent room recovery and read-only follow remain separate unfinished features.
 
 No persisted RoomState field or schema changes are required. Existing local rooms load
-unchanged. Local Chat, Tasks and acting-as controls retain their local meaning. R03/R05 have the bounded shared workflow above; R06 still requires its own explicit
-permissioned diff/patch contract rather than serializing local state.
+unchanged. Local Chat, Tasks and acting-as controls retain their local meaning. R03/R05 have the bounded shared workflow above. R06 adds the recipient-scoped saved patch
+contract below; no saved local state is serialized implicitly.
 
 ## Evidence and remaining gates
 
@@ -132,3 +132,33 @@ client that cannot read another pair's DM or private thread. Repeat on two indep
 local chat/tasks and terminal/debug data remain private. Neither R01 nor R04 is marked fully
 accepted until those checks are recorded. Account identity, persistent/host-offline recovery,
 public-internet deployment and public-service security review are separate future work.
+
+
+## R06 saved patch proposal fallback (protocol v3)
+
+A trusted client explicitly selects a saved tracked UTF-8 file, prepares its Git HEAD base
+and current saved version, inspects both versions and chooses one joined recipient before
+sending. Relative path and full before/after text are shared; unsaved buffers, other files,
+terminal output and directory snapshots are not included. Git reads run on a worker.
+The server accepts at most eight active patches, with 64 KiB bases and 128 KiB replacements.
+Only sender and recipient receive a patch in snapshots; public host snapshots exclude it.
+No patch path/body is logged in public activity. The sender (or host-local authority) can
+revoke it; either participant leaving, expiring or being revoked removes further delivery.
+Copies already received cannot be recalled; this is not end-to-end encryption against the
+host process/operator. The client drops a revoked pending review on its next snapshot.
+
+Absolute/traversal/link/alternate-stream paths, .env/.git/.ssh and common credential files
+are blocked. Private-key markers and common quoted credential assignments are rejected
+on both client preparation and server submission. This is best-effort filtering, not a
+complete secret detector, and the sender must inspect both versions before sharing.
+
+Receiving never writes a file. The recipient explicitly reviews against an existing local
+workspace file, which must match the exact supplied base. Local apply and guarded undo reuse
+the same engine as AI reviewed edits and reject dirty buffers, changed files and links.
+There is no automatic merge, co-editing, file creation, folder grant or unsaved-buffer sharing.
+Windows line endings in a HEAD base are aligned to a CRLF saved working file for this preview.
+
+Independent process tests check recipient/third-client isolation, secret/traversal rejection,
+unauthorized revocation, sender revocation and sender-session revocation. Local review tests
+check revision mismatch, no write on receipt, dirty-buffer rejection, apply and undo. Native
+desktop and two-machine privacy/revocation acceptance remain open.

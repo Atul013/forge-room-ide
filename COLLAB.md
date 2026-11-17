@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Grouped the A02 reviewed-AI workflow and R06 recipient-scoped saved patch fallback into the existing substantive PR #64 because both share exact baseline review/apply/undo machinery. Protocol v3; existing local rooms stay private. Stand-in CLI read-only/session separation, stale/dirty/undo tests and four independent-process transport/privacy/workflow trials pass locally. Local total: 21 core tests, four process trials, 289 app tests/7 ignored, build/format/core+app Clippy passed. Extended Windows CI and native desktop/provider/two-machine gates are tracked separately.
+
+- 2026-11-17 Codex: Started the next substantive A02 native AI planning/reviewed-edit batch on feat/native-ai-reviewed-workflow, stacked on Room PR #64. Read-only planning/proposal generation, explicit context attachments, stale-file checked review/apply and guarded undo are the contract; direct CLI permission modes remain separately labeled. No agent-written files are applied merely because generation finishes.
+
 - 2026-11-17 Codex: Extended PR #64 with protocol v2 shared tasks/checklists/dependencies/priority/due/handoffs/evidence/activity, server-filtered DMs/task links/decisions/replies/search, acknowledged action rejection recovery and host countdown controls. Twenty core tests, three independent-process trials, 284 app tests/7 ignored and both Clippy gates passed locally. New Windows CI pending; desktop/two-machine gates remain open. Next substantive batch: native AI planning and reviewed edit workflow.
 
 - 2026-11-17 Codex: Continuing authorized major-feature delivery by extending PR #64 into a combined connected Room workflow: shared server-owned tasks/handoffs/evidence/activity, private messages and task-linked decisions, host countdown and independent-client authorization/privacy tests. Claiming core transport protocol v2 and native network Room controls; existing saved local rooms remain private. Both remotes fetched; #64 is open/mergeable with CI passed. Upstream UX work remains separate.

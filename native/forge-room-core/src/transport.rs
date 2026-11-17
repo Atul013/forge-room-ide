@@ -1,4 +1,4 @@
-//! Ephemeral, invite-only TLS room. No workspace paths or local RoomState cross this boundary.
+//! Ephemeral, invite-only TLS Room. Local RoomState is never uploaded; saved patches require explicit recipient grants.
 use rustls::{
     pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName},
     ClientConfig, ServerConfig,
@@ -19,9 +19,9 @@ use std::{
 mod workflow;
 pub use workflow::{Action, Countdown, SharedSnapshot};
 
-const VERSION: u32 = 2;
-// 128 messages × 2000 Unicode characters plus roster and JSON framing fit below 2 MiB.
-const MAX_FRAME: usize = 2 * 1024 * 1024;
+const VERSION: u32 = 3;
+// Includes escaped text for bounded shared tasks, messages and eight private patches.
+const MAX_FRAME: usize = 8 * 1024 * 1024;
 const MAX_MEMBERS: usize = 32;
 const MAX_EVENTS: usize = 128;
 const LEASE: Duration = Duration::from_secs(10);
@@ -82,11 +82,83 @@ pub struct Event {
     pub decision: bool,
     pub parent: Option<u64>,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Patch {
+    pub id: u64,
+    pub actor: String,
+    pub recipient: String,
+    pub path: String,
+    pub before: String,
+    pub after: String,
+}
+/// Best-effort credential/path filter; sharing still requires explicit human review.
+pub fn validate_patch(path: &str, before: &str, after: &str) -> Result<()> {
+    if path.len() > 512
+        || path.contains(['\\', ':'])
+        || path.chars().any(char::is_control)
+        || path.split('/').any(|part| {
+            part.is_empty()
+                || part == "."
+                || part == ".."
+                || [".git", ".ssh", "id_rsa", "id_ed25519"]
+                    .contains(&part.to_ascii_lowercase().as_str())
+                || part.to_ascii_lowercase().starts_with(".env")
+                || [".key", ".pem", ".pfx", ".p12"]
+                    .iter()
+                    .any(|ext| part.to_ascii_lowercase().ends_with(ext))
+        })
+        || before.len() > 64 * 1024
+        || after.len() > 128 * 1024
+        || before == after
+        || before.contains('\0')
+        || after.contains('\0')
+    {
+        return Err(
+            "Patch path or content is unsupported, sensitive, oversized or unchanged".into(),
+        );
+    }
+    for text in [before, after] {
+        if text
+            .chars()
+            .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+        {
+            return Err("Patch contains unsupported control characters".into());
+        }
+        if text.contains("PRIVATE KEY-----") {
+            return Err("Private key material cannot be shared".into());
+        }
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once('=').or_else(|| line.split_once(':')) else {
+                continue;
+            };
+            let key = key.to_ascii_lowercase();
+            let value = value.trim().trim_end_matches([',', ';']);
+            if [
+                "api_key",
+                "apikey",
+                "api-key",
+                "password",
+                "secret",
+                "access_token",
+                "private_key",
+            ]
+            .iter()
+            .any(|field| key.contains(field))
+                && value.len() > 10
+                && value.starts_with(['\"', '\''])
+            {
+                return Err("Possible credential assignment; remove it before sharing".into());
+            }
+        }
+    }
+    Ok(())
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     pub room: String,
     pub you: String,
     pub shared: SharedSnapshot,
+    pub patches: Vec<Patch>,
     pub server_time_epoch_seconds: u64,
     pub members: Vec<Member>,
     pub events: Vec<Event>,
@@ -151,6 +223,8 @@ struct Authority {
     events: VecDeque<Event>,
     sequence: u64,
     shared: workflow::SharedRoom,
+    patches: Vec<Patch>,
+    patch_sequence: u64,
 }
 impl Authority {
     fn snapshot(&self, cursor: u64, viewer: Option<&str>) -> Snapshot {
@@ -175,6 +249,12 @@ impl Authority {
             room: self.room.clone(),
             you: viewer.unwrap_or_default().into(),
             shared: self.shared.snapshot(),
+            patches: self
+                .patches
+                .iter()
+                .filter(|patch| viewer.is_some_and(|id| patch.actor == id || patch.recipient == id))
+                .cloned()
+                .collect(),
             server_time_epoch_seconds: crate::now_epoch_seconds(),
             members,
             events: self
@@ -293,6 +373,10 @@ impl Authority {
         })
     }
     fn sync_members(&mut self) {
+        self.patches.retain(|patch| {
+            self.sessions.values().any(|s| s.id == patch.actor)
+                && self.sessions.values().any(|s| s.id == patch.recipient)
+        });
         self.shared.sync_members(
             self.sessions
                 .values()
@@ -315,6 +399,15 @@ impl Authority {
         }
         let actor = session.id.clone();
         let rejection = match &action {
+            Action::SharePatch {
+                recipient,
+                path,
+                before,
+                after,
+            } => self
+                .share_patch(&actor, recipient, path, before, after)
+                .err(),
+            Action::RevokePatch { id } => self.revoke_patch(&actor, *id, false).err(),
             Action::Message {
                 text,
                 recipient,
@@ -407,6 +500,49 @@ impl Authority {
         }
         Ok(())
     }
+    fn share_patch(
+        &mut self,
+        actor: &str,
+        recipient: &str,
+        path: &str,
+        before: &str,
+        after: &str,
+    ) -> Result<()> {
+        validate_patch(path, before, after)?;
+        if self.patches.len() >= 8 {
+            return Err("Room patch limit reached; revoke an old patch first".into());
+        }
+        if recipient == actor
+            || !self
+                .sessions
+                .values()
+                .any(|session| session.id == recipient)
+        {
+            return Err("Choose another joined recipient".into());
+        }
+        self.patch_sequence += 1;
+        self.patches.push(Patch {
+            id: self.patch_sequence,
+            actor: actor.into(),
+            recipient: recipient.into(),
+            path: path.into(),
+            before: before.into(),
+            after: after.into(),
+        });
+        Ok(())
+    }
+    fn revoke_patch(&mut self, actor: &str, id: u64, host: bool) -> Result<()> {
+        let index = self
+            .patches
+            .iter()
+            .position(|p| p.id == id)
+            .ok_or("Patch is unavailable")?;
+        if !host && self.patches[index].actor != actor {
+            return Err("Only the sender or host can revoke this patch".into());
+        }
+        self.patches.remove(index);
+        Ok(())
+    }
     fn authenticate(&mut self, token: &str, now: Instant) -> Result<&mut Session> {
         let session = self
             .sessions
@@ -459,6 +595,8 @@ impl Host {
             events: VecDeque::new(),
             sequence: 0,
             shared: workflow::SharedRoom::new()?,
+            patches: Vec::new(),
+            patch_sequence: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let (state, stopping) = (authority.clone(), stop.clone());
@@ -557,6 +695,9 @@ impl Host {
         state.sessions.retain(|_, s| s.expires > now);
         state.sync_members();
         let actor = state.shared.state.host_id.clone();
+        if let Action::RevokePatch { id } = action {
+            return state.revoke_patch(&actor, id, true);
+        }
         state.shared.apply(&actor, action)
     }
     pub fn snapshot(&self) -> Result<Snapshot> {
@@ -695,6 +836,16 @@ impl Client {
             return Err("Invalid room snapshot".into());
         }
         workflow::validate(&snapshot.shared)?;
+        if snapshot.patches.len() > 8
+            || snapshot.patches.iter().any(|p| {
+                p.actor.len() != 64
+                    || p.recipient.len() != 64
+                    || (p.actor != self.identity && p.recipient != self.identity)
+                    || validate_patch(&p.path, &p.before, &p.after).is_err()
+            })
+        {
+            return Err("Invalid shared patch state".into());
+        }
         if snapshot.you.len() != 64 {
             return Err("Invalid session identity".into());
         }
@@ -799,6 +950,66 @@ mod tests {
     }
     fn invite(host: &Host) -> Invite {
         host.invite(Duration::from_secs(60)).unwrap()
+    }
+
+    #[test]
+    fn bounded_shared_payload_fits_the_transport_envelope() {
+        let id = "a".repeat(64);
+        let mut snapshot = Snapshot {
+            room: "room".into(),
+            you: id.clone(),
+            ..Snapshot::default()
+        };
+        for index in 0..100 {
+            snapshot.shared.tasks.push(crate::Task {
+                id: format!("T{index}"),
+                title: "😀".repeat(200),
+                owner_id: id.clone(),
+                owner_name: "😀".repeat(64),
+                status: crate::TaskStatus::Open,
+                priority: crate::TaskPriority::Normal,
+                dependencies: vec!["T1".into(); 16],
+                acceptance_criteria: vec!["😀".repeat(200); 8],
+                completed_criteria: vec![],
+                worktree_branch: None,
+                due_at_epoch_seconds: None,
+                updated_at_epoch_seconds: 0,
+            });
+        }
+        for index in 0..128 {
+            snapshot.events.push(Event {
+                sequence: index + 1,
+                actor: id.clone(),
+                text: "😀".repeat(2000),
+                recipient: None,
+                task: None,
+                decision: false,
+                parent: None,
+            });
+            snapshot.shared.evidence.push(crate::Evidence {
+                id: index.to_string(),
+                task_id: "T1".into(),
+                actor_id: id.clone(),
+                kind: crate::EvidenceKind::Check,
+                summary: "😀".repeat(500),
+                recorded_at_epoch_seconds: 0,
+            });
+        }
+        for index in 0..8 {
+            snapshot.patches.push(Patch {
+                id: index,
+                actor: id.clone(),
+                recipient: "b".repeat(64),
+                path: format!("file{index}.txt"),
+                before: "\"".repeat(64 * 1024),
+                after: "\\".repeat(128 * 1024),
+            });
+        }
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &snapshot).unwrap();
+        let decoded: Snapshot = read_frame(&mut bytes.as_slice()).unwrap();
+        assert_eq!(decoded.patches.len(), 8);
+        assert_eq!(decoded.shared.tasks.len(), 100);
     }
 
     #[test]

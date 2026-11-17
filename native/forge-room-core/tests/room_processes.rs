@@ -238,6 +238,68 @@ impl Drop for Peer {
 }
 
 #[test]
+fn saved_patches_are_recipient_scoped_filtered_and_revocable() {
+    use forge_room_core::transport::Action;
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "patch trial").unwrap();
+    let (mut a, mut b, mut c) = (Peer::start(), Peer::start(), Peer::start());
+    let invite_a = host.invite(Duration::from_secs(60)).unwrap();
+    a.request(json!({"command":"join","invite":invite_a.encode(),"name":"Sender"}));
+    let joined=b.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Recipient"}));
+    let recipient = joined["identity"].as_str().unwrap().to_string();
+    c.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Unrelated"}));
+    let share = |path: &str, after: &str| Action::SharePatch {
+        recipient: recipient.clone(),
+        path: path.into(),
+        before: "old content\n".into(),
+        after: after.into(),
+    };
+    assert!(a.execute(share(".env", "secret value"))["rejection"].is_string());
+    assert!(a.execute(share("../outside.txt", "must be denied"))["rejection"].is_string());
+    assert!(a.execute(share(
+        "code.txt",
+        "-----BEGIN PRIVATE KEY-----\nprivate\n-----END PRIVATE KEY-----"
+    ))["rejection"]
+        .is_string());
+    assert!(a.execute(share("code.txt", "api_key = \"abcdef123456789\""))["rejection"].is_string());
+    let sent = a.execute(share(
+        "private-patch-path.txt",
+        "recipient-only saved replacement\n",
+    ));
+    assert!(sent["rejection"].is_null());
+    let id = sent["snapshot"]["patches"][0]["id"].as_u64().unwrap();
+    let received = b.request(json!({"command":"poll"}));
+    assert_eq!(
+        received["snapshot"]["patches"][0]["after"],
+        "recipient-only saved replacement\n"
+    );
+    let unrelated = c.request(json!({"command":"poll"}));
+    assert!(unrelated["snapshot"]["patches"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(!unrelated.to_string().contains("private-patch-path.txt"));
+    assert!(!unrelated
+        .to_string()
+        .contains("recipient-only saved replacement"));
+    assert!(host.snapshot().unwrap().patches.is_empty());
+    assert!(c.execute(Action::RevokePatch { id })["rejection"].is_string());
+    assert!(a.execute(Action::RevokePatch { id })["rejection"].is_null());
+    assert!(b.request(json!({"command":"poll"}))["snapshot"]["patches"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(
+        a.execute(share("private-patch-path.txt", "second authorized patch\n"))["rejection"]
+            .is_null()
+    );
+    host.revoke(&invite_a).unwrap();
+    assert!(b.request(json!({"command":"poll"}))["snapshot"]["patches"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn independent_processes_join_deny_replay_revoke_and_leave() {
     let host = Host::start("127.0.0.1:0".parse().unwrap(), "process trial").unwrap();
     let invite_a = host.invite(Duration::from_secs(60)).unwrap();

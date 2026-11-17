@@ -9,7 +9,7 @@ use forge_room_core::{
     now_epoch_seconds,
 };
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 enum Intent {
     CreateRoom,
@@ -87,6 +87,7 @@ pub enum Section {
 }
 
 pub struct RoomView {
+    workspace_root: Option<PathBuf>,
     network: crate::room_network::NetworkRoom,
     state: Option<RoomState>,
     filter: Option<Role>,
@@ -125,6 +126,7 @@ pub struct RoomView {
 impl Default for RoomView {
     fn default() -> Self {
         Self {
+            workspace_root: None,
             network: crate::room_network::NetworkRoom::default(),
             state: None,
             filter: None,
@@ -173,6 +175,7 @@ impl RoomView {
         let Some(root) = root else {
             return;
         };
+        self.workspace_root = Some(root.to_path_buf());
         self.workspace_name = root
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -200,6 +203,9 @@ impl RoomView {
         self.store = Some(store);
     }
 
+    pub fn take_network_files_changed(&mut self) -> bool {
+        self.network.take_files_changed()
+    }
     pub fn state(&self) -> Option<&RoomState> {
         self.state.as_ref()
     }
@@ -404,7 +410,14 @@ impl RoomView {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, has_workspace: bool, part: Section) {
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        has_workspace: bool,
+        part: Section,
+        trusted: bool,
+        dirty: &[PathBuf],
+    ) {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.add_space(14.0);
@@ -433,7 +446,13 @@ impl RoomView {
         }
         let mut intents: Vec<Intent> = Vec::new();
         if matches!(part, Section::Team | Section::Chat) {
-            self.network.show(ui, &self.workspace_name);
+            self.network.show(
+                ui,
+                &self.workspace_name,
+                self.workspace_root.as_deref(),
+                trusted,
+                dirty,
+            );
         }
 
         if let Some(error) = self.error.clone() {

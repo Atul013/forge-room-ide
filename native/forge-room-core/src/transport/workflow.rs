@@ -8,6 +8,15 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
+    SharePatch {
+        recipient: String,
+        path: String,
+        before: String,
+        after: String,
+    },
+    RevokePatch {
+        id: u64,
+    },
     Message {
         text: String,
         recipient: Option<String>,
@@ -150,6 +159,9 @@ impl SharedRoom {
         let before = self.state.activity.len();
         match action {
             Action::Message { .. } => return Err("Use the message channel".into()),
+            Action::SharePatch { .. } | Action::RevokePatch { .. } => {
+                return Err("Use the patch channel".into())
+            }
             Action::CreateTask {
                 title,
                 owner,
