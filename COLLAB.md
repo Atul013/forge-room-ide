@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Started one combined I04 debugger workflow PR from current `origin/main`: project debugpy adapter startup, per-workspace saved breakpoints, stack source navigation, bounded locals and Debug Console output. A self-started debugpy trial passed breakpoint/locals/step/stack/output; focused persistence and adapter tests, app check, format and Clippy passed locally. Desktop interaction and Windows CI remain open. R01/R04 remains the separate native transport milestone.
+
 - 2026-11-17 Codex: PR #61 merged after Windows CI passed. PR #62 adds Python launch and corrected verified-breakpoint ordering; live debugpy breakpoint, step, stack and output probe passed. Windows CI on the final #62 head and desktop interaction remain open.
 
 - 2026-11-17 Codex: Added explicit Python launch request atop PR #61 on `feat/native-dap-launch`. It accepts only a saved `.py` file canonically inside the trusted folder and uses the folder as cwd. Focused path test, app check and Clippy passed locally. An isolated debugpy 1.8.22 probe hit a line-2 breakpoint, stepped to line 3, returned stack frames and output, then ended; desktop interaction and other adapters remain open.
