@@ -13,6 +13,7 @@ const MAX_MESSAGE: usize = 1024 * 1024;
 pub enum Event {
     Connected,
     Initialized,
+    BreakpointsSet { verified: bool },
     Message(String),
     Stopped { reason: String, thread: i64 },
     Stack(Vec<String>),
@@ -143,6 +144,17 @@ fn run(mut stream: TcpStream, commands: Receiver<Command>, events: Sender<Event>
                     if name == "initialize" && ok {
                         initialized = true;
                         let _ = events.send(Event::Connected);
+                    } else if name == "setBreakpoints" {
+                        let verified = ok
+                            && value
+                                .pointer("/body/breakpoints")
+                                .and_then(Value::as_array)
+                                .is_some_and(|items| {
+                                    items.iter().all(|item| {
+                                        item.get("verified").and_then(Value::as_bool) == Some(true)
+                                    })
+                                });
+                        let _ = events.send(Event::BreakpointsSet { verified });
                     } else if !ok {
                         let detail = value
                             .get("message")
@@ -283,7 +295,9 @@ pub fn python_launch(root: &Path, file: &Path) -> Result<Value, String> {
     if file.extension().and_then(|e| e.to_str()) != Some("py") {
         return Err("Select a Python .py file to launch".into());
     }
-    Ok(json!({"program":file,"cwd":root,"console":"internalConsole","justMyCode":true}))
+    Ok(
+        json!({"program":crate::tabs::normalize(&file),"cwd":crate::tabs::normalize(&root),"console":"internalConsole","justMyCode":true}),
+    )
 }
 
 #[cfg(test)]
@@ -407,7 +421,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("forge-dap-live-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let file = root.join("sample.py");
-        std::fs::write(&file, "print('FORGE_DAP_LIVE_OK')\n").unwrap();
+        std::fs::write(&file, "first = 1\nsecond = 2\nprint('FORGE_DAP_LIVE_OK')\n").unwrap();
         let args = python_launch(&root, &file).unwrap();
         let session = Session::connect(port).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
@@ -415,6 +429,10 @@ mod tests {
         let mut configured = false;
         let mut ended = false;
         let mut output = false;
+        let mut stops = 0;
+        let mut stepped = false;
+        let mut breakpoint_verified = false;
+        let mut stack_lines = Vec::new();
         let mut errors = Vec::new();
         while std::time::Instant::now() < deadline && !ended {
             for event in session.drain() {
@@ -424,9 +442,26 @@ mod tests {
                         launched = true;
                     }
                     Event::Initialized => {
+                        session.request(
+                            "setBreakpoints",
+                            json!({"source":{"path":crate::tabs::normalize(&file)},"breakpoints":[{"line":2}]}),
+                        );
+                    }
+                    Event::BreakpointsSet { verified } => {
+                        breakpoint_verified = verified;
                         session.request("configurationDone", json!({}));
                         configured = true;
                     }
+                    Event::Stopped { thread, .. } => {
+                        stops += 1;
+                        if stops == 1 {
+                            session.request("next", json!({"threadId":thread}));
+                            stepped = true;
+                        } else {
+                            session.request("continue", json!({"threadId":thread}));
+                        }
+                    }
+                    Event::Stack(frames) => stack_lines.extend(frames),
                     Event::Message(message) => {
                         output |= message.contains("FORGE_DAP_LIVE_OK");
                         if message.starts_with("launch:")
@@ -436,7 +471,6 @@ mod tests {
                         }
                     }
                     Event::Ended(_) => ended = true,
-                    _ => {}
                 }
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -444,8 +478,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert!(errors.is_empty(), "adapter errors: {errors:?}");
         assert!(
-            launched && configured && ended && output,
-            "launch={launched} configured={configured} ended={ended} output={output}"
+            launched
+                && configured
+                && ended
+                && output
+                && stepped
+                && stops >= 2
+                && breakpoint_verified
+                && stack_lines.iter().any(|frame| frame.ends_with(":2"))
+                && stack_lines.iter().any(|frame| frame.ends_with(":3")),
+            "launch={launched} configured={configured} ended={ended} output={output} stops={stops} stepped={stepped} breakpoint_verified={breakpoint_verified} stack={stack_lines:?}"
         );
     }
 }

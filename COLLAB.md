@@ -28,7 +28,7 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
-- 2026-11-17 Codex: Added explicit Python launch request atop PR #61 on `feat/native-dap-launch`. It accepts only a saved `.py` file canonically inside the trusted folder and uses the folder as cwd. Focused path test, app check and Clippy passed locally. An isolated debugpy 1.8.22 probe launched a saved file and returned its output; desktop interaction and breakpoint/step behavior remain open.
+- 2026-11-17 Codex: Added explicit Python launch request atop PR #61 on `feat/native-dap-launch`. It accepts only a saved `.py` file canonically inside the trusted folder and uses the folder as cwd. Focused path test, app check and Clippy passed locally. An isolated debugpy 1.8.22 probe hit a line-2 breakpoint, stepped to line 3, returned stack frames and output, then ended; desktop interaction and other adapters remain open.
 
 - 2026-11-17 Codex: Started native DAP debugger attach slice on `feat/native-dap-protocol` from current `origin/main`. Loopback adapter connection, bounded framing, explicit attach JSON, workspace breakpoints, stopped stack and step controls are in progress. Fake adapter and app checks are the source gate; live adapter and desktop acceptance remain separate.
 

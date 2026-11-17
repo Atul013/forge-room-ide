@@ -263,6 +263,7 @@ struct ForgeRoomApp {
     dap_port: String,
     dap_attach_args: String,
     dap_pending: Option<(&'static str, serde_json::Value)>,
+    dap_breakpoints_pending: usize,
     dap_status: String,
     dap_thread: Option<i64>,
     dap_stack: Vec<String>,
@@ -425,6 +426,7 @@ impl ForgeRoomApp {
             dap_port: "5678".into(),
             dap_attach_args: "{}".into(),
             dap_pending: None,
+            dap_breakpoints_pending: 0,
             dap_status: "No adapter connected".into(),
             dap_thread: None,
             dap_stack: Vec::new(),
@@ -762,6 +764,7 @@ impl ForgeRoomApp {
                 self.dap_stack.clear();
                 self.dap_thread = None;
                 self.dap_pending = None;
+                self.dap_breakpoints_pending = 0;
             }
             self.explorer_state = explorer::State::default();
             self.problems = None;
@@ -2828,6 +2831,7 @@ impl ForgeRoomApp {
             }
             self.dap_status = "Disconnected when folder trust was removed".into();
             self.dap_pending = None;
+            self.dap_breakpoints_pending = 0;
         }
         self.git_top = None;
         if trusted {
@@ -3611,6 +3615,7 @@ impl ForgeRoomApp {
             session.disconnect();
             self.dap = None;
             self.dap_pending = None;
+            self.dap_breakpoints_pending = 0;
             self.dap_thread = None;
             self.dap_stack.clear();
             self.dap_status = "Disconnected".into();
@@ -3658,7 +3663,7 @@ impl ForgeRoomApp {
                 }
                 if let Some(session) = &self.dap {
                     session.request("setBreakpoints", serde_json::json!({
-                                "source":{"path":file}, "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
+                                "source":{"path":tabs::normalize(&file)}, "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
                             }));
                 }
             }
@@ -5384,14 +5389,30 @@ impl eframe::App for ForgeRoomApp {
                         }
                     }
                     dap::Event::Initialized => {
+                        self.dap_breakpoints_pending = self.dap_breakpoints.len();
                         for (file, lines) in &self.dap_breakpoints {
                             session.request("setBreakpoints", serde_json::json!({
-                                "source":{"path":file},
+                                "source":{"path":tabs::normalize(file)},
                                 "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
                             }));
                         }
-                        session.request("configurationDone", serde_json::json!({}));
-                        self.dap_status = "Breakpoints sent; debugger configured".into();
+                        if self.dap_breakpoints_pending == 0 {
+                            session.request("configurationDone", serde_json::json!({}));
+                            self.dap_status = "Debugger configured".into();
+                        } else {
+                            self.dap_status = "Waiting for adapter breakpoint confirmation".into();
+                        }
+                    }
+                    dap::Event::BreakpointsSet { verified } => {
+                        if !verified {
+                            self.dap_status = "Adapter did not verify all breakpoints".into();
+                        }
+                        if self.dap_breakpoints_pending > 0 {
+                            self.dap_breakpoints_pending -= 1;
+                            if self.dap_breakpoints_pending == 0 {
+                                session.request("configurationDone", serde_json::json!({}));
+                            }
+                        }
                     }
                     dap::Event::Message(message) => self.dap_status = message,
                     dap::Event::Stopped { reason, thread } => {
@@ -5405,6 +5426,7 @@ impl eframe::App for ForgeRoomApp {
                         self.dap_stack.clear();
                         self.dap = None;
                         self.dap_pending = None;
+                        self.dap_breakpoints_pending = 0;
                         break;
                     }
                 }
