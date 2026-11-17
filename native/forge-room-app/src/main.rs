@@ -320,13 +320,13 @@ fn diff_job(text: &str, font_id: &egui::FontId) -> egui::text::LayoutJob {
         {
             format.color = theme::text_dim();
         } else if line.starts_with('+') {
-            format.color = egui::Color32::from_rgb(140, 210, 145);
-            format.background = egui::Color32::from_rgba_unmultiplied(87, 166, 74, 34);
+            format.color = theme::ok();
+            format.background = theme::with_alpha(theme::ok(), 34);
         } else if line.starts_with('-') {
-            format.color = egui::Color32::from_rgb(245, 130, 135);
-            format.background = egui::Color32::from_rgba_unmultiplied(229, 83, 75, 34);
+            format.color = theme::danger();
+            format.background = theme::with_alpha(theme::danger(), 34);
         } else if line.starts_with("@@") {
-            format.color = egui::Color32::from_rgb(110, 170, 225);
+            format.color = theme::info();
         }
         job.append(line, 0.0, format);
     }
@@ -1832,9 +1832,9 @@ impl ForgeRoomApp {
                         .map(|root| file_ops::relative_display(root, &problem.file))
                         .unwrap_or_else(|| problem.file.display().to_string());
                     let color = if problem.error {
-                        egui::Color32::from_rgb(235, 100, 100)
+                        theme::danger()
                     } else {
-                        egui::Color32::from_rgb(220, 180, 80)
+                        theme::warn()
                     };
                     let line = format!(
                         "{}  {shown}:{}:{}  {}",
@@ -3812,7 +3812,7 @@ impl ForgeRoomApp {
                         confirm = true;
                     }
                     if let Some(error) = &error {
-                        ui.colored_label(egui::Color32::from_rgb(240, 113, 120), error);
+                        ui.colored_label(theme::danger(), error);
                     }
                     ui.horizontal(|ui| {
                         confirm |= ui
@@ -4259,21 +4259,21 @@ impl ForgeRoomApp {
                             let x = gutter.right() - 7.0;
                             let (color, bar) = match hunk.kind {
                                 git::HunkKind::Added => (
-                                    egui::Color32::from_rgb(87, 166, 74),
+                                    theme::ok(),
                                     egui::Rect::from_min_max(
                                         egui::pos2(x, top),
                                         egui::pos2(x + 3.0, top + height),
                                     ),
                                 ),
                                 git::HunkKind::Modified => (
-                                    egui::Color32::from_rgb(79, 152, 214),
+                                    theme::info(),
                                     egui::Rect::from_min_max(
                                         egui::pos2(x, top),
                                         egui::pos2(x + 3.0, top + height),
                                     ),
                                 ),
                                 git::HunkKind::Deleted => (
-                                    egui::Color32::from_rgb(229, 83, 75),
+                                    theme::danger(),
                                     egui::Rect::from_min_max(
                                         egui::pos2(x - 2.0, top - 1.5),
                                         egui::pos2(x + 6.0, top + 1.5),
@@ -4572,7 +4572,7 @@ impl ForgeRoomApp {
                                 )
                             };
                             let color = if conflicts > 0 {
-                                egui::Color32::from_rgb(240, 113, 120)
+                                theme::danger()
                             } else {
                                 theme::text_dim()
                             };
@@ -4679,11 +4679,8 @@ impl ForgeRoomApp {
             }
             if let Some((name, _, _)) = self.room.summary() {
                 let (dot, _) = ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
-                ui.painter().circle_filled(
-                    dot.center(),
-                    4.0,
-                    egui::Color32::from_rgb(240, 113, 120),
-                );
+                ui.painter()
+                    .circle_filled(dot.center(), 4.0, theme::danger());
                 ui.label(egui::RichText::new(name).color(theme::status_text()));
                 let pill = ui.add(
                     egui::Button::new(
@@ -4723,11 +4720,7 @@ impl ForgeRoomApp {
                     ui.label(dim(format!("{people} members • {agents} agents")));
                     let (dot, _) =
                         ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
-                    ui.painter().circle_filled(
-                        dot.center(),
-                        3.5,
-                        egui::Color32::from_rgb(110, 200, 120),
-                    );
+                    ui.painter().circle_filled(dot.center(), 3.5, theme::ok());
                     ui.label(
                         egui::RichText::new(format!("Room: {name}")).color(theme::status_text()),
                     );

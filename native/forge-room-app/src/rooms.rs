@@ -160,10 +160,6 @@ impl Default for RoomView {
     }
 }
 
-const GREEN: Color32 = Color32::from_rgb(129, 199, 132);
-const AMBER: Color32 = Color32::from_rgb(226, 192, 141);
-const RED: Color32 = Color32::from_rgb(240, 113, 120);
-
 impl RoomView {
     /// Switch to the room of `root`, reading it from disk when one exists.
     pub fn load_for(&mut self, root: Option<&Path>) {
@@ -433,24 +429,21 @@ impl RoomView {
 
         if let Some(error) = self.error.clone() {
             egui::Frame::new()
-                .fill(Color32::from_rgba_unmultiplied(240, 113, 120, 28))
-                .stroke(Stroke::new(
-                    1.0,
-                    Color32::from_rgba_unmultiplied(240, 113, 120, 120),
-                ))
+                .fill(theme::with_alpha(theme::danger(), 28))
+                .stroke(Stroke::new(1.0, theme::with_alpha(theme::danger(), 120)))
                 .corner_radius(6.0)
                 .inner_margin(Margin::symmetric(10, 8))
                 .outer_margin(Margin::symmetric(12, 0))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new(error).color(RED));
+                    ui.label(RichText::new(error).color(theme::danger()));
                 });
             ui.add_space(8.0);
         }
         if let Some(notice) = &self.notice {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
-                ui.label(RichText::new(notice).color(GREEN));
+                ui.label(RichText::new(notice).color(theme::ok()));
             });
         }
 
@@ -1068,9 +1061,9 @@ impl RoomView {
                             ui,
                             priority_label(task.priority),
                             if task.priority == TaskPriority::Critical {
-                                RED
+                                theme::danger()
                             } else {
-                                AMBER
+                                theme::warn()
                             },
                             theme::mix(theme::bg_sidebar(), theme::text(), 0.08),
                         );
@@ -1088,8 +1081,8 @@ impl RoomView {
                         chip(
                             ui,
                             &format!("needs {}", blocked.join(", ")),
-                            RED,
-                            Color32::from_rgba_unmultiplied(240, 113, 120, 30),
+                            theme::danger(),
+                            theme::with_alpha(theme::danger(), 30),
                         );
                     }
                     if let Some(due) = task.due_at_epoch_seconds
@@ -1099,9 +1092,9 @@ impl RoomView {
                             ui,
                             &due_label(due, now_epoch_seconds()),
                             if task_is_overdue(task, now_epoch_seconds()) {
-                                RED
+                                theme::danger()
                             } else {
-                                AMBER
+                                theme::warn()
                             },
                             theme::mix(theme::bg_sidebar(), theme::text(), 0.08),
                         );
@@ -1110,8 +1103,8 @@ impl RoomView {
                         chip(
                             ui,
                             &format!("handoff → {}", name_of(state, &request.target_owner_id)),
-                            AMBER,
-                            Color32::from_rgba_unmultiplied(226, 192, 141, 30),
+                            theme::warn(),
+                            theme::with_alpha(theme::warn(), 30),
                         );
                     }
                 });
@@ -1513,7 +1506,7 @@ impl RoomView {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(name_of(state, &message.actor_id)).strong());
                         if message.decision {
-                            ui.label(RichText::new("DECISION").strong().color(GREEN));
+                            ui.label(RichText::new("DECISION").strong().color(theme::ok()));
                         }
                         ui.small(room_state::ago(
                             now_epoch_seconds(),
@@ -1699,8 +1692,8 @@ fn name_of(state: &RoomState, id: &str) -> String {
 fn status_color(status: TaskStatus) -> Color32 {
     match status {
         TaskStatus::Open => theme::text_dim(),
-        TaskStatus::InProgress => AMBER,
-        TaskStatus::Done => GREEN,
+        TaskStatus::InProgress => theme::warn(),
+        TaskStatus::Done => theme::ok(),
     }
 }
 

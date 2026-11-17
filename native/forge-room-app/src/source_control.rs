@@ -99,11 +99,11 @@ const LANE_WIDTH: f32 = 14.0;
 
 pub fn letter_color(letter: char) -> Color32 {
     match letter {
-        'M' | 'T' => Color32::from_rgb(226, 192, 141),
-        'A' | 'U' => Color32::from_rgb(129, 199, 132),
-        'D' => Color32::from_rgb(240, 113, 120),
-        'R' | 'C' => Color32::from_rgb(110, 170, 225),
-        _ => Color32::from_rgb(255, 120, 100),
+        'M' | 'T' => theme::warn(),
+        'A' | 'U' => theme::ok(),
+        'D' => theme::danger(),
+        'R' | 'C' => theme::info(),
+        _ => theme::danger(),
     }
 }
 
@@ -270,11 +270,8 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
             .inner_margin(egui::Margin::symmetric(12, 0))
             .show(ui, |ui| {
                 egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(226, 160, 60, 30))
-                    .stroke(Stroke::new(
-                        1.0,
-                        Color32::from_rgba_unmultiplied(226, 160, 60, 120),
-                    ))
+                    .fill(theme::with_alpha(theme::warn(), 30))
+                    .stroke(Stroke::new(1.0, theme::with_alpha(theme::warn(), 120)))
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
@@ -917,11 +914,19 @@ fn ref_pill(
     let galley = painter.layout_no_wrap(
         label.to_string(),
         FontId::proportional(11.0),
-        if filled { Color32::WHITE } else { color },
+        if filled {
+            theme::readable_on(color)
+        } else {
+            color
+        },
     );
     let width = galley.size().x + 14.0;
     let rect = Rect::from_min_size(egui::pos2(x, y - 9.0), egui::vec2(width, 18.0));
-    let text_color = if filled { Color32::WHITE } else { color };
+    let text_color = if filled {
+        theme::readable_on(color)
+    } else {
+        color
+    };
     if filled {
         painter.rect_filled(rect, 9.0, color);
     } else {
@@ -1021,7 +1026,7 @@ fn graph_row(
         } else if name == "HEAD" {
             ("HEAD".to_string(), p.accent, true)
         } else if let Some(tag) = name.strip_prefix("tag: ") {
-            (tag.to_string(), Color32::from_rgb(226, 192, 141), false)
+            (tag.to_string(), theme::warn(), false)
         } else if name.contains('/') {
             (name.clone(), p.keyword, false)
         } else {

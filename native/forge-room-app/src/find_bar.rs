@@ -142,7 +142,7 @@ pub fn show(context: &egui::Context, state: &mut FindState) -> Vec<Intent> {
                             )
                         };
                         let color = if !state.query.is_empty() && state.matches.is_empty() {
-                            egui::Color32::from_rgb(240, 113, 120)
+                            theme::danger()
                         } else {
                             theme::text_dim()
                         };

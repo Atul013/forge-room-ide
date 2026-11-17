@@ -154,6 +154,97 @@ pub fn mix(from: Color32, to: Color32, amount: f32) -> Color32 {
     )
 }
 
+/// WCAG relative luminance of a colour.
+fn luminance(color: Color32) -> f32 {
+    let channel = |value: u8| {
+        let v = f32::from(value) / 255.0;
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+}
+
+/// WCAG contrast ratio between two colours (1 to 21).
+pub fn contrast(a: Color32, b: Color32) -> f32 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// `color`, moved toward `toward` just far enough to reach `minimum` contrast on every background
+/// (a theme that ships a too-faint dim or line-number colour is corrected, not trusted).
+fn ensure_contrast(
+    color: Color32,
+    backgrounds: &[Color32],
+    toward: Color32,
+    minimum: f32,
+) -> Color32 {
+    let enough = |candidate: Color32| {
+        backgrounds
+            .iter()
+            .all(|bg| contrast(candidate, *bg) >= minimum)
+    };
+    for step in 0..=20 {
+        let candidate = mix(color, toward, step as f32 * 0.05);
+        if enough(candidate) {
+            return candidate;
+        }
+    }
+    toward
+}
+
+/// The meaning a colour carries; see [`semantic`].
+#[derive(Clone, Copy)]
+pub enum Tone {
+    Danger,
+    Ok,
+    Warn,
+    Info,
+}
+
+/// Status colours for a theme: light pastels on dark themes, darker shades on light themes, so the
+/// text stays readable (4.5:1) on either. Use these instead of fixed RGB values.
+pub fn semantic(dark: bool, tone: Tone) -> Color32 {
+    let (on_dark, on_light) = match tone {
+        Tone::Danger => ((240, 113, 120), (176, 32, 45)),
+        Tone::Ok => ((129, 199, 132), (28, 114, 48)),
+        Tone::Warn => ((226, 192, 141), (150, 92, 0)),
+        Tone::Info => ((110, 170, 225), (20, 90, 170)),
+    };
+    let (r, g, b) = if dark { on_dark } else { on_light };
+    Color32::from_rgb(r, g, b)
+}
+
+pub fn danger() -> Color32 {
+    semantic(current().palette.dark, Tone::Danger)
+}
+pub fn ok() -> Color32 {
+    semantic(current().palette.dark, Tone::Ok)
+}
+pub fn warn() -> Color32 {
+    semantic(current().palette.dark, Tone::Warn)
+}
+pub fn info() -> Color32 {
+    semantic(current().palette.dark, Tone::Info)
+}
+
+/// Black or white, whichever is easier to read on `fill` (text and icons drawn on a coloured fill).
+pub fn readable_on(fill: Color32) -> Color32 {
+    let (white, black) = (Color32::WHITE, Color32::from_rgb(20, 20, 20));
+    if contrast(white, fill) >= contrast(black, fill) {
+        white
+    } else {
+        black
+    }
+}
+
+/// `color` with the given opacity (for tinted fills behind status text).
+pub fn with_alpha(color: Color32, alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+}
+
 fn build(entry: &CatalogEntry, file: &ThemeFile) -> Theme {
     let dark = file.kind != "light";
     let colors = &file.colors;
@@ -162,8 +253,13 @@ fn build(entry: &CatalogEntry, file: &ThemeFile) -> Theme {
     let text = get("foreground")
         .or_else(|| get("editor.foreground"))
         .unwrap_or(Color32::from_rgb(230, 230, 225));
-    let text_dim = get("descriptionForeground").unwrap_or_else(|| mix(text, bg_editor, 0.4));
     let bg_sidebar = get("sideBar.background").unwrap_or(bg_editor);
+    let text_dim = ensure_contrast(
+        get("descriptionForeground").unwrap_or_else(|| mix(text, bg_editor, 0.4)),
+        &[bg_editor, bg_sidebar],
+        text,
+        4.5,
+    );
     let bg_activity = get("activityBar.background").unwrap_or(bg_sidebar);
     let accent = get("focusBorder")
         .or_else(|| get("activityBar.foreground"))
@@ -206,7 +302,12 @@ fn build(entry: &CatalogEntry, file: &ThemeFile) -> Theme {
         }),
         line_highlight: get("editor.lineHighlightBackground")
             .unwrap_or_else(|| Color32::from_rgba_unmultiplied(255, 255, 255, 9)),
-        line_number: get("editorLineNumber.foreground").unwrap_or(text_dim),
+        line_number: ensure_contrast(
+            get("editorLineNumber.foreground").unwrap_or(text_dim),
+            &[bg_editor],
+            text,
+            4.5,
+        ),
         list_active: get("list.activeSelectionBackground")
             .unwrap_or_else(|| mix(bg_sidebar, accent, 0.25)),
         nav_active: get("activityBar.activeBackground")
@@ -433,7 +534,7 @@ pub fn apply(context: &egui::Context) {
     visuals.window_stroke = egui::Stroke::new(1.0, p.border);
     visuals.override_text_color = Some(p.text);
     visuals.selection.bg_fill = p.selection;
-    visuals.selection.stroke = egui::Stroke::new(1.0, p.text);
+    visuals.selection.stroke = egui::Stroke::new(2.0, p.text);
     visuals.hyperlink_color = p.accent;
     visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, p.border);
     visuals.widgets.inactive.weak_bg_fill = mix(p.bg_sidebar, p.text, 0.08);
@@ -452,8 +553,10 @@ pub fn apply(context: &egui::Context) {
     ] {
         widget.corner_radius = rounding;
     }
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, mix(p.bg_sidebar, p.text, 0.10));
-    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, mix(p.bg_sidebar, p.text, 0.28));
+    // Control outlines reach about 3:1 against the surface (WCAG 1.4.11).
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, mix(p.bg_sidebar, p.text, 0.40));
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, mix(p.bg_sidebar, p.text, 0.55));
+    visuals.disabled_alpha = 0.7;
     visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, p.accent);
     visuals.window_corner_radius = egui::CornerRadius::same(10);
     visuals.menu_corner_radius = egui::CornerRadius::same(8);
@@ -463,6 +566,11 @@ pub fn apply(context: &egui::Context) {
         style.text_styles.insert(
             TextStyle::Monospace,
             FontId::new(14.5, FontFamily::Monospace),
+        );
+        // egui's own "small" is 9 px, far below the 11 px floor.
+        style.text_styles.insert(
+            TextStyle::Small,
+            FontId::new(11.5, FontFamily::Proportional),
         );
         style.text_styles.insert(
             TextStyle::Heading,
@@ -483,7 +591,12 @@ pub fn apply(context: &egui::Context) {
 /// Secondary text on the status bar: the status text color eased toward the bar color.
 pub fn status_dim() -> Color32 {
     let p = current().palette;
-    mix(p.status_bar, p.status_text, 0.72)
+    ensure_contrast(
+        mix(p.status_bar, p.status_text, 0.72),
+        &[p.status_bar],
+        p.status_text,
+        4.5,
+    )
 }
 
 /// A highlight/hover wash that works on dark and light themes.
@@ -526,6 +639,34 @@ accessors!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_theme_keeps_its_text_and_status_colors_readable() {
+        for theme in all() {
+            let p = theme.palette;
+            let name = &theme.name;
+            assert!(contrast(p.text_dim, p.bg_sidebar) >= 4.5, "{name} dim text");
+            assert!(
+                contrast(p.text_dim, p.bg_editor) >= 4.5,
+                "{name} dim on editor"
+            );
+            assert!(
+                contrast(p.line_number, p.bg_editor) >= 4.5,
+                "{name} line numbers"
+            );
+            for tone in [Tone::Danger, Tone::Ok, Tone::Warn, Tone::Info] {
+                let color = semantic(p.dark, tone);
+                assert!(
+                    contrast(color, p.bg_sidebar) >= 4.5,
+                    "{name} status colour on sidebar"
+                );
+                assert!(
+                    contrast(color, p.bg_editor) >= 4.5,
+                    "{name} status colour on editor"
+                );
+            }
+        }
+    }
 
     #[test]
     fn imported_theme_requires_real_colors_and_name() {

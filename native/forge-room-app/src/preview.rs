@@ -3,7 +3,7 @@
 //! listening there, and opens it in the system browser on request.
 
 use crate::theme;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -257,19 +257,17 @@ impl Preview {
                     )
                 } else if !is_web_url(&self.url) {
                     (
-                        Color32::from_rgb(240, 113, 120),
+                        theme::danger(),
                         "Not a web address. Use http:// or https://.",
                     )
                 } else {
                     match status {
-                        Status::Listening => (
-                            Color32::from_rgb(110, 200, 120),
-                            "Server is running. Open it in your browser.",
-                        ),
-                        Status::Silent => (
-                            Color32::from_rgb(226, 160, 60),
-                            "Nothing is listening at this address yet.",
-                        ),
+                        Status::Listening => {
+                            (theme::ok(), "Server is running. Open it in your browser.")
+                        }
+                        Status::Silent => {
+                            (theme::warn(), "Nothing is listening at this address yet.")
+                        }
                         Status::Checking => (theme::text_dim(), "Checking this address..."),
                         Status::Unknown => {
                             (theme::text_dim(), "Remote address: not checked from here.")
