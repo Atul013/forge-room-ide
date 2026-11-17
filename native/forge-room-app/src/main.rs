@@ -51,6 +51,7 @@ mod source_control;
 mod symbols;
 mod syntax;
 mod tabs;
+mod task_pipeline;
 mod terminal;
 mod theme;
 mod theme_gallery;
@@ -261,6 +262,7 @@ struct ForgeRoomApp {
     problems: Option<diagnostics::Report>,
     checking: background::Latest<diagnostics::Report>,
     lsp_query: background::Latest<lsp::QueryAnswer>,
+    task_pipelines: task_pipeline::State,
     lsp_live: lsp::live::Manager,
     lsp_sync_at: Option<std::time::Instant>,
     lsp_query_context: Option<(PathBuf, PathBuf, String)>,
@@ -430,6 +432,7 @@ impl ForgeRoomApp {
             problems: None,
             checking: background::Latest::default(),
             lsp_query: background::Latest::default(),
+            task_pipelines: task_pipeline::State::default(),
             lsp_live: lsp::live::Manager::default(),
             lsp_sync_at: None,
             lsp_query_context: None,
@@ -3671,6 +3674,7 @@ impl ForgeRoomApp {
                     ui,
                     page,
                     root.as_deref(),
+                    (self.tabs.active_path(), &mut self.task_pipelines),
                     &self.runtimes,
                     self.auto_save,
                     self.editor_scale,
@@ -3683,15 +3687,15 @@ impl ForgeRoomApp {
                         self.bottom_tab = BottomTab::Terminal;
                         // A shell that is already running may be busy with an agent or a server, and
                         // the command would be typed into its prompt: it gets a terminal of its own.
-                        if self.terminals.iter().any(|t| !t.has_exited()) {
-                            self.spawn_terminal(true);
-                        } else {
-                            self.ensure_terminal();
-                        }
-                        let active = self.active_terminal;
-                        if let Some(terminal) = self.terminals.get_mut(active) {
+                        let add = self.terminals.iter().any(|t| !t.has_exited());
+                        if !self.spawn_terminal(add) {
+                            self.status =
+                                "Project command was not sent: could not start a new terminal"
+                                    .into();
+                        } else if let Some(terminal) = self.terminals.get_mut(self.active_terminal)
+                        {
                             terminal.send(format!("{command}\r").as_bytes());
-                            self.status = format!("Running {command} in terminal");
+                            self.status = "Running project command in a new terminal".into();
                         }
                     }
                     Some(project_tools::Selected::Studio) => self.gallery.open(),

@@ -94,112 +94,12 @@ fn package_scripts(root: &Path, page: Page) -> Vec<Action> {
 
 fn actions(root: &Path, page: Page) -> Vec<Action> {
     let mut configured = configured_tasks(root, page);
-    configured.extend(vscode_tasks(root, page));
     configured.extend(detected_actions(root, page));
     configured
 }
 
-/// A bounded compatibility path for common VS Code tasks. The original command stays visible in
-/// the UI; Forge Room does not interpret VS Code variables or task dependencies.
-fn vscode_tasks(root: &Path, page: Page) -> Vec<Action> {
-    let Ok(bytes) = fs::read(root.join(".vscode").join("tasks.json")) else {
-        return Vec::new();
-    };
-    if bytes.len() > 128 * 1024 {
-        return Vec::new();
-    }
-    let Some(json) = normalize_jsonc(&bytes) else {
-        return Vec::new();
-    };
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&json) else {
-        return Vec::new();
-    };
-    if value.get("version").and_then(|v| v.as_str()) != Some("2.0.0") {
-        return Vec::new();
-    }
-    let Some(tasks) = value.get("tasks").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-    tasks
-        .iter()
-        .take(50)
-        .filter_map(|task| {
-            let label = task.get("label")?.as_str()?.trim();
-            let kind = task.get("type")?.as_str()?;
-            let group = task.get("group")?;
-            let group = group.as_str().or_else(|| group.get("kind")?.as_str())?;
-            let shown = matches!(
-                (page, group),
-                (Page::Workflows, "build") | (Page::Tests, "test") | (Page::RunDebug, "run")
-            );
-            if !shown
-                || label.is_empty()
-                || label.len() > 100
-                || label.chars().any(char::is_control)
-                || task.get("dependsOn").is_some()
-                || task.get("options").is_some()
-            {
-                return None;
-            }
-            let program = task.get("command")?.as_str()?.trim();
-            if program.is_empty()
-                || program.len() > 2048
-                || program.contains("${")
-                || program
-                    .chars()
-                    .any(|c| c == '\0' || (c.is_control() && c != '\t'))
-            {
-                return None;
-            }
-            let args = match task.get("args") {
-                None => Vec::new(),
-                Some(value) => value
-                    .as_array()?
-                    .iter()
-                    .map(|item| item.as_str().map(str::to_owned))
-                    .collect::<Option<Vec<_>>>()?,
-            };
-            if args.len() > 64
-                || args.iter().any(|arg| {
-                    arg.len() > 2048 || arg.contains("${") || arg.chars().any(char::is_control)
-                })
-            {
-                return None;
-            }
-            let command = match kind {
-                "shell" => {
-                    let mut command = program.to_owned();
-                    for arg in &args {
-                        command.push(' ');
-                        command.push_str(&powershell_quote(arg));
-                    }
-                    command
-                }
-                "process" => {
-                    let mut command = format!("& {}", powershell_quote(program));
-                    for arg in &args {
-                        command.push(' ');
-                        command.push_str(&powershell_quote(arg));
-                    }
-                    command
-                }
-                _ => return None,
-            };
-            Some(Action {
-                label: label.into(),
-                command,
-                detail: "Imported from .vscode/tasks.json; inspect command before running".into(),
-            })
-        })
-        .collect()
-}
-
-fn powershell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 /// Remove JSONC comments and trailing commas without changing quoted strings.
-fn normalize_jsonc(bytes: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn normalize_jsonc(bytes: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     let mut quoted = false;
@@ -540,10 +440,12 @@ pub fn show(
     ui: &mut egui::Ui,
     page: Page,
     root: Option<&Path>,
+    task_context: (Option<&Path>, &mut crate::task_pipeline::State),
     runtimes: &[String],
     auto_save: bool,
     editor_scale: f32,
 ) -> Option<Selected> {
+    let (active_file, task_state) = task_context;
     ui.heading(page.title());
     ui.separator();
     match page {
@@ -561,9 +463,14 @@ pub fn show(
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                 }
             }
+            if let Some(command) =
+                crate::task_pipeline::show(ui, root, active_file, page, task_state)
+            {
+                return Some(Selected::Command(command));
+            }
             let actions = actions(root, page);
             if actions.is_empty() {
-                ui.label("No supported local command detected for this project.");
+                ui.label("No additional built-in or Forge task command detected.");
             }
             for action in actions {
                 ui.group(|ui| {
@@ -775,40 +682,6 @@ mod tests {
         assert_eq!(test[0].command, "cargo test --test integration");
         assert_eq!(test.len(), 2);
         assert_eq!(actions(&folder, Page::RunDebug)[0].label, "Serve");
-        fs::remove_dir_all(folder).unwrap();
-    }
-
-    #[test]
-    fn vscode_jsonc_tasks_import_without_running_unsupported_features() {
-        let folder = std::env::temp_dir().join(format!(
-            "forge-room-vscode-tasks-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(folder.join(".vscode")).unwrap();
-        fs::write(
-            folder.join(".vscode/tasks.json"),
-            r#"{
-              // Known tasks from an existing project.
-              "version": "2.0.0",
-              "tasks": [
-                {"label":"Build", "type":"shell", "command":"cargo build", "group":"build",},
-                {"label":"Test", "type":"process", "command":"python", "args":["-m","pytest","it's fine"], "group":{"kind":"test"}},
-                {"label":"Dependent", "type":"shell", "command":"echo no", "group":"test", "dependsOn":"Build"},
-                {"label":"Variable", "type":"shell", "command":"echo ${workspaceFolder}", "group":"test"},
-              ],
-            }"#,
-        ).unwrap();
-        assert_eq!(
-            vscode_tasks(&folder, Page::Workflows)[0].command,
-            "cargo build"
-        );
-        let tests = vscode_tasks(&folder, Page::Tests);
-        assert_eq!(tests.len(), 1);
-        assert_eq!(tests[0].command, "& 'python' '-m' 'pytest' 'it''s fine'");
         fs::remove_dir_all(folder).unwrap();
     }
 
