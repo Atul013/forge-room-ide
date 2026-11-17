@@ -3,7 +3,8 @@
 use serde_json::{Value, json};
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
@@ -15,19 +16,37 @@ pub enum Event {
     Initialized,
     BreakpointsSet { verified: bool },
     Message(String),
+    Output(String),
     Stopped { reason: String, thread: i64 },
-    Stack(Vec<String>),
+    Stack(Vec<Frame>),
+    Variables(Vec<Variable>),
     Ended(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Frame {
+    pub id: i64,
+    pub name: String,
+    pub path: Option<PathBuf>,
+    pub line: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Variable {
+    pub name: String,
+    pub value: String,
+    pub kind: String,
 }
 
 pub struct Session {
     commands: Sender<Command>,
     events: Receiver<Event>,
+    adapter: Option<Child>,
 }
 
 enum Command {
     Request(&'static str, Value),
-    Disconnect,
+    Disconnect(bool),
 }
 
 impl Session {
@@ -47,7 +66,48 @@ impl Session {
         Ok(Self {
             commands: command_tx,
             events: event_rx,
+            adapter: None,
         })
+    }
+
+    /// Start debugpy's adapter for the chosen project interpreter and connect only to loopback.
+    pub fn start_python(root: &Path) -> Result<Self, String> {
+        let root = root.canonicalize().map_err(|e| e.to_string())?;
+        let interpreter = python_interpreter(&root);
+        let reserved = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+        let port = reserved.local_addr().map_err(|e| e.to_string())?.port();
+        drop(reserved);
+        let mut command = ProcessCommand::new(&interpreter);
+        command
+            .args(["-m", "debugpy.adapter", "--host", "127.0.0.1", "--port"])
+            .arg(port.to_string())
+            .current_dir(&root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("Cannot start {}: {e}", interpreter.display()))?;
+        for _ in 0..60 {
+            if let Ok(Some(status)) = child.try_wait() {
+                return Err(format!(
+                    "Python debug adapter exited ({status}); install debugpy in the project interpreter"
+                ));
+            }
+            if let Ok(mut session) = Self::connect(port) {
+                session.adapter = Some(child);
+                return Ok(session);
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        Err("Python debug adapter did not open its local port".into())
     }
 
     pub fn request(&self, name: &'static str, args: Value) {
@@ -55,12 +115,50 @@ impl Session {
     }
 
     pub fn disconnect(&self) {
-        let _ = self.commands.send(Command::Disconnect);
+        self.finish(false);
+    }
+
+    pub fn stop(&self) {
+        self.finish(true);
+    }
+
+    fn finish(&self, terminate: bool) {
+        let _ = self.commands.send(Command::Disconnect(terminate));
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+            match self.events.recv_timeout(remaining) {
+                Ok(Event::Ended(_)) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
     }
 
     pub fn drain(&self) -> Vec<Event> {
         self.events.try_iter().take(32).collect()
     }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.adapter.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn python_interpreter(root: &Path) -> PathBuf {
+    for folder in [".venv", "venv"] {
+        let path = root.join(folder).join(if cfg!(windows) {
+            "Scripts/python.exe"
+        } else {
+            "bin/python"
+        });
+        if path.is_file() {
+            return path;
+        }
+    }
+    PathBuf::from(if cfg!(windows) { "py" } else { "python3" })
 }
 
 fn write_message(writer: &mut impl Write, value: &Value) -> io::Result<()> {
@@ -163,7 +261,7 @@ fn run(mut stream: TcpStream, commands: Receiver<Command>, events: Sender<Event>
                         let _ = events.send(Event::Message(format!("{name}: {}", bounded(detail))));
                     }
                     if name == "stackTrace" && ok {
-                        let frames = value
+                        let frames: Vec<Frame> = value
                             .pointer("/body/stackFrames")
                             .and_then(Value::as_array)
                             .map(|items| {
@@ -175,18 +273,93 @@ fn run(mut stream: TcpStream, commands: Receiver<Command>, events: Sender<Event>
                                             .get("name")
                                             .and_then(Value::as_str)
                                             .unwrap_or("frame");
-                                        let path = frame
-                                            .pointer("/source/path")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("");
-                                        let line =
-                                            frame.get("line").and_then(Value::as_u64).unwrap_or(0);
-                                        bounded(&format!("{name}  {path}:{line}"))
+                                        Frame {
+                                            id: frame
+                                                .get("id")
+                                                .and_then(Value::as_i64)
+                                                .unwrap_or(0),
+                                            name: bounded(name),
+                                            path: frame
+                                                .pointer("/source/path")
+                                                .and_then(Value::as_str)
+                                                .map(PathBuf::from),
+                                            line: frame
+                                                .get("line")
+                                                .and_then(Value::as_u64)
+                                                .unwrap_or(0)
+                                                as usize,
+                                        }
                                     })
                                     .collect()
                             })
                             .unwrap_or_default();
+                        if let Some(frame) = frames.first().filter(|frame| frame.id > 0) {
+                            let _ = write_request(
+                                &mut stream,
+                                &mut sequence,
+                                "scopes",
+                                json!({"frameId":frame.id}),
+                            );
+                        }
                         let _ = events.send(Event::Stack(frames));
+                    } else if name == "scopes" && ok {
+                        if let Some(scopes) =
+                            value.pointer("/body/scopes").and_then(Value::as_array)
+                        {
+                            let chosen = scopes
+                                .iter()
+                                .find(|scope| {
+                                    scope.get("name").and_then(Value::as_str) == Some("Locals")
+                                })
+                                .or_else(|| scopes.first());
+                            if let Some(reference) = chosen
+                                .and_then(|scope| scope.get("variablesReference"))
+                                .and_then(Value::as_i64)
+                                .filter(|n| *n > 0)
+                            {
+                                let _ = write_request(
+                                    &mut stream,
+                                    &mut sequence,
+                                    "variables",
+                                    json!({"variablesReference":reference,"start":0,"count":100}),
+                                );
+                            }
+                        }
+                    } else if name == "variables" && ok {
+                        let variables = value
+                            .pointer("/body/variables")
+                            .and_then(Value::as_array)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .take(100)
+                                    .map(|item| Variable {
+                                        name: item
+                                            .get("name")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .chars()
+                                            .take(120)
+                                            .collect(),
+                                        value: item
+                                            .get("value")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .chars()
+                                            .take(400)
+                                            .collect(),
+                                        kind: item
+                                            .get("type")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .chars()
+                                            .take(80)
+                                            .collect(),
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let _ = events.send(Event::Variables(variables));
                     }
                 } else if kind == Some("event") {
                     match value.get("event").and_then(Value::as_str).unwrap_or("") {
@@ -217,7 +390,7 @@ fn run(mut stream: TcpStream, commands: Receiver<Command>, events: Sender<Event>
                             if let Some(output) =
                                 value.pointer("/body/output").and_then(Value::as_str)
                             {
-                                let _ = events.send(Event::Message(bounded(output)));
+                                let _ = events.send(Event::Output(bounded(output)));
                             }
                         }
                         "terminated" | "exited" => {
@@ -252,13 +425,21 @@ fn run(mut stream: TcpStream, commands: Receiver<Command>, events: Sender<Event>
                         return;
                     }
                 }
-                Command::Disconnect => {
+                Command::Disconnect(terminate) => {
                     let _ = write_request(
                         &mut stream,
                         &mut sequence,
                         "disconnect",
-                        json!({"terminateDebuggee":false}),
+                        json!({"terminateDebuggee":terminate}),
                     );
+                    for _ in 0..2 {
+                        if let Ok(reply) = read_message(&mut reader)
+                            && reply.get("type").and_then(Value::as_str) == Some("response")
+                            && reply.get("command").and_then(Value::as_str) == Some("disconnect")
+                        {
+                            break;
+                        }
+                    }
                     let _ = events.send(Event::Ended("Disconnected from adapter".into()));
                     return;
                 }
@@ -383,7 +564,9 @@ mod tests {
                         stopped = true;
                     }
                     Event::Stack(frames) => {
-                        assert_eq!(frames, ["main  sample.py:4"]);
+                        assert_eq!(frames[0].name, "main");
+                        assert_eq!(frames[0].path.as_deref(), Some(Path::new("sample.py")));
+                        assert_eq!(frames[0].line, 4);
                         stack = true;
                     }
                     _ => {}
@@ -413,17 +596,36 @@ mod tests {
     }
 
     #[test]
+    fn project_interpreter_precedes_system_python() {
+        let root = std::env::temp_dir().join(format!("forge-dap-venv-{}", std::process::id()));
+        let interpreter = root.join(".venv").join(if cfg!(windows) {
+            "Scripts/python.exe"
+        } else {
+            "bin/python"
+        });
+        std::fs::create_dir_all(interpreter.parent().unwrap()).unwrap();
+        std::fs::write(&interpreter, b"").unwrap();
+        assert_eq!(python_interpreter(&root), interpreter);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn live_debugpy_launch_when_adapter_port_is_supplied() {
-        let Ok(port) = std::env::var("FORGE_DAP_LIVE_PORT") else {
+        let live_port = std::env::var("FORGE_DAP_LIVE_PORT").ok();
+        let self_start = std::env::var("FORGE_DAP_SELF_START").ok().as_deref() == Some("1");
+        if live_port.is_none() && !self_start {
             return;
-        };
-        let port = port.parse::<u16>().unwrap();
+        }
         let root = std::env::temp_dir().join(format!("forge-dap-live-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let file = root.join("sample.py");
         std::fs::write(&file, "first = 1\nsecond = 2\nprint('FORGE_DAP_LIVE_OK')\n").unwrap();
         let args = python_launch(&root, &file).unwrap();
-        let session = Session::connect(port).unwrap();
+        let session = if self_start {
+            Session::start_python(&root).unwrap()
+        } else {
+            Session::connect(live_port.unwrap().parse::<u16>().unwrap()).unwrap()
+        };
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         let mut launched = false;
         let mut configured = false;
@@ -432,6 +634,9 @@ mod tests {
         let mut stops = 0;
         let mut stepped = false;
         let mut breakpoint_verified = false;
+        let mut locals_seen = false;
+        let mut first_thread = None;
+        let mut continue_thread = None;
         let mut stack_lines = Vec::new();
         let mut errors = Vec::new();
         while std::time::Instant::now() < deadline && !ended {
@@ -455,15 +660,32 @@ mod tests {
                     Event::Stopped { thread, .. } => {
                         stops += 1;
                         if stops == 1 {
-                            session.request("next", json!({"threadId":thread}));
-                            stepped = true;
+                            first_thread = Some(thread);
                         } else {
-                            session.request("continue", json!({"threadId":thread}));
+                            continue_thread = Some(thread);
                         }
                     }
-                    Event::Stack(frames) => stack_lines.extend(frames),
+                    Event::Stack(frames) => {
+                        if frames.iter().any(|frame| frame.line == 3)
+                            && let Some(thread) = continue_thread.take()
+                        {
+                            session.request("continue", json!({"threadId":thread}));
+                        }
+                        stack_lines.extend(frames);
+                    }
+                    Event::Output(message) => output |= message.contains("FORGE_DAP_LIVE_OK"),
+                    Event::Variables(items) => {
+                        if stops == 1 && !stepped {
+                            locals_seen = items
+                                .iter()
+                                .any(|item| item.name == "first" && item.value == "1");
+                            if let Some(thread) = first_thread.take() {
+                                session.request("next", json!({"threadId":thread}));
+                                stepped = true;
+                            }
+                        }
+                    }
                     Event::Message(message) => {
-                        output |= message.contains("FORGE_DAP_LIVE_OK");
                         if message.starts_with("launch:")
                             || message.starts_with("configurationDone:")
                         {
@@ -483,11 +705,12 @@ mod tests {
                 && ended
                 && output
                 && stepped
+                && locals_seen
                 && stops >= 2
                 && breakpoint_verified
-                && stack_lines.iter().any(|frame| frame.ends_with(":2"))
-                && stack_lines.iter().any(|frame| frame.ends_with(":3")),
-            "launch={launched} configured={configured} ended={ended} output={output} stops={stops} stepped={stepped} breakpoint_verified={breakpoint_verified} stack={stack_lines:?}"
+                && stack_lines.iter().any(|frame| frame.line == 2)
+                && stack_lines.iter().any(|frame| frame.line == 3),
+            "launch={launched} configured={configured} ended={ended} output={output} stops={stops} stepped={stepped} locals={locals_seen} breakpoint_verified={breakpoint_verified} stack={stack_lines:?}"
         );
     }
 }

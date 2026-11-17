@@ -8,6 +8,7 @@ mod background;
 mod brand;
 mod commands;
 mod dap;
+mod debug_state;
 mod diagnostics;
 mod document;
 mod editing;
@@ -88,6 +89,7 @@ enum BottomTab {
     Terminal,
     Output,
     Problems,
+    DebugConsole,
 }
 
 fn main() {
@@ -260,13 +262,16 @@ struct ForgeRoomApp {
     lsp_rename_name: Option<String>,
     lsp_rename_preview: Option<lsp_rename::Preview>,
     dap: Option<dap::Session>,
+    dap_owned: bool,
     dap_port: String,
     dap_attach_args: String,
     dap_pending: Option<(&'static str, serde_json::Value)>,
     dap_breakpoints_pending: usize,
     dap_status: String,
     dap_thread: Option<i64>,
-    dap_stack: Vec<String>,
+    dap_stack: Vec<dap::Frame>,
+    dap_variables: Vec<dap::Variable>,
+    dap_output: Vec<String>,
     dap_breakpoints: std::collections::HashMap<PathBuf, Vec<usize>>,
     /// The last session written to disk, and when it was last compared with the window.
     session_saved: session::Session,
@@ -423,6 +428,7 @@ impl ForgeRoomApp {
             lsp_rename_name: None,
             lsp_rename_preview: None,
             dap: None,
+            dap_owned: false,
             dap_port: "5678".into(),
             dap_attach_args: "{}".into(),
             dap_pending: None,
@@ -430,6 +436,8 @@ impl ForgeRoomApp {
             dap_status: "No adapter connected".into(),
             dap_thread: None,
             dap_stack: Vec::new(),
+            dap_variables: Vec::new(),
+            dap_output: Vec::new(),
             dap_breakpoints: std::collections::HashMap::new(),
             session_saved: session::Session::default(),
             session_checked: std::time::Instant::now(),
@@ -516,6 +524,7 @@ impl ForgeRoomApp {
             self.bottom_tab = match layout.bottom_tab {
                 1 => BottomTab::Output,
                 2 => BottomTab::Problems,
+                3 => BottomTab::DebugConsole,
                 _ => BottomTab::Terminal,
             };
             // A width near the limit is almost always a panel that grew by itself (an old bug),
@@ -568,6 +577,7 @@ impl ForgeRoomApp {
                     BottomTab::Terminal => 0,
                     BottomTab::Output => 1,
                     BottomTab::Problems => 2,
+                    BottomTab::DebugConsole => 3,
                 },
                 sidebar_width: self.panel_sizes.0,
                 right_width: self.panel_sizes.1,
@@ -757,11 +767,18 @@ impl ForgeRoomApp {
             let previous = self.repo_root();
             if previous.as_ref().is_some_and(|old| *old != folder) {
                 if let Some(session) = self.dap.take() {
-                    session.disconnect();
+                    if self.dap_owned {
+                        session.stop();
+                    } else {
+                        session.disconnect();
+                    }
                 }
+                self.dap_owned = false;
                 self.dap_status = "Disconnected after switching folders".into();
                 self.dap_breakpoints.clear();
                 self.dap_stack.clear();
+                self.dap_variables.clear();
+                self.dap_output.clear();
                 self.dap_thread = None;
                 self.dap_pending = None;
                 self.dap_breakpoints_pending = 0;
@@ -771,6 +788,7 @@ impl ForgeRoomApp {
             // Keep each folder's local agent conversation separate and restore it on return.
             self.ai.set_workspace(&folder);
             self.workspace = Some(Workspace::new(normalize(&path)));
+            self.dap_breakpoints = debug_state::load(&folder);
             self.show_sidebar = true;
             self.clear_git_state();
             // Tabs of the folder that was left would otherwise sit among the new project's files, and
@@ -1501,14 +1519,13 @@ impl ForgeRoomApp {
                 (BottomTab::Terminal, "Terminal"),
                 (BottomTab::Output, "Output"),
                 (BottomTab::Problems, "Problems"),
+                (BottomTab::DebugConsole, "Debug Console"),
             ] {
                 if underline_tab(ui, label, self.bottom_tab == tab, true).clicked() {
                     self.bottom_tab = tab;
                 }
             }
-            for label in ["Debug Console", "Ports"] {
-                underline_tab(ui, label, false, false).on_hover_text("Adapter not connected");
-            }
+            underline_tab(ui, "Ports", false, false).on_hover_text("Adapter not connected");
             if self.bottom_tab == BottomTab::Terminal {
                 // One small number per terminal, a plus for another and a cross to end the shown
                 // one, all drawn with the app's own icons (a font glyph may be missing).
@@ -1764,6 +1781,11 @@ impl ForgeRoomApp {
             self.problems_view(ui);
             return;
         }
+        if self.bottom_tab == BottomTab::DebugConsole {
+            self.terminal_has_focus = false;
+            self.debug_console_view(ui);
+            return;
+        }
         if self.bottom_tab != BottomTab::Terminal {
             self.terminal_has_focus = false;
             self.terminal_output_view(ui);
@@ -1985,8 +2007,30 @@ impl ForgeRoomApp {
                     });
                 });
             }
-            BottomTab::Problems | BottomTab::Terminal => {}
+            BottomTab::Problems | BottomTab::Terminal | BottomTab::DebugConsole => {}
         }
+    }
+
+    fn debug_console_view(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Debug adapter output");
+            if ui.button("Copy output").clicked() {
+                ui.ctx().copy_text(self.dap_output.join(""));
+            }
+            if ui.button("Clear").clicked() {
+                self.dap_output.clear();
+            }
+        });
+        egui::ScrollArea::vertical()
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                if self.dap_output.is_empty() {
+                    ui.label("No debug output yet.");
+                }
+                for line in &self.dap_output {
+                    ui.monospace(line);
+                }
+            });
     }
 
     fn select_range(&mut self, range: std::ops::Range<usize>) {
@@ -2827,8 +2871,13 @@ impl ForgeRoomApp {
         self.trusted = trusted;
         if !trusted {
             if let Some(session) = self.dap.take() {
-                session.disconnect();
+                if self.dap_owned {
+                    session.stop();
+                } else {
+                    session.disconnect();
+                }
             }
+            self.dap_owned = false;
             self.dap_status = "Disconnected when folder trust was removed".into();
             self.dap_pending = None;
             self.dap_breakpoints_pending = 0;
@@ -3558,6 +3607,33 @@ impl ForgeRoomApp {
         }
         self.debug_breakpoint_control(ui);
         if self.dap.is_none() {
+            if ui.button("Debug active Python file").clicked() {
+                let selected = self.tabs.tabs.get(self.tabs.active);
+                if selected.is_some_and(|tab| tab.doc.is_dirty()) {
+                    self.dap_status = "Save the active Python file before debugging".into();
+                } else if let (Some(root), Some(file)) = (self.repo_root(), self.tabs.active_path())
+                {
+                    match dap::python_launch(&root, file).and_then(|args| {
+                        dap::Session::start_python(&root).map(|session| (session, args))
+                    }) {
+                        Ok((session, args)) => {
+                            self.dap = Some(session);
+                            self.dap_owned = true;
+                            self.dap_pending = Some(("launch", args));
+                            self.dap_status = "Starting project Python debugger…".into();
+                            self.dap_output.clear();
+                            self.show_terminal = true;
+                            self.bottom_tab = BottomTab::DebugConsole;
+                        }
+                        Err(error) => self.dap_status = error,
+                    }
+                } else {
+                    self.dap_status = "Open a saved Python file to debug".into();
+                }
+            }
+            ui.small("Uses .venv or venv Python when present; otherwise the installed Python launcher. debugpy must be installed in that interpreter.");
+            ui.separator();
+            ui.small("Advanced: connect to an adapter already listening on this computer.");
             ui.horizontal(|ui| {
                 ui.label("Local port");
                 ui.add(egui::TextEdit::singleline(&mut self.dap_port).desired_width(70.0));
@@ -3574,6 +3650,7 @@ impl ForgeRoomApp {
                         match dap::Session::connect(port) {
                             Ok(session) => {
                                 self.dap = Some(session);
+                                self.dap_owned = false;
                                 self.dap_pending = Some(("attach", args));
                                 self.dap_status = "Initializing local adapter…".into();
                             }
@@ -3599,6 +3676,7 @@ impl ForgeRoomApp {
                     {
                         Ok((session, args)) => {
                             self.dap = Some(session);
+                            self.dap_owned = false;
                             self.dap_pending = Some(("launch", args));
                             self.dap_status =
                                 "Initializing local adapter for Python launch…".into();
@@ -3615,13 +3693,26 @@ impl ForgeRoomApp {
         let Some(session) = self.dap.as_ref() else {
             return;
         };
-        if ui.button("Disconnect (leave target running)").clicked() {
-            session.disconnect();
+        if ui
+            .button(if self.dap_owned {
+                "Stop debugging"
+            } else {
+                "Disconnect (leave target running)"
+            })
+            .clicked()
+        {
+            if self.dap_owned {
+                session.stop();
+            } else {
+                session.disconnect();
+            }
             self.dap = None;
+            self.dap_owned = false;
             self.dap_pending = None;
             self.dap_breakpoints_pending = 0;
             self.dap_thread = None;
             self.dap_stack.clear();
+            self.dap_variables.clear();
             self.dap_status = "Disconnected".into();
             return;
         }
@@ -3636,15 +3727,60 @@ impl ForgeRoomApp {
                     if ui.button(label).clicked() {
                         session.request(command, serde_json::json!({"threadId":thread}));
                         self.dap_status = format!("Requested {label}");
+                        self.dap_stack.clear();
+                        self.dap_variables.clear();
                     }
                 }
             });
         } else {
             ui.small("Step controls appear after the adapter reports a stopped thread.");
         }
-        for frame in &self.dap_stack {
-            ui.monospace(frame);
+        ui.separator();
+        ui.label("Call stack");
+        let mut selected_frame = None;
+        egui::ScrollArea::vertical()
+            .max_height(190.0)
+            .show(ui, |ui| {
+                for frame in &self.dap_stack {
+                    let label = format!(
+                        "{} · {}:{}",
+                        frame.name,
+                        frame
+                            .path
+                            .as_ref()
+                            .map_or("unknown".into(), |path| path.display().to_string()),
+                        frame.line
+                    );
+                    if ui.button(label).clicked() {
+                        selected_frame = frame.path.clone().map(|path| (path, frame.line));
+                    }
+                }
+            });
+        if let Some((path, line)) = selected_frame
+            && let (Some(root), Ok(file)) = (
+                self.repo_root().and_then(|p| p.canonicalize().ok()),
+                path.canonicalize(),
+            )
+        {
+            if file.starts_with(root) && file.is_file() && line > 0 {
+                self.open_path(file);
+                self.goto_line(line);
+            } else {
+                self.dap_status = "Debug source is outside this workspace".into();
+            }
         }
+        ui.separator();
+        ui.label("Locals");
+        egui::ScrollArea::vertical()
+            .max_height(180.0)
+            .show(ui, |ui| {
+                if self.dap_variables.is_empty() {
+                    ui.small("No locals reported.");
+                }
+                for item in &self.dap_variables {
+                    ui.monospace(format!("{}: {} = {}", item.name, item.kind, item.value));
+                }
+            });
     }
 
     fn debug_breakpoint_control(&mut self, ui: &mut egui::Ui) {
@@ -3654,11 +3790,13 @@ impl ForgeRoomApp {
             && file.starts_with(root)
         {
             let line = self.cursor.0 + 1;
+            let mut changed = false;
             let lines = self.dap_breakpoints.entry(file.clone()).or_default();
             if ui
                 .button(format!("Toggle breakpoint at line {line}"))
                 .clicked()
             {
+                changed = true;
                 if let Some(index) = lines.iter().position(|item| *item == line) {
                     lines.remove(index);
                 } else if lines.len() < 100 {
@@ -3672,6 +3810,12 @@ impl ForgeRoomApp {
                 }
             }
             ui.small(format!("Breakpoints in this file: {:?}", lines));
+            if changed
+                && let Some(root) = self.repo_root()
+                && let Err(error) = debug_state::save(&root, &self.dap_breakpoints)
+            {
+                self.dap_status = format!("Could not save breakpoints: {error}");
+            }
         }
     }
 
@@ -5419,16 +5563,26 @@ impl eframe::App for ForgeRoomApp {
                         }
                     }
                     dap::Event::Message(message) => self.dap_status = message,
+                    dap::Event::Output(output) => {
+                        if self.dap_output.len() >= 200 {
+                            self.dap_output.remove(0);
+                        }
+                        self.dap_output.push(output);
+                    }
                     dap::Event::Stopped { reason, thread } => {
                         self.dap_thread = Some(thread);
                         self.dap_status = format!("Stopped: {reason}");
+                        self.dap_variables.clear();
                     }
                     dap::Event::Stack(frames) => self.dap_stack = frames,
+                    dap::Event::Variables(variables) => self.dap_variables = variables,
                     dap::Event::Ended(message) => {
                         self.dap_status = message;
                         self.dap_thread = None;
                         self.dap_stack.clear();
+                        self.dap_variables.clear();
                         self.dap = None;
+                        self.dap_owned = false;
                         self.dap_pending = None;
                         self.dap_breakpoints_pending = 0;
                         break;
