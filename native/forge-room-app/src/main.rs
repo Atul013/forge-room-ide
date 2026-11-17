@@ -190,6 +190,10 @@ struct ForgeRoomApp {
     workspace: Option<Workspace>,
     show_sidebar: bool,
     status: String,
+    /// The status text last shown, how long an error holds the line, and what waits behind it.
+    status_shown: String,
+    status_hold_until: Option<std::time::Instant>,
+    status_queued: Option<String>,
     pending: Option<Pending>,
     allow_close: bool,
     last_disk_check: std::time::Instant,
@@ -359,6 +363,9 @@ impl ForgeRoomApp {
             workspace: None,
             show_sidebar: true,
             status: "Ready".into(),
+            status_shown: "Ready".into(),
+            status_hold_until: None,
+            status_queued: None,
             pending: None,
             allow_close: false,
             last_disk_check: std::time::Instant::now(),
@@ -4824,7 +4831,13 @@ impl ForgeRoomApp {
                 }
                 ui.add_space(10.0);
             }
-            ui.label(egui::RichText::new(&self.status).color(theme::status_dim()));
+            let color = if is_error_status(&self.status) {
+                theme::status_error()
+            } else {
+                theme::status_dim()
+            };
+            ui.label(egui::RichText::new(&self.status).color(color))
+                .on_hover_text(&self.status);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let dim = |text: String| egui::RichText::new(text).color(theme::status_dim());
                 ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()));
@@ -5198,6 +5211,36 @@ impl ForgeRoomApp {
         }
     }
 
+    /// A failure stays on the status line for ten seconds: a routine message (an auto-save, say)
+    /// that arrives meanwhile waits its turn instead of wiping it.
+    fn settle_status(&mut self, context: &egui::Context) {
+        let now = std::time::Instant::now();
+        if self.status != self.status_shown {
+            let new = self.status.clone();
+            let holding = self.status_hold_until.is_some_and(|until| now < until);
+            if holding && !is_error_status(&new) {
+                self.status_queued = Some(new);
+                self.status = self.status_shown.clone();
+            } else {
+                self.status_hold_until =
+                    is_error_status(&new).then(|| now + std::time::Duration::from_secs(10));
+                self.status_queued = None;
+                self.status_shown = new;
+            }
+        }
+        if let Some(until) = self.status_hold_until {
+            if now >= until {
+                self.status_hold_until = None;
+                if let Some(queued) = self.status_queued.take() {
+                    self.status_shown = queued.clone();
+                    self.status = queued;
+                }
+            } else {
+                context.request_repaint_after(until - now);
+            }
+        }
+    }
+
     fn update_title(&mut self, context: &egui::Context) {
         let mut title = String::new();
         if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
@@ -5238,6 +5281,7 @@ impl eframe::App for ForgeRoomApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.settle_status(ui.ctx());
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
         // A terminal that is not on screen cannot have the keyboard; a stale flag would swallow every
@@ -5845,6 +5889,15 @@ fn dialog_buttons(
         (yes.clicked(), no.clicked())
     })
     .inner
+}
+
+/// Whether a status message reports a failure (it is then shown in red and held for a while).
+fn is_error_status(text: &str) -> bool {
+    text.starts_with("Git:")
+        || text.starts_with("Cannot ")
+        || text.starts_with("Could not ")
+        || text.contains(" failed")
+        || text.starts_with("Error")
 }
 
 fn language_name(name: &str) -> Option<&'static str> {

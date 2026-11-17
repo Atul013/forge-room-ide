@@ -599,6 +599,17 @@ pub fn status_dim() -> Color32 {
     )
 }
 
+/// An error message on the status bar: the danger colour when it reads there, else the bar's text.
+pub fn status_error() -> Color32 {
+    let p = current().palette;
+    ensure_contrast(
+        semantic(p.dark, Tone::Danger),
+        &[p.status_bar],
+        p.status_text,
+        4.5,
+    )
+}
+
 /// A highlight/hover wash that works on dark and light themes.
 pub fn overlay(alpha: u8) -> Color32 {
     if current().palette.dark {
