@@ -15,6 +15,9 @@ serde_json = "1"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 kurbo = "0.11"
 fancy-regex = "0.16"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+futures-util = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "links", "persistence", "wgpu"] }

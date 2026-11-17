@@ -30,6 +30,7 @@ mod local_models;
 mod lsp;
 mod lsp_rename;
 mod mark;
+mod native_models;
 mod palette;
 mod path_links;
 mod position;
@@ -3055,6 +3056,7 @@ impl ForgeRoomApp {
     fn set_trust(&mut self, trusted: bool) {
         self.trusted = trusted;
         if !trusted {
+            self.ai.restrict();
             self.stop_language_sessions();
             if let Some(session) = self.dap.take() {
                 if self.dap_owned {
@@ -5776,7 +5778,7 @@ impl eframe::App for ForgeRoomApp {
         // A run is started from the AI panel, so it is already in front; it is not pulled up again
         // when the run ends (the user may have gone elsewhere meanwhile).
         if busy && !self.ai_was_busy {
-            self.status = "The agent is working: see the AI panel".into();
+            self.status = "AI request active: see the AI panel".into();
         }
         self.ai_was_busy = busy;
         if finished {

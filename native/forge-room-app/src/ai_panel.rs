@@ -1,6 +1,6 @@
 //! The AI Assistant tab of the right dock: transcript, quick actions and the composer, driving a
 //! coding agent (Claude Code or Codex) that runs in the open folder. The message goes to the agent
-//! program installed on this computer (see `agent.rs`); Forge Room itself sends nothing anywhere.
+//! program installed on this computer, or an explicitly reviewed native HTTP model request.
 
 use crate::agent::{self, Mode, Provider};
 use crate::{brand, fonts, icons, local_models, theme};
@@ -70,6 +70,7 @@ struct Message {
 }
 
 pub struct State {
+    native: crate::native_models::panel::State,
     workflow: crate::ai_workflow::Workflow,
     isolated: crate::agent_workspaces::State,
     run_workspace: Option<PathBuf>,
@@ -114,6 +115,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            native: Default::default(),
             workflow: Default::default(),
             isolated: Default::default(),
             run_workspace: None,
@@ -196,6 +198,7 @@ impl State {
             return;
         }
         self.run = None;
+        self.native.reset();
         self.run_provider = None;
         self.started = None;
         self.finish();
@@ -308,6 +311,11 @@ impl State {
             Mode::Edit
         };
         state.saved = state.choices();
+        if let Some(config) = &settings.native_model
+            && config.validate().is_ok()
+        {
+            state.native.config = config.clone();
+        }
         state
     }
 
@@ -418,7 +426,70 @@ impl State {
     }
 
     pub fn busy(&self) -> bool {
-        self.run.is_some()
+        self.run.is_some() || self.native.busy()
+    }
+    fn provider_name(&self) -> &str {
+        if self.native.enabled {
+            "Native model"
+        } else {
+            self.provider.name()
+        }
+    }
+    fn review_native(&mut self, context: &egui::Context, cwd: Option<&Path>, trusted: bool) {
+        let had_review = self.native.review.is_some();
+        let Some(review) = self.native.decision(context) else {
+            if had_review && self.native.review.is_none() {
+                self.workflow.run_flow = None;
+            }
+            return;
+        };
+        self.accept_native(review, context, cwd, trusted);
+    }
+    fn accept_native(
+        &mut self,
+        review: crate::native_models::panel::Review,
+        context: &egui::Context,
+        cwd: Option<&Path>,
+        trusted: bool,
+    ) {
+        if !trusted
+            || cwd.and_then(|p| p.canonicalize().ok()).as_ref() != Some(&review.root)
+            || self.workflow.flow != review.flow
+        {
+            self.workflow.run_flow = None;
+            self.fail("Workspace, trust or flow changed; review a fresh request");
+            return;
+        }
+        let current = self.workflow.prepare(&review.root, &review.instruction);
+        if current.as_ref().ok() != Some(&review.prepared.prompt) {
+            self.workflow.run_flow = None;
+            self.fail("Attached files or plan changed; review a fresh request before sending");
+            return;
+        }
+        let wake = context.clone();
+        let prompt = review.prepared.prompt.clone();
+        match crate::native_models::start(review.prepared, move || wake.request_repaint()) {
+            Ok(run) => {
+                self.native.run = Some(run);
+                self.native.inflight = Some(prompt);
+                if self.input.trim() == review.instruction {
+                    self.input.clear();
+                }
+                self.messages.push(Message {
+                    author: Author::User,
+                    text: review.instruction,
+                });
+                self.chat_dirty = true;
+                self.started = Some(std::time::Instant::now());
+                self.focus_input = true;
+                self.run_provider = None;
+                self.run_workspace = None;
+            }
+            Err(error) => {
+                self.workflow.run_flow = None;
+                self.fail(error);
+            }
+        }
     }
 
     fn refresh_local_models(&mut self, context: &egui::Context) {
@@ -499,7 +570,7 @@ impl State {
             );
             return;
         }
-        if (text.is_empty() && self.image.is_none()) || self.run.is_some() {
+        if (text.is_empty() && self.image.is_none()) || self.busy() {
             return;
         }
         if self.image.is_some() && self.provider != Provider::Codex {
@@ -515,6 +586,24 @@ impl State {
                 "This folder is not trusted yet. An agent runs programs with your rights, so use \
                  Folder: Trust This Folder first.",
             );
+            return;
+        }
+        if self.native.enabled {
+            if self.image.is_some() {
+                self.fail("Native model connections currently accept text only; remove the image");
+                return;
+            }
+            match self
+                .workflow
+                .prepare(cwd, &text)
+                .and_then(|prompt| self.native.prepare(cwd, self.workflow.flow, prompt, text))
+            {
+                Ok(()) => {}
+                Err(error) => {
+                    self.workflow.run_flow = None;
+                    self.fail(error);
+                }
+            }
             return;
         }
         let provider = self.provider;
@@ -626,27 +715,37 @@ impl State {
         if self.chat_dirty && self.chat_saved.elapsed() >= std::time::Duration::from_secs(2) {
             self.save_chat();
         }
-        let Some(run) = &mut self.run else {
-            return false;
-        };
+        let native = self.native.run.is_some();
         let mut finished = false;
         let mut succeeded = false;
-        let events = run.poll();
+        let events = if let Some(run) = &mut self.run {
+            run.poll()
+        } else if let Some(run) = &mut self.native.run {
+            run.poll()
+        } else {
+            return false;
+        };
         if !events.is_empty() {
             self.chat_dirty = true;
         }
         for event in events {
             if let agent::Event::Text(text) = &event {
-                self.workflow.output = if text.len() <= 1024 * 1024 {
-                    text.clone()
+                if native {
+                    self.workflow.output.push_str(text);
                 } else {
-                    String::new()
-                };
+                    self.workflow.output = if text.len() <= 1024 * 1024 {
+                        text.clone()
+                    } else {
+                        String::new()
+                    };
+                }
             }
             match event {
                 agent::Event::Text(text) => match self.messages.last_mut() {
                     Some(last) if last.author == Author::Assistant => {
-                        last.text.push_str("\n\n");
+                        if !native {
+                            last.text.push_str("\n\n");
+                        }
                         last.text.push_str(&text);
                     }
                     _ => self.messages.push(Message {
@@ -715,6 +814,10 @@ impl State {
             }
         }
         if finished {
+            if native {
+                self.native.complete(succeeded, &self.workflow.output);
+                self.native.run = None;
+            }
             if succeeded {
                 match self.workflow.complete() {
                     Ok(Some(note)) => self.note(note),
@@ -739,12 +842,27 @@ impl State {
         if let Some(run) = &self.run {
             run.cancel();
         }
+        if let Some(run) = &mut self.native.run {
+            run.cancel();
+        }
+        if self.native.review.take().is_some() {
+            self.workflow.run_flow = None;
+        }
+    }
+    pub fn restrict(&mut self) {
+        self.stop();
+        self.run = None;
+        self.native.reset();
+        self.started = None;
+        self.workflow.run_flow = None;
+        self.note("AI requests stopped after folder trust was removed");
     }
 
     /// Forget the conversation (and stop the agent): the next message starts fresh.
     pub fn new_chat(&mut self) {
         // Dropping the run stops the agent and its events no longer reach the new chat.
         self.run = None;
+        self.native.reset();
         self.run_provider = None;
         self.started = None;
         self.messages.clear();
@@ -825,13 +943,20 @@ pub fn show(
             ui.add_space(8.0);
             controls(ui, state);
             let busy = state.busy();
-            for note in state.isolated.show(ui, cwd, trusted, busy) {
+            for note in if !state.native.enabled {
+                state.isolated.show(ui, cwd, trusted, busy)
+            } else {
+                Vec::new()
+            } {
                 state.note(note);
             }
             state.recovery.show(ui, cwd, trusted, busy);
             let busy = state.busy();
             let old_plan = state.workflow.plan.clone();
-            for note in state.workflow.show(ui, cwd, busy, trusted) {
+            for note in state
+                .workflow
+                .show(ui, cwd, busy, trusted, !state.native.enabled)
+            {
                 state.note(note);
             }
             if old_plan != state.workflow.plan {
@@ -865,6 +990,9 @@ pub fn show(
                     ui.label(
                         RichText::new(match last_tool {
                             Some(tool) => format!("Working {seconds}s · {tool}"),
+                            None if state.native.review.is_some() => {
+                                "Awaiting request review; nothing has been sent".into()
+                            }
                             None => format!("Working {seconds}s"),
                         })
                         .size(13.0)
@@ -880,6 +1008,7 @@ pub fn show(
             }
             ui.add_space(12.0);
         });
+    state.review_native(ui.ctx(), cwd, trusted);
 }
 
 fn header(ui: &mut egui::Ui) {
@@ -907,6 +1036,31 @@ fn header(ui: &mut egui::Ui) {
 
 /// Which agent, what it may do, and a fresh conversation.
 fn controls(ui: &mut egui::Ui, state: &mut State) {
+    let busy = state.busy();
+    let before = state.native.enabled;
+    ui.add_enabled_ui(!busy, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut state.native.enabled, false, "Installed CLI agent");
+            ui.selectable_value(&mut state.native.enabled, true, "Native model connection");
+        });
+    });
+    if state.native.enabled != before {
+        state.workflow.output.clear();
+        state.workflow.preview = None;
+        if state.native.enabled && state.workflow.flow == crate::ai_workflow::Flow::Direct {
+            state.workflow.flow = crate::ai_workflow::Flow::Ask;
+        }
+    }
+    if state.native.enabled {
+        state.native.show(ui, busy);
+        if ui
+            .add_enabled(!busy, egui::Button::new("New chat"))
+            .clicked()
+        {
+            state.new_chat();
+        }
+        return;
+    }
     state.poll_local_models();
     if matches!(state.provider, Provider::Ollama | Provider::LmStudio)
         && state.local_model_status.is_empty()
@@ -1542,7 +1696,10 @@ fn composer(
         focused && ui.input(|input| input.key_pressed(Key::Enter) && !input.modifiers.shift);
     let send_requested =
         enter && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
-    if focused && ui.input(|input| input.modifiers.command && input.key_pressed(Key::V)) {
+    if !state.native.enabled
+        && focused
+        && ui.input(|input| input.modifiers.command && input.key_pressed(Key::V))
+    {
         match clipboard_image() {
             Ok(Some(path)) => state.attach_image(path, true),
             Ok(None) => {}
@@ -1560,12 +1717,16 @@ fn composer(
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            let hint = if state.busy() {
-                format!("{} is working… (Esc stops it)", state.provider.name())
+            let hint = if state.native.review.is_some() {
+                "Review the request before sending (Esc cancels)".into()
+            } else if state.busy() {
+                format!("{} is working… (Esc stops it)", state.provider_name())
+            } else if state.native.enabled {
+                "Ask the native model using selected context (Enter reviews the request)".into()
             } else {
                 format!(
                     "Ask {} to work in this folder…  (Enter sends, Shift+Enter adds a line)",
-                    state.provider.name()
+                    state.provider_name()
                 )
             };
             let editor = egui::TextEdit::multiline(&mut state.input)
@@ -1596,7 +1757,12 @@ fn composer(
                 });
             }
             ui.horizontal(|ui| {
-                if ui.small_button("Attach image…").clicked()
+                if ui
+                    .add_enabled(
+                        !state.native.enabled,
+                        egui::Button::new("Attach image…").small(),
+                    )
+                    .clicked()
                     && let Some(path) = rfd::FileDialog::new()
                         .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
                         .pick_file()
@@ -1656,11 +1822,11 @@ fn composer(
                     }
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new(state.provider.name())
+                        RichText::new(state.provider_name())
                             .size(13.0)
                             .color(theme::text_dim()),
                     );
-                    if state.workflow.flow.mode(state.mode) == Mode::Full {
+                    if !state.native.enabled && state.workflow.flow.mode(state.mode) == Mode::Full {
                         ui.label(
                             RichText::new("Full access")
                                 .size(12.0)
@@ -1782,6 +1948,114 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn native_request_waits_for_review_then_requires_apply_and_keeps_cli_history_private() {
+        use crate::ai_workflow::Flow;
+        let root =
+            std::env::temp_dir().join(format!("forge-native-reviewed-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("main.txt");
+        std::fs::write(&file, "before\n").unwrap();
+        let proposal =
+            serde_json::json!({"summary":"change","edits":[{"path":"main.txt","after":"after\n"}]})
+                .to_string();
+        let response=serde_json::json!({"choices":[{"message":{"content":proposal},"finish_reason":"stop"}]}).to_string();
+        let (config, server) = crate::native_models::tests::mock(
+            crate::native_models::Protocol::Chat,
+            response,
+            false,
+            "200 OK",
+        );
+        let mut state = State::default();
+        state.set_workspace(&root);
+        state.native.enabled = true;
+        state.native.config = config;
+        state.programs = Some([None, None]);
+        state.codex_session = Some("private-cli-session".into());
+        state.messages.push(Message {
+            author: Author::User,
+            text: "PRIVATE CLI HISTORY".into(),
+        });
+        state.workflow.flow = Flow::Propose;
+        state.workflow.plan = "Update the attached file".into();
+        state.workflow.attach(&root, &file).unwrap();
+        state.input = "Implement reviewed plan".into();
+        let context = egui::Context::default();
+        state.send(&context, Some(&root), true);
+        assert!(state.native.run.is_none());
+        assert!(state.native.review.is_some());
+        assert!(!state.input.is_empty());
+        let review = state.native.review.take().unwrap();
+        assert!(
+            !review
+                .prepared
+                .body
+                .to_string()
+                .contains("PRIVATE CLI HISTORY")
+        );
+        state.input = "Newer draft typed while reviewing".into();
+        state.accept_native(review, &context, Some(&root), true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.busy() {
+            assert!(std::time::Instant::now() < deadline);
+            state.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(state.workflow.preview.is_some());
+        assert_eq!(state.input, "Newer draft typed while reviewing");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "before\n");
+        assert_eq!(state.codex_session.as_deref(), Some("private-cli-session"));
+        state.apply_review(&root, &[], false).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "after\n");
+        state.apply_review(&root, &[], true).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "before\n");
+        let request = server.join().unwrap();
+        assert!(
+            request.body["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("before\\n")
+        );
+        state.new_chat();
+        assert!(state.native.history.is_empty());
+    }
+    #[test]
+    fn native_review_rejects_changed_attachments_and_restricted_workspaces_before_network() {
+        use crate::ai_workflow::Flow;
+        let root = std::env::temp_dir().join(format!("forge-native-stale-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("main.txt");
+        std::fs::write(&file, "before").unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut state = State::default();
+        state.set_workspace(&root);
+        state.native.enabled = true;
+        state.native.config.base_url = format!(
+            "http://127.0.0.1:{}/v1",
+            listener.local_addr().unwrap().port()
+        );
+        state.native.config.model = "test".into();
+        state.workflow.flow = Flow::Ask;
+        state.workflow.attach(&root, &file).unwrap();
+        state.input = "Explain".into();
+        let context = egui::Context::default();
+        state.send(&context, Some(&root), false);
+        assert!(state.native.review.is_none());
+        state.send(&context, Some(&root), true);
+        let review = state.native.review.take().unwrap();
+        std::fs::write(&file, "newer").unwrap();
+        state.accept_native(review, &context, Some(&root), true);
+        assert!(!state.busy());
+        assert!(state.messages.last().unwrap().text.contains("changed"));
+        assert!(matches!(listener.accept(),Err(e) if e.kind()==std::io::ErrorKind::WouldBlock));
+        assert_eq!(state.input, "Explain");
+        state.send(&context, Some(&root), true);
+        assert!(state.native.review.is_some());
+        state.restrict();
+        assert!(!state.busy());
+        assert!(state.native.history.is_empty());
+    }
     #[cfg(windows)]
     #[test]
     fn read_only_provider_draft_waits_for_apply_and_keeps_direct_session_separate() {

@@ -28,6 +28,12 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Completed native text HTTP provider batch with Chat Completions/Anthropic Messages, env-key authentication, model discovery, exact request review, account/root/flow-scoped native history, bounded streaming/cancel and reused reviewed Apply/undo/recovery. Ten native regressions passed, full local app suite 317 passed/9 ignored, build/Clippy passed; final Windows CI/package pending. Native tools remain disabled; local model servers and desktop control are unavailable, so no live-provider/desktop/two-machine claim.
+
+- 2026-11-17 Codex: Updating shared README and active preview notes for integrated network Rooms and explicit native HTTP privacy behavior. Native protocol and review/apply/undo tests pass; full-suite fixture fix explicitly switches accepted Windows test sockets back to blocking mode. No live-provider inference or desktop acceptance claim.
+
+- 2026-11-17 Codex: User authorized the listed integration work; merged #64, #65, #66 and #67 in order after checking unchanged green heads. origin/main 6cfd1cd has the exact final tested task-branch tree. Started substantive native HTTP model batch: Chat Completions and Anthropic Messages, loopback/HTTPS endpoints, env-only keys, explicit request review, bounded streaming/cancel and existing reviewed edits. CLI remains available; native tool execution is not enabled.
+
 - 2026-11-17 Codex: Task pipeline source now covers sequential dependency graphs, shared prerequisite deduplication, explicit argument/cwd/environment variables, Windows overrides, cached review with refresh and unsupported-plan reasons. Real PowerShell tests passed order, native exit failure stopping dependents and finally restoration; compiled native argument capture passed literal quoted paths. Fixed terminal startup failure fall-through. #66 final head ab8a5b8 passed Windows CI; task batch final CI and desktop/PTY trial remain separate.
 
 - 2026-11-17 Codex: Continuing with a substantive project-task pipeline batch stacked on #66: bounded sequential dependencies, workspace/file argument variables, explicit cwd/environment, visible unsupported-task reasons and stop-on-failure terminal execution. Existing project actions remain available. Commands still require an explicit trusted-folder click; no background scheduler is claimed.
