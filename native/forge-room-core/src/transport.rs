@@ -734,8 +734,21 @@ mod tests {
             .filter_map(|w| w.join().unwrap().ok())
             .collect();
         assert_eq!(winners.len(), 1);
+        let (mut client, _) = winners.pop().unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let posting = barrier.clone();
+        let post = thread::spawn(move || {
+            posting.wait();
+            let committed = client.post("racing revocation").is_ok();
+            (client, committed)
+        });
+        barrier.wait();
         host.revoke(&shared).unwrap();
-        let (client, _) = &mut winners[0];
+        let (mut client, committed) = post.join().unwrap();
+        assert_eq!(
+            host.snapshot().unwrap().events.len(),
+            usize::from(committed)
+        );
         assert!(client.poll().is_err());
         assert!(client.post("revoked").is_err());
         assert!(host.snapshot().unwrap().members.is_empty());
