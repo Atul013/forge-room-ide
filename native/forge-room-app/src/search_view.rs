@@ -346,12 +346,12 @@ impl SearchView {
                 if self.confirming {
                     let text = if truncated {
                         "Replace every match on disk, including those not listed? Files with \
-                         unsaved changes are skipped. Undo with Git."
+                         unsaved changes are skipped. This cannot be undone here: commit first if you may want the old text back."
                             .to_string()
                     } else {
                         format!(
                             "Replace {hits} matches in {files} files on disk? Files with unsaved \
-                             changes are skipped. Undo with Git."
+                             changes are skipped. This cannot be undone here: commit first if you may want the old text back."
                         )
                     };
                     ui.label(RichText::new(text).size(12.0).color(theme::text()));

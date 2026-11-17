@@ -578,6 +578,68 @@ pub fn push(root: &Path, has_upstream: bool) -> Result<String, String> {
     }
 }
 
+/// Git's own failure text as one plain sentence for the status line: the common causes get a
+/// sentence that says what to do, anything else is its first line without the `error:`/`fatal:`
+/// prefix.
+pub fn explain(error: &str) -> String {
+    let lower = error.to_lowercase();
+    let known: [(&[&str], &str); 7] = [
+        (
+            &[
+                "does not appear to be a git repository",
+                "no configured push destination",
+                "no such remote",
+            ],
+            "This repository has no remote yet. Add one in a terminal (git remote add origin <url>)",
+        ),
+        (
+            &["would be overwritten"],
+            "Your uncommitted changes would be overwritten. Commit or stash them first",
+        ),
+        (&["nothing to commit"], "There is nothing to commit"),
+        (
+            &[
+                "could not read from remote",
+                "authentication failed",
+                "could not resolve host",
+                "unable to access",
+            ],
+            "Could not reach the remote. Check your connection and sign-in",
+        ),
+        (
+            &["non-fast-forward", "[rejected]", "fetch first"],
+            "The remote has newer commits. Pull first, then push",
+        ),
+        (
+            &["index.lock"],
+            "Another Git program is running in this folder. Close it, or delete .git/index.lock if none is",
+        ),
+        (
+            &["not a git repository"],
+            "This folder is not a Git repository",
+        ),
+    ];
+    for (needles, sentence) in known {
+        if needles.iter().any(|needle| lower.contains(needle)) {
+            return sentence.to_string();
+        }
+    }
+    let line = error
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("hint:"))
+        .unwrap_or("Git failed");
+    let line = line
+        .strip_prefix("error: ")
+        .or_else(|| line.strip_prefix("fatal: "))
+        .unwrap_or(line);
+    let mut short: String = line.chars().take(200).collect();
+    if short.chars().count() < line.chars().count() {
+        short.push('…');
+    }
+    short
+}
+
 fn first_line(text: &str, fallback: &str) -> String {
     text.lines()
         .map(str::trim)
@@ -2037,6 +2099,33 @@ mod history_tests {
         unstage(&dir, &["a[1].txt".to_string()]).unwrap();
         assert!(status(&dir).unwrap().changes.iter().all(|c| !c.is_staged()));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn git_failures_become_plain_sentences() {
+        assert!(
+            explain(
+                "fatal: 'origin' does not appear to be a git repository
+fatal: Could not read from remote repository."
+            )
+            .contains("no remote")
+        );
+        assert!(
+            explain(
+                "error: Your local changes to the following files would be overwritten by checkout:
+	a.txt"
+            )
+            .contains("overwritten")
+        );
+        assert_eq!(
+            explain(
+                "hint: waiting
+fatal: something odd happened"
+            ),
+            "something odd happened"
+        );
+        assert_eq!(explain(""), "Git failed");
+        assert!(explain(&"x".repeat(500)).chars().count() <= 201);
     }
 
     #[test]

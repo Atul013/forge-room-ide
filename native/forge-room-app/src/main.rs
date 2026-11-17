@@ -1103,7 +1103,7 @@ impl ForgeRoomApp {
                         Ok(list) => self
                             .palette
                             .open_branches(list, palette::BranchPurpose::Checkout),
-                        Err(error) => self.status = format!("Git: {error}"),
+                        Err(error) => self.status = format!("Git: {}", git::explain(&error)),
                     }
                 }
             }
@@ -1116,7 +1116,7 @@ impl ForgeRoomApp {
                 if let Some(root) = self.git_root() {
                     match git::branches(&root) {
                         Ok(list) => self.palette.open_branches(list, purpose),
-                        Err(error) => self.status = format!("Git: {error}"),
+                        Err(error) => self.status = format!("Git: {}", git::explain(&error)),
                     }
                 }
             }
@@ -1140,7 +1140,7 @@ impl ForgeRoomApp {
                                 .collect();
                             self.palette.open_branches(tags, purpose);
                         }
-                        Err(error) => self.status = format!("Git: {error}"),
+                        Err(error) => self.status = format!("Git: {}", git::explain(&error)),
                     }
                 }
             }
@@ -2926,7 +2926,7 @@ impl ForgeRoomApp {
         };
         self.status = match result {
             Ok(message) => message.to_string(),
-            Err(error) => format!("Git: {error}"),
+            Err(error) => format!("Git: {}", git::explain(&error)),
         };
         self.refresh_git();
         if !stage {
@@ -3029,7 +3029,7 @@ impl ForgeRoomApp {
                 self.git_job = None;
                 self.status = match result {
                     Ok(message) => message,
-                    Err(error) => format!("Git: {error}"),
+                    Err(error) => format!("Git: {}", git::explain(&error)),
                 };
                 self.refresh_git();
             }
@@ -3234,7 +3234,7 @@ impl ForgeRoomApp {
         match outcome {
             Ok(message) if !message.is_empty() => self.status = message,
             Ok(_) => {}
-            Err(error) => self.status = format!("Git: {error}"),
+            Err(error) => self.status = format!("Git: {}", git::explain(&error)),
         }
         self.refresh_git();
     }
@@ -3315,7 +3315,7 @@ impl ForgeRoomApp {
                 }
             }
             self.status = match failed {
-                Some(error) => format!("Git: {error}"),
+                Some(error) => format!("Git: {}", git::explain(&error)),
                 None => "Discarded changes".into(),
             };
             self.refresh_git();
@@ -3598,7 +3598,7 @@ impl ForgeRoomApp {
                     Ok(git::MergeOutcome::Conflicts) => format!(
                         "Merging {name} has conflicts. Resolve them in Source Control,                          then commit, or run Git: Abort Merge"
                     ),
-                    Err(error) => format!("Git: {error}"),
+                    Err(error) => format!("Git: {}", git::explain(&error)),
                 };
                 self.refresh_git();
                 self.reload_clean_tabs();
@@ -3606,7 +3606,7 @@ impl ForgeRoomApp {
             GitOp::DeleteBranch => {
                 self.status = match git::delete_branch(&root, &name, false) {
                     Ok(()) => format!("Deleted branch {name}"),
-                    Err(error) => format!("Git: {error}"),
+                    Err(error) => format!("Git: {}", git::explain(&error)),
                 };
                 self.refresh_git();
             }
@@ -3619,7 +3619,7 @@ impl ForgeRoomApp {
                         ),
                         None => text,
                     },
-                    Err(error) => format!("Git: {error}"),
+                    Err(error) => format!("Git: {}", git::explain(&error)),
                 };
                 self.refresh_git();
             }
@@ -3820,7 +3820,7 @@ impl ForgeRoomApp {
                                 Ok(text) => format!(
                                     "{text}. To bring it back: git stash store <that commit>"
                                 ),
-                                Err(error) => format!("Git: {error}"),
+                                Err(error) => format!("Git: {}", git::explain(&error)),
                             };
                             self.refresh_git();
                         }
@@ -3833,7 +3833,7 @@ impl ForgeRoomApp {
                                     self.sc.message.clear();
                                     format!("Amended commit {hash}")
                                 }
-                                Err(error) => format!("Git: {error}"),
+                                Err(error) => format!("Git: {}", git::explain(&error)),
                             };
                             self.refresh_git();
                         }
@@ -3847,7 +3847,7 @@ impl ForgeRoomApp {
                         if let Some(root) = self.git_root() {
                             self.status = match git::abort_operation(&root) {
                                 Ok(operation) => format!("{} aborted", operation.label()),
-                                Err(error) => format!("Git: {error}"),
+                                Err(error) => format!("Git: {}", git::explain(&error)),
                             };
                             self.refresh_git();
                             self.reload_clean_tabs();
@@ -5562,7 +5562,7 @@ impl eframe::App for ForgeRoomApp {
                 if let Some(root) = self.git_root() {
                     self.status = match git::checkout(&root, &name, remote) {
                         Ok(()) => format!("Switched to {name}"),
-                        Err(error) => format!("Git: {error}"),
+                        Err(error) => format!("Git: {}", git::explain(&error)),
                     };
                     self.refresh_git();
                     self.reload_clean_tabs();
@@ -5572,7 +5572,7 @@ impl eframe::App for ForgeRoomApp {
                 if let Some(root) = self.git_root() {
                     self.status = match git::create_branch(&root, &name) {
                         Ok(()) => format!("Created and switched to {name}"),
-                        Err(error) => format!("Git: {error}"),
+                        Err(error) => format!("Git: {}", git::explain(&error)),
                     };
                     self.refresh_git();
                 }
@@ -5587,7 +5587,7 @@ impl eframe::App for ForgeRoomApp {
                 if let Some(root) = self.git_root() {
                     self.status = match git::create_tag(&root, &name) {
                         Ok(()) => format!("Tagged the current commit {name}"),
-                        Err(error) => format!("Git: {error}"),
+                        Err(error) => format!("Git: {}", git::explain(&error)),
                     };
                     self.refresh_git();
                 }
