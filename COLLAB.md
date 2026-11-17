@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: #68 merged at f14effc after source checks passed. The release binary compiled, then run 44089822812 failed strict packaging on webpki-roots CDLA-Permissive-2.0. Adding its exact data-license identifier to the existing accepted set so cargo-about includes the agreement in shipped notices; keeping --fail and all reporting intact. This is the required release follow-up to native HTTPS, not desktop/provider acceptance.
+
 - 2026-11-17 Codex: Completed native text HTTP provider batch with Chat Completions/Anthropic Messages, env-key authentication, model discovery, exact request review, account/root/flow-scoped native history, bounded streaming/cancel and reused reviewed Apply/undo/recovery. Ten native regressions passed, full local app suite 317 passed/9 ignored, build/Clippy passed; final Windows CI/package pending. Native tools remain disabled; local model servers and desktop control are unavailable, so no live-provider/desktop/two-machine claim.
 
 - 2026-11-17 Codex: Updating shared README and active preview notes for integrated network Rooms and explicit native HTTP privacy behavior. Native protocol and review/apply/undo tests pass; full-suite fixture fix explicitly switches accepted Windows test sockets back to blocking mode. No live-provider inference or desktop acceptance claim.
