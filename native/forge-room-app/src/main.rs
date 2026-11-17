@@ -1170,6 +1170,27 @@ impl ForgeRoomApp {
                     self.status = "Open a folder first".into();
                 }
             }
+            Command::UntrustFolder => match self.repo_root() {
+                Some(root) if self.trusted => {
+                    let shown = root.display().to_string();
+                    let mut removed = Vec::new();
+                    let _ = settings::update(|settings| {
+                        removed = settings::untrust(&mut settings.trusted_folders, &shown);
+                    });
+                    self.set_trust(false);
+                    self.status = match removed.as_slice() {
+                        [only] if settings::trust_matches(only, &shown) => {
+                            "Stopped trusting this folder: Git and project tools are off".into()
+                        }
+                        _ => format!(
+                            "Stopped trusting {}: it was trusted through an enclosing folder,                              and that folder is no longer trusted either",
+                            shown
+                        ),
+                    };
+                }
+                Some(_) => self.status = "This folder is not trusted".into(),
+                None => self.status = "Open a folder first".into(),
+            },
             Command::CheckProject => {
                 self.show_terminal = true;
                 self.bottom_tab = BottomTab::Problems;

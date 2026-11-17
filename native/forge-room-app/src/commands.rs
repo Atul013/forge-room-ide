@@ -62,6 +62,7 @@ pub enum Command {
     LspCompletion,
     LspReferences,
     TrustFolder,
+    UntrustFolder,
     OpenAgent,
     ResetLayout,
     NewTerminal,
@@ -163,6 +164,11 @@ pub const ALL: &[(Command, &str, &str)] = &[
         "",
     ),
     (Command::TrustFolder, "Folder: Trust This Folder", ""),
+    (
+        Command::UntrustFolder,
+        "Folder: Stop Trusting This Folder",
+        "",
+    ),
     (
         Command::OpenAgent,
         "AI: Open Agent Panel (Claude Code / Codex)",
