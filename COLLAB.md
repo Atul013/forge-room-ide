@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: PR #61 merged after Windows CI passed. PR #62 adds Python launch and corrected verified-breakpoint ordering; live debugpy breakpoint, step, stack and output probe passed. Windows CI on the final #62 head and desktop interaction remain open.
+
+- 2026-11-17 Codex: Added explicit Python launch request atop PR #61 on `feat/native-dap-launch`. It accepts only a saved `.py` file canonically inside the trusted folder and uses the folder as cwd. Focused path test, app check and Clippy passed locally. An isolated debugpy 1.8.22 probe hit a line-2 breakpoint, stepped to line 3, returned stack frames and output, then ended; desktop interaction and other adapters remain open.
+
 - 2026-11-17 Codex: Started native DAP debugger attach slice on `feat/native-dap-protocol` from current `origin/main`. Loopback adapter connection, bounded framing, explicit attach JSON, workspace breakpoints, stopped stack and step controls are in progress. Fake adapter and app checks are the source gate; live adapter and desktop acceptance remain separate.
 
 - 2026-11-16 Codex: Added guarded LSP Rename Symbol preview/apply on feat/native-lsp-rename. Focused stale-file/apply test, real rust-analyzer proposal on rerun, app check and Clippy passed; desktop and two-language acceptance pending.

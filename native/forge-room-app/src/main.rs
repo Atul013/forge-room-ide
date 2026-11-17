@@ -262,6 +262,8 @@ struct ForgeRoomApp {
     dap: Option<dap::Session>,
     dap_port: String,
     dap_attach_args: String,
+    dap_pending: Option<(&'static str, serde_json::Value)>,
+    dap_breakpoints_pending: usize,
     dap_status: String,
     dap_thread: Option<i64>,
     dap_stack: Vec<String>,
@@ -423,6 +425,8 @@ impl ForgeRoomApp {
             dap: None,
             dap_port: "5678".into(),
             dap_attach_args: "{}".into(),
+            dap_pending: None,
+            dap_breakpoints_pending: 0,
             dap_status: "No adapter connected".into(),
             dap_thread: None,
             dap_stack: Vec::new(),
@@ -759,6 +763,8 @@ impl ForgeRoomApp {
                 self.dap_breakpoints.clear();
                 self.dap_stack.clear();
                 self.dap_thread = None;
+                self.dap_pending = None;
+                self.dap_breakpoints_pending = 0;
             }
             self.explorer_state = explorer::State::default();
             self.problems = None;
@@ -2824,6 +2830,8 @@ impl ForgeRoomApp {
                 session.disconnect();
             }
             self.dap_status = "Disconnected when folder trust was removed".into();
+            self.dap_pending = None;
+            self.dap_breakpoints_pending = 0;
         }
         self.git_top = None;
         if trusted {
@@ -3544,6 +3552,10 @@ impl ForgeRoomApp {
             ui.small("Trust this folder before connecting to an adapter.");
             return;
         }
+        if self.repo_root().is_none() {
+            ui.small("Open a project folder before connecting to an adapter.");
+            return;
+        }
         self.debug_breakpoint_control(ui);
         if self.dap.is_none() {
             ui.horizontal(|ui| {
@@ -3562,6 +3574,7 @@ impl ForgeRoomApp {
                         match dap::Session::connect(port) {
                             Ok(session) => {
                                 self.dap = Some(session);
+                                self.dap_pending = Some(("attach", args));
                                 self.dap_status = "Initializing local adapter…".into();
                             }
                             Err(error) => self.dap_status = error,
@@ -3572,6 +3585,31 @@ impl ForgeRoomApp {
                     }
                 }
             }
+            if ui.button("Connect and launch active Python file").clicked() {
+                let selected = self.tabs.tabs.get(self.tabs.active);
+                if selected.is_some_and(|tab| tab.doc.is_dirty()) {
+                    self.dap_status = "Save the active Python file before launching".into();
+                } else if let (Ok(port), Some(root), Some(file)) = (
+                    self.dap_port.parse::<u16>(),
+                    self.repo_root(),
+                    self.tabs.active_path(),
+                ) {
+                    match dap::python_launch(&root, file)
+                        .and_then(|args| dap::Session::connect(port).map(|session| (session, args)))
+                    {
+                        Ok((session, args)) => {
+                            self.dap = Some(session);
+                            self.dap_pending = Some(("launch", args));
+                            self.dap_status =
+                                "Initializing local adapter for Python launch…".into();
+                        }
+                        Err(error) => self.dap_status = error,
+                    }
+                } else {
+                    self.dap_status =
+                        "Open a saved Python file and enter a valid adapter port".into();
+                }
+            }
             return;
         }
         let Some(session) = self.dap.as_ref() else {
@@ -3580,6 +3618,8 @@ impl ForgeRoomApp {
         if ui.button("Disconnect (leave target running)").clicked() {
             session.disconnect();
             self.dap = None;
+            self.dap_pending = None;
+            self.dap_breakpoints_pending = 0;
             self.dap_thread = None;
             self.dap_stack.clear();
             self.dap_status = "Disconnected".into();
@@ -3627,7 +3667,7 @@ impl ForgeRoomApp {
                 }
                 if let Some(session) = &self.dap {
                     session.request("setBreakpoints", serde_json::json!({
-                                "source":{"path":file}, "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
+                                "source":{"path":tabs::normalize(&file)}, "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
                             }));
                 }
             }
@@ -5347,19 +5387,36 @@ impl eframe::App for ForgeRoomApp {
             for event in session.drain() {
                 match event {
                     dap::Event::Connected => {
-                        let args = serde_json::from_str(&self.dap_attach_args).unwrap_or_default();
-                        session.request("attach", args);
-                        self.dap_status = "Adapter initialized; attach requested".into();
+                        if let Some((command, args)) = self.dap_pending.take() {
+                            session.request(command, args);
+                            self.dap_status = format!("Adapter initialized; {command} requested");
+                        }
                     }
                     dap::Event::Initialized => {
+                        self.dap_breakpoints_pending = self.dap_breakpoints.len();
                         for (file, lines) in &self.dap_breakpoints {
                             session.request("setBreakpoints", serde_json::json!({
-                                "source":{"path":file},
+                                "source":{"path":tabs::normalize(file)},
                                 "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
                             }));
                         }
-                        session.request("configurationDone", serde_json::json!({}));
-                        self.dap_status = "Breakpoints sent; debugger configured".into();
+                        if self.dap_breakpoints_pending == 0 {
+                            session.request("configurationDone", serde_json::json!({}));
+                            self.dap_status = "Debugger configured".into();
+                        } else {
+                            self.dap_status = "Waiting for adapter breakpoint confirmation".into();
+                        }
+                    }
+                    dap::Event::BreakpointsSet { verified } => {
+                        if !verified {
+                            self.dap_status = "Adapter did not verify all breakpoints".into();
+                        }
+                        if self.dap_breakpoints_pending > 0 {
+                            self.dap_breakpoints_pending -= 1;
+                            if self.dap_breakpoints_pending == 0 {
+                                session.request("configurationDone", serde_json::json!({}));
+                            }
+                        }
                     }
                     dap::Event::Message(message) => self.dap_status = message,
                     dap::Event::Stopped { reason, thread } => {
@@ -5372,6 +5429,8 @@ impl eframe::App for ForgeRoomApp {
                         self.dap_thread = None;
                         self.dap_stack.clear();
                         self.dap = None;
+                        self.dap_pending = None;
+                        self.dap_breakpoints_pending = 0;
                         break;
                     }
                 }
