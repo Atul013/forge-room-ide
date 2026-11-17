@@ -216,8 +216,18 @@ fn accent_soft() -> Color32 {
     theme::mix(theme::bg_editor(), theme::accent(), 0.22)
 }
 
+/// The saved settings, or `None` when there are none or they cannot be read. A file that exists but
+/// is damaged is copied to `<name>.json.bad` first: the lobby starts from defaults and its next save
+/// replaces the file, which would otherwise destroy the only copy of what the user had.
 fn load_config(path: &Path) -> Option<LobbyConfig> {
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    let bytes = std::fs::read(path).ok()?;
+    match serde_json::from_slice(&bytes) {
+        Ok(config) => Some(config),
+        Err(_) => {
+            let _ = std::fs::write(path.with_extension("json.bad"), &bytes);
+            None
+        }
+    }
 }
 
 impl Lobby {
@@ -2125,7 +2135,14 @@ mod tests {
         let mut lobby = Lobby::default();
         let _ = lobby.load_for(Some(damaged.clone()));
         assert_eq!(lobby.config.duration_hours, 24);
+        // The damaged text is kept beside it, so the next save does not destroy the only copy.
+        let kept = damaged.with_extension("json.bad");
+        assert_eq!(
+            std::fs::read(&kept).ok().as_deref(),
+            Some(&b"{ not json"[..])
+        );
         let _ = std::fs::remove_file(damaged);
+        let _ = std::fs::remove_file(kept);
     }
 
     #[test]

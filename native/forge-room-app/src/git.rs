@@ -166,7 +166,10 @@ pub fn run(root: &Path, args: &[&str]) -> Result<String, String> {
         .env("GIT_TERMINAL_PROMPT", "0")
         // Reads such as `git status` otherwise refresh the index and take its lock, which could
         // make a stage or commit running at the same moment fail with "index.lock exists".
-        .env("GIT_OPTIONAL_LOCKS", "0");
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        // Every path we pass is one real file. Without this `a[1].txt` is also a glob for
+        // `a1.txt`, so discarding, staging or unstaging one file would act on its look-alike too.
+        .env("GIT_LITERAL_PATHSPECS", "1");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -361,6 +364,7 @@ fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<String, St
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_LITERAL_PATHSPECS", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -400,7 +404,8 @@ fn run_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         .args(["-c", "core.fsmonitor=false"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_OPTIONAL_LOCKS", "0");
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_LITERAL_PATHSPECS", "1");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -1981,6 +1986,57 @@ mod history_tests {
         git(&dir, &["add", "-A"]);
         git(&dir, &["commit", "-q", "-m", "first commit"]);
         dir
+    }
+
+    /// `a[1].txt` is also a glob that matches `a1.txt`. Stage, unstage and discard of one file must
+    /// never touch its look-alike (discard would silently throw away the other file's edits).
+    #[test]
+    fn file_names_with_glob_characters_never_touch_look_alike_files() {
+        if !available() {
+            return;
+        }
+        let dir = unique("glob");
+        fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        fs::write(dir.join("a[1].txt"), "one\n").unwrap();
+        fs::write(dir.join("a1.txt"), "two\n").unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "base"]);
+
+        // Discard a tracked file: the look-alike keeps its edit.
+        fs::write(dir.join("a[1].txt"), "changed\n").unwrap();
+        fs::write(dir.join("a1.txt"), "precious\n").unwrap();
+        let changes = status(&dir).unwrap().changes;
+        let bracket = changes.iter().find(|c| c.path == "a[1].txt").unwrap();
+        discard(&dir, bracket).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("a1.txt")).unwrap().trim(),
+            "precious"
+        );
+
+        // Discard an untracked file: the untracked look-alike is not deleted.
+        fs::write(dir.join("u[1].txt"), "x\n").unwrap();
+        fs::write(dir.join("u1.txt"), "keep me\n").unwrap();
+        let changes = status(&dir).unwrap().changes;
+        let untracked = changes.iter().find(|c| c.path == "u[1].txt").unwrap();
+        discard(&dir, untracked).unwrap();
+        assert!(!dir.join("u[1].txt").exists());
+        assert!(dir.join("u1.txt").exists());
+
+        // Stage and unstage act on the one file only.
+        fs::write(dir.join("a[1].txt"), "changed again\n").unwrap();
+        stage(&dir, &["a[1].txt".to_string()]).unwrap();
+        let staged: Vec<_> = status(&dir)
+            .unwrap()
+            .changes
+            .into_iter()
+            .filter(|c| c.is_staged())
+            .map(|c| c.path)
+            .collect();
+        assert_eq!(staged, ["a[1].txt"]);
+        unstage(&dir, &["a[1].txt".to_string()]).unwrap();
+        assert!(status(&dir).unwrap().changes.iter().all(|c| !c.is_staged()));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
