@@ -1,6 +1,6 @@
 //! Native controls for the isolated network Room. Network work never blocks egui polling.
 use eframe::egui;
-use forge_room_core::transport::{Action, Client, Host, Invite, Snapshot};
+use forge_room_core::transport::{Action, Client, Host, Invite, RoomLifecycle, Snapshot};
 use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, SyncSender},
@@ -35,6 +35,7 @@ pub struct NetworkRoom {
     notice: Option<String>,
     snapshot: Snapshot,
     status: String,
+    confirm_archive: bool,
 }
 impl Default for NetworkRoom {
     fn default() -> Self {
@@ -50,6 +51,7 @@ impl Default for NetworkRoom {
             notice: None,
             snapshot: Snapshot::default(),
             status: "Offline".into(),
+            confirm_archive: false,
         }
     }
 }
@@ -89,7 +91,11 @@ impl NetworkRoom {
                             self.notice = Some(error);
                         }
                         self.snapshot = snapshot;
-                        self.status = "Connected · TLS · invite identity".into();
+                        self.status = match self.snapshot.lifecycle {
+                            RoomLifecycle::Active => "Connected · TLS · invite identity".into(),
+                            RoomLifecycle::Paused => "Connected · Room paused by host".into(),
+                            RoomLifecycle::Archived => "Connected · Room archived read-only".into(),
+                        };
                     }
                     Err(error) => self.status = error,
                 }
@@ -140,8 +146,40 @@ impl NetworkRoom {
                 ui.label("Self-hosted preview: send invites privately. No discovery, relay or account identity. LAN requires a reachable host and firewall configuration.");
             } else {
                 if let Some(host) = &self.host {
-                    ui.label(format!("Hosting at {} · ends when this workspace closes", host.address()));
-                    if ui.add_enabled(self.invites.len() < 32, egui::Button::new("Copy single-use invite · expires in 5 minutes")).clicked() {
+                    ui.label(format!("Hosting at {} · {}", host.address(), match self.snapshot.lifecycle { RoomLifecycle::Active => "active", RoomLifecycle::Paused => "paused and read-only", RoomLifecycle::Archived => "archived and read-only" }));
+                    match self.snapshot.lifecycle {
+                        RoomLifecycle::Active => {
+                            if ui.button("Pause Room").clicked() {
+                                match host.pause() { Ok(()) => { self.snapshot.lifecycle = RoomLifecycle::Paused; self.status = "Room paused".into(); }, Err(error) => self.status = error }
+                                self.confirm_archive = false;
+                            }
+                        }
+                        RoomLifecycle::Paused => {
+                            if ui.button("Resume Room").clicked() {
+                                match host.resume() { Ok(()) => { self.snapshot.lifecycle = RoomLifecycle::Active; self.status = "Room resumed".into(); }, Err(error) => self.status = error }
+                                self.confirm_archive = false;
+                            }
+                        }
+                        RoomLifecycle::Archived => { ui.label("Archived Room remains connected for read-only review until the host ends it."); }
+                    }
+                    if self.snapshot.lifecycle != RoomLifecycle::Archived {
+                        if !self.confirm_archive {
+                            if ui.button("Archive Room…").clicked() { self.confirm_archive = true; }
+                        } else {
+                            ui.label("Archive is final for this session. Members can review it but cannot join or change it.");
+                            if ui.button("Confirm archive as read-only").clicked() {
+                                match host.archive() { Ok(()) => { self.snapshot.lifecycle = RoomLifecycle::Archived; self.status = "Room archived read-only".into(); self.confirm_archive = false; }, Err(error) => self.status = error }
+                            }
+                            if ui.small_button("Cancel archive").clicked() { self.confirm_archive = false; }
+                        }
+                    }
+                    if ui.button("Copy public Room archive JSON").clicked() {
+                        match host.snapshot().and_then(|snapshot| serde_json::to_string_pretty(&snapshot).map_err(|error| error.to_string())) {
+                            Ok(text) => { ui.ctx().copy_text(text); self.status = "Public archive copied; private messages and patches are excluded".into(); }
+                            Err(error) => self.status = format!("Archive export failed: {error}"),
+                        }
+                    }
+                    if ui.add_enabled(self.snapshot.lifecycle == RoomLifecycle::Active && self.invites.len() < 32, egui::Button::new("Copy single-use invite · expires in 5 minutes")).clicked() {
                         match host.invite(Duration::from_secs(300)) {
                             Ok(invite) => { ui.ctx().copy_text(invite.encode()); self.invites.push((invite, false)); }
                             Err(error) => self.status = error,
@@ -241,6 +279,7 @@ impl NetworkRoom {
                         snapshot.shared = update.shared;
                         snapshot.patches = update.patches;
                         snapshot.server_time_epoch_seconds = update.server_time_epoch_seconds;
+                        snapshot.lifecycle = update.lifecycle;
                         match sender.try_send(Ok((snapshot.clone(), rejections.front().cloned()))) {
                             Ok(()) => {
                                 rejections.pop_front();

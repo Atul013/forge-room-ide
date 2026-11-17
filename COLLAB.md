@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-18 Codex: Started one connected Network Room lifecycle batch on `feat/room-owner-approvals`: host pause/resume, terminal read-only archive, server-side join/invite/mutation enforcement, client lifecycle state, and explicit public JSON archive copy. A two-client process test covers paused/archive rejection and verifies DMs/recipient-only patches are absent from host export. Local suites: core 29 unit + 7 process; app 346 passed/9 ignored; format/check/Clippy pass. Windows CI/package and visible desktop/two-machine acceptance pending. Session credentials remain ephemeral; durable app-restart identity recovery is not included.
+
 - 2026-11-18 Codex: PR #73 final code head `4170f6f` passed Windows CI run 44159960049 and package/install run 44160997835; package checksum manifest and all five ZIP entries verified locally. Upgrade/uninstall/data preservation and headless launch passed; interactive installer/visible app UI remain open. Final app 346/9, core 28 + six process trials; format/Clippy pass. Worktree clean after notes update; two-machine LAN remains open.
 
 - 2026-11-18 Codex: R05 Network Room awareness source includes activity seen cursor/search/member/task filters/task links, bounded local due reminders, and opt-in task focus/read-only follow in a separate view. Pre-header-extension local head: core 28 + six independent-process trials, app 345/9, both Clippy and fmt checks pass. Earlier final-head CI passed before this header extension; final-head Windows CI/package and visible desktop/two-machine acceptance remain open.

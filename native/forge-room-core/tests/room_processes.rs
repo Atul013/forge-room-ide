@@ -672,3 +672,126 @@ fn independent_owners_coordinate_readiness_help_and_dependency_impacts() {
     assert_eq!(r["impacts"][0]["acknowledged_by"], bid);
     assert_eq!(shared["snapshot"]["shared"]["tasks"][0]["status"], "open");
 }
+
+#[test]
+fn independent_clients_observe_host_pause_resume_archive_and_public_export_privacy() {
+    use forge_room_core::transport::{Action, RoomLifecycle};
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "lifecycle trial").unwrap();
+    let (mut a, mut b, mut late) = (Peer::start(), Peer::start(), Peer::start());
+    a.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    let b_invite = host.invite(Duration::from_secs(60)).unwrap();
+    let b_join = b.request(json!({"command":"join","invite":b_invite.encode(),"name":"Grace"}));
+    let late_invite = host.invite(Duration::from_secs(60)).unwrap();
+    let b_id = b_join["identity"].as_str().unwrap().to_owned();
+    assert!(a.execute(Action::SharePatch {
+        recipient: b_id.clone(),
+        path: "src/lib.rs".into(),
+        before: "old source".into(),
+        after: "new source".into(),
+    })["rejection"]
+        .is_null());
+
+    assert!(a.execute(Action::Message {
+        text: "public recap".into(),
+        recipient: None,
+        task: None,
+        decision: false,
+        parent: None
+    })["rejection"]
+        .is_null());
+    assert!(a.execute(Action::Message {
+        text: "private note".into(),
+        recipient: Some(b_id),
+        task: None,
+        decision: false,
+        parent: None
+    })["rejection"]
+        .is_null());
+    let archive = serde_json::to_value(host.snapshot().unwrap()).unwrap();
+    let exported = archive["events"].as_array().unwrap();
+    assert_eq!(
+        exported.len(),
+        1,
+        "public host archive must omit direct messages"
+    );
+    assert_eq!(exported[0]["text"], "public recap");
+    assert!(archive["patches"].as_array().unwrap().is_empty());
+    assert_eq!(
+        b.request(json!({"command":"poll"}))["snapshot"]["patches"][0]["after"],
+        "new source"
+    );
+
+    host.pause().unwrap();
+    assert_eq!(host.lifecycle().unwrap(), RoomLifecycle::Paused);
+    assert!(host.invite(Duration::from_secs(60)).is_err());
+    assert!(host
+        .control(Action::Countdown {
+            seconds: Some(30),
+            running: true
+        })
+        .is_err());
+    assert!(
+        late.request(json!({"command":"join","invite":late_invite.encode(),"name":"Late"}))
+            ["error"]
+            .is_string()
+    );
+    let paused_a = a.request(json!({"command":"poll"}));
+    let paused_b = b.request(json!({"command":"poll"}));
+    assert_eq!(paused_a["snapshot"]["lifecycle"], "paused");
+    assert_eq!(paused_b["snapshot"]["lifecycle"], "paused");
+    assert!(b.execute(Action::Message {
+        text: "blocked while paused".into(),
+        recipient: None,
+        task: None,
+        decision: false,
+        parent: None
+    })["rejection"]
+        .as_str()
+        .unwrap()
+        .contains("paused"));
+
+    host.resume().unwrap();
+    assert!(a.execute(Action::Message {
+        text: "resumed".into(),
+        recipient: None,
+        task: None,
+        decision: false,
+        parent: None
+    })["rejection"]
+        .is_null());
+    host.archive().unwrap();
+    assert_eq!(host.lifecycle().unwrap(), RoomLifecycle::Archived);
+    assert!(host.resume().is_err(), "archive is final");
+    assert!(host
+        .control(Action::Countdown {
+            seconds: Some(30),
+            running: true
+        })
+        .is_err());
+    assert!(b.execute(Action::Message {
+        text: "blocked after archive".into(),
+        recipient: None,
+        task: None,
+        decision: false,
+        parent: None
+    })["rejection"]
+        .as_str()
+        .unwrap()
+        .contains("archived"));
+    assert_eq!(
+        a.request(json!({"command":"poll"}))["snapshot"]["lifecycle"],
+        "archived"
+    );
+    assert!(
+        late.request(json!({"command":"join","invite":late_invite.encode(),"name":"Late"}))
+            ["error"]
+            .is_string()
+    );
+    let final_archive = serde_json::to_value(host.snapshot().unwrap()).unwrap();
+    assert_eq!(final_archive["lifecycle"], "archived");
+    assert!(final_archive["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|event| event["text"] != "private note"));
+}

@@ -23,6 +23,11 @@ it never imports the saved local Room or its participant selector.
 5. The host can revoke each issued invite, ejecting its joined session as well. Leave removes
    a session; it cannot reuse its consumed invite. End, workspace change and app exit end
    the hosted session. Clients need a fresh invite after a host restart or session expiry.
+6. The host can pause/resume the Room or archive it as final read-only state. Existing members
+   can still poll while paused/archived, but cannot mutate shared state; new joins and invites
+   are refused. Archive cannot be resumed. The host can explicitly copy a public JSON archive
+   for local records; it includes bounded public events and shared workflow state, and excludes
+   direct messages and recipient-only patch bodies.
 
 The host is pinned by the certificate carried in the invite. Membership authentication is
 possession of an invite/session capability, not a verified human account. Display names
@@ -66,6 +71,14 @@ agents, join approval queue, relay, discovery or hosted service here.
   Transport failures do not create another identity. The UI polls every 500 ms and queues
   a bounded number of outgoing messages. Closing the workspace destroys these credentials;
   this is reconnect within a running client, not identity recovery after app restart.
+- Room lifecycle is host-owned. Pause keeps authenticated polling/presence alive while denying
+  new invites, joins, host edits and member mutations. Resume re-enables those operations.
+  Archive is terminal: polls remain readable for joined sessions, while joins, invites and
+  mutations are denied. Invite revocation remains available for privacy after pause/archive.
+  The JSON archive is the public host snapshot (latest bounded event window and current shared
+  state); the server filters DMs and recipient-scoped patches before it can be copied. It is an
+  explicit clipboard export, not automatic disk persistence or restart recovery. Session
+  credentials and the TLS private key remain ephemeral and are never written to the archive.
 - Mutation operation IDs increase by one per session, with the last action/outcome retained. Retrying a committed operation does not
   add a second event. An uncertain client post retains its operation and text for retry;
   a different action is refused until that operation is acknowledged. A changed retry of the
