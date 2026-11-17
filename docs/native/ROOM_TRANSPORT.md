@@ -53,6 +53,8 @@ agents, join approval queue, relay, discovery or hosted service here.
   session credential and assigned identity. Authentication/transport errors return no snapshot or credential. Domain rejections
   return an acknowledged `rejection` with a filtered snapshot; this consumes the operation
   without applying it, so a rejected action does not wedge the next operation.
+  Protocol-v3 snapshots add optional message mention targets and visible message reactions;
+  older event snapshots default to no mentions and older clients may ignore the additive fields.
 - The server alone issues 256-bit invite, session and actor IDs using OS randomness.
   A client supplies no actor ID to Post; the server resolves attribution from its session.
   No network request can mint invites, revoke members, select a host actor, approve a handoff,
@@ -107,6 +109,15 @@ agents, join approval queue, relay, discovery or hosted service here.
   participant cannot quote a DM into public chat. Private message bodies and recipient metadata
   are never placed in shared activity. The global replay cursor is opaque and can reveal total
   message sequence progress; this is not traffic-analysis protection.
+- Public chat can explicitly mention up to eight distinct currently joined members (the sender
+  cannot mention themself); the current UI selects one target per message. Mentions are actor IDs
+  selected from the current roster, shown beside the public message, and can be filtered in Chat;
+  mentions are not supported inside DMs. Old
+  event snapshots without the field decode with no mentions. Five reactions are supported
+  (👍, ✅, 👀, 🎉, ❤️), with at most 32 active reactions per retained message and one toggle per
+  member/emoji. Reactions are limited to messages the member can see, so DM reactions are sent
+  only to the two conversation members and are excluded from the host's public archive. Reactions
+  from a member are removed when that member leaves or is revoked.
 - The host sets, pauses, resumes and resets a countdown up to seven days. It advances from
   a monotonic host clock; clients display the latest host sample with local interpolation.
   It ends with the hosting session. Up to twenty host-owned milestones have shared titles,
