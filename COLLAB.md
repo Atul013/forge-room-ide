@@ -28,7 +28,9 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
-- 2026-11-18 Codex: R05 Network Room awareness source is complete in one bundle: activity seen cursor/search/member/task filters/task links, bounded local due reminders, and opt-in task focus/read-only follow in a separate view. Expanded local head: core 28 + six independent-process trials, app 345/9, both Clippy and fmt checks pass. Earlier CI passed before the last activity-filter extension; final-head Windows CI/package and visible desktop/two-machine acceptance remain open.
+- 2026-11-18 Codex: Expanded PR #73 with a collapsed Network Room header unread badge that uses the same in-session activity cursor; Activity marks events read. Regression checks cover baseline/new-event/mark-read. Full local app suite and final-head CI/package are being rerun. Due reminders remain visible only while expanded; the unread count remains in the collapsed header. Earlier CI/package heads were canceled/superseded.
+
+- 2026-11-18 Codex: R05 Network Room awareness source includes activity seen cursor/search/member/task filters/task links, bounded local due reminders, and opt-in task focus/read-only follow in a separate view. Pre-header-extension local head: core 28 + six independent-process trials, app 345/9, both Clippy and fmt checks pass. Earlier final-head CI passed before this header extension; final-head Windows CI/package and visible desktop/two-machine acceptance remain open.
 
 - 2026-11-18 Codex: Starting one substantial R05 Network Room awareness PR: per-client since-last-seen activity/task links, in-panel shared deadline reminders, and opt-in task-ID focus/read-only follow. Keep local navigation separate; no file/editor state is shared. Two-client protocol test and app behavior tests are required; desktop/two-machine gates remain separate.
 

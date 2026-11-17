@@ -100,7 +100,13 @@ impl NetworkRoom {
             .readiness
             .preflight
             .reconcile(root.filter(|_| trusted), &self.snapshot);
-        egui::CollapsingHeader::new("Network Room · host / join").default_open(false).show(ui, |ui| {
+        let unread_activity = self.workflow.observe_activity(&self.snapshot);
+        let header = if unread_activity > 0 {
+            format!("Network Room · {unread_activity} new activity")
+        } else {
+            "Network Room · host / join".to_owned()
+        };
+        egui::CollapsingHeader::new(header).default_open(false).show(ui, |ui| {
           egui::ScrollArea::vertical().id_salt("network-room-controls").max_height(panel_height).show(ui, |ui| {
             ui.label(&self.status);
             if let Some(notice)=&self.notice { ui.label(notice); }

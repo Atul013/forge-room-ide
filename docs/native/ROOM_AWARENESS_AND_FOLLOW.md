@@ -4,7 +4,7 @@ This slice adds three per-client awareness tools to the native Network Room.
 
 ## Activity since last seen
 
-The Activity tab counts retained shared activity with a newer network sequence than the viewer's in-memory seen cursor. Opening the tab advances that cursor. Search matches activity text or member name; member and task filters narrow the retained feed, and task IDs present in activity details link to the shared task card. Public activity still excludes message bodies and private-message metadata. The cursor is scoped to the current app session and is not restored after leaving or restarting the Room.
+The Network Room header and Activity tab count retained shared activity with a newer network sequence than the viewer's in-memory seen cursor. The badge remains visible while the panel is collapsed; opening Activity advances that cursor. Search matches activity text or member name; member and task filters narrow the retained feed, and task IDs present in activity details link to the shared task card. Public activity still excludes message bodies and private-message metadata. The cursor is scoped to the current app session and is not restored after leaving or restarting the Room.
 
 ## Due reminders
 

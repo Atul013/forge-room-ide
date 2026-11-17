@@ -48,6 +48,28 @@ pub struct Workflow {
     following: Option<String>,
 }
 impl Workflow {
+    pub fn observe_activity(&mut self, snapshot: &Snapshot) -> usize {
+        let latest = snapshot
+            .shared
+            .activity
+            .iter()
+            .filter_map(|event| event.id.strip_prefix("network-")?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        let baseline = *self.activity_seen.get_or_insert(latest);
+        unread_activity(&snapshot.shared.activity, baseline)
+    }
+    pub fn mark_activity_seen(&mut self, snapshot: &Snapshot) {
+        self.activity_seen = Some(
+            snapshot
+                .shared
+                .activity
+                .iter()
+                .filter_map(|event| event.id.strip_prefix("network-")?.parse::<u64>().ok())
+                .max()
+                .unwrap_or(0),
+        );
+    }
     fn slot_free(&self, action: &Action) -> bool {
         match action {
             Action::Message { .. } => self.draft.is_empty(),
@@ -176,15 +198,7 @@ impl Workflow {
             ui.label("Resolve rejected drafts before sending more messages or task text.");
         }
 
-        let latest_activity = snapshot
-            .shared
-            .activity
-            .iter()
-            .filter_map(|event| event.id.strip_prefix("network-")?.parse::<u64>().ok())
-            .max()
-            .unwrap_or(0);
-        let baseline = *self.activity_seen.get_or_insert(latest_activity);
-        let unread = unread_activity(&snapshot.shared.activity, baseline);
+        let unread = self.observe_activity(snapshot);
         ui.horizontal_wrapped(|ui| {
             for (index, label) in ["Chat", "Tasks", "Activity", "Readiness", "Follow"]
                 .iter()
@@ -457,7 +471,7 @@ impl Workflow {
                         }
                     });
                 }
-                self.activity_seen = Some(latest_activity);
+                self.mark_activity_seen(snapshot);
             }
         }
         actions
@@ -1127,6 +1141,27 @@ mod draft_tests {
         ];
         assert_eq!(unread_activity(&activity, 4), 1);
         assert_eq!(unread_activity(&activity, 5), 0);
+    }
+    #[test]
+    fn collapsed_header_cursor_counts_new_events_until_activity_is_opened() {
+        let mut workflow = Workflow::default();
+        let mut snapshot = Snapshot::default();
+        snapshot.shared.activity.push(ActivityEvent {
+            id: "network-4".into(),
+            actor_id: "a".repeat(64),
+            detail: "joined".into(),
+            recorded_at_epoch_seconds: 0,
+        });
+        assert_eq!(workflow.observe_activity(&snapshot), 0);
+        snapshot.shared.activity.push(ActivityEvent {
+            id: "network-5".into(),
+            actor_id: "b".repeat(64),
+            detail: "started task T1".into(),
+            recorded_at_epoch_seconds: 0,
+        });
+        assert_eq!(workflow.observe_activity(&snapshot), 1);
+        workflow.mark_activity_seen(&snapshot);
+        assert_eq!(workflow.observe_activity(&snapshot), 0);
     }
     #[test]
     fn activity_filters_match_exact_task_member_and_text_without_prefix_leaks() {
