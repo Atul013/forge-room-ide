@@ -3,6 +3,7 @@
 use serde_json::{Value, json};
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
@@ -272,6 +273,19 @@ fn bounded(text: &str) -> String {
     text.chars().take(1000).collect()
 }
 
+/// Build the small debugpy launch subset from a saved file in the trusted folder.
+pub fn python_launch(root: &Path, file: &Path) -> Result<Value, String> {
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let file = file.canonicalize().map_err(|e| e.to_string())?;
+    if !file.starts_with(&root) || !file.is_file() {
+        return Err("Select a saved file inside the trusted folder".into());
+    }
+    if file.extension().and_then(|e| e.to_str()) != Some("py") {
+        return Err("Select a Python .py file to launch".into());
+    }
+    Ok(json!({"program":file,"cwd":root,"console":"internalConsole","justMyCode":true}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,5 +379,22 @@ mod tests {
         }
         adapter.join().unwrap();
         assert!(connected && stopped && stack);
+    }
+
+    #[test]
+    fn python_launch_stays_inside_workspace() {
+        let dir = std::env::temp_dir().join(format!("forge-dap-{}", std::process::id()));
+        let root = dir.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("main.py");
+        let outside = dir.join("outside.py");
+        std::fs::write(&file, "print(1)").unwrap();
+        std::fs::write(&outside, "print(2)").unwrap();
+        assert_eq!(
+            python_launch(&root, &file).unwrap()["console"],
+            "internalConsole"
+        );
+        assert!(python_launch(&root, &outside).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

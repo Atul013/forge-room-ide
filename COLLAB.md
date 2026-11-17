@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Added explicit Python launch request atop PR #61 on `feat/native-dap-launch`. It accepts only a saved `.py` file canonically inside the trusted folder and uses the folder as cwd. Focused path test, app check and Clippy passed locally; live adapter/desktop checks remain open.
+
 - 2026-11-17 Codex: Started native DAP debugger attach slice on `feat/native-dap-protocol` from current `origin/main`. Loopback adapter connection, bounded framing, explicit attach JSON, workspace breakpoints, stopped stack and step controls are in progress. Fake adapter and app checks are the source gate; live adapter and desktop acceptance remain separate.
 
 - 2026-11-16 Codex: Added guarded LSP Rename Symbol preview/apply on feat/native-lsp-rename. Focused stale-file/apply test, real rust-analyzer proposal on rerun, app check and Clippy passed; desktop and two-language acceptance pending.
