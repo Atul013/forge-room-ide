@@ -58,6 +58,11 @@ pub enum Action {
     RevokePatch {
         id: u64,
     },
+    /// The recipient records an explicit human review outcome for a private patch.
+    ReviewPatch {
+        id: u64,
+        decision: super::PatchReview,
+    },
     Message {
         text: String,
         recipient: Option<String>,
@@ -388,7 +393,7 @@ impl SharedRoom {
             | Action::React { .. } => {
                 return Err("Use the message channel".into());
             }
-            Action::SharePatch { .. } | Action::RevokePatch { .. } => {
+            Action::SharePatch { .. } | Action::RevokePatch { .. } | Action::ReviewPatch { .. } => {
                 return Err("Use the patch channel".into())
             }
             Action::CreateTask {

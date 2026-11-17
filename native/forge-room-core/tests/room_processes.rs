@@ -497,6 +497,7 @@ fn saved_patches_are_recipient_scoped_filtered_and_revocable() {
         received["snapshot"]["patches"][0]["after"],
         "recipient-only saved replacement\n"
     );
+    assert_eq!(received["snapshot"]["patches"][0]["review"], "pending");
     let unrelated = c.request(json!({"command":"poll"}));
     assert!(unrelated["snapshot"]["patches"]
         .as_array()
@@ -507,6 +508,30 @@ fn saved_patches_are_recipient_scoped_filtered_and_revocable() {
         .to_string()
         .contains("recipient-only saved replacement"));
     assert!(host.snapshot().unwrap().patches.is_empty());
+    use forge_room_core::transport::PatchReview;
+    assert!(a.execute(Action::ReviewPatch {
+        id,
+        decision: PatchReview::Reviewed
+    })["rejection"]
+        .is_string());
+    assert!(c.execute(Action::ReviewPatch {
+        id,
+        decision: PatchReview::Declined
+    })["rejection"]
+        .is_string());
+    assert!(b.execute(Action::ReviewPatch {
+        id,
+        decision: PatchReview::Reviewed
+    })["rejection"]
+        .is_null());
+    assert_eq!(
+        a.request(json!({"command":"poll"}))["snapshot"]["patches"][0]["review"],
+        "reviewed"
+    );
+    assert!(c.request(json!({"command":"poll"}))["snapshot"]["patches"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     assert!(c.execute(Action::RevokePatch { id })["rejection"].is_string());
     assert!(a.execute(Action::RevokePatch { id })["rejection"].is_null());
     assert!(b.request(json!({"command":"poll"}))["snapshot"]["patches"]

@@ -673,3 +673,5 @@ Seven original concept PNGs from Downloads are preserved in [`docs/design/concep
 
 
 
+**18 November Network Room patch review receipts (single cohesive R06 follow-on):** Recipients can explicitly mark a private saved-file proposal reviewed or declined; the sender sees the receipt, while third clients and host-public snapshots do not. Receipts never imply apply or task acceptance, and old protocol-v3 patch records default to pending. Independent-process coverage proves recipient-only writes, sender visibility, third-party isolation and denial; full local suites: core 32 unit + 9 process tests, app 346 passed/9 ignored, format/check/Clippy clean. Windows CI/package and visible desktop/two-machine acceptance are pending on the PR. Contract: `docs/native/ROOM_TRANSPORT.md`.
+

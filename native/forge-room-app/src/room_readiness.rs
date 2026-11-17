@@ -307,6 +307,7 @@ mod tests {
             path: "private.rs".into(),
             before: "PRIVATE_PATCH_BASE".into(),
             after: "PRIVATE_PATCH_AFTER".into(),
+            review: forge_room_core::transport::PatchReview::Pending,
         });
         for (task, text) in [
             ("T1", "VISIBLE_TASK_RECEIPT"),

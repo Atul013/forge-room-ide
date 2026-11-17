@@ -173,6 +173,13 @@ revoke it; either participant leaving, expiring or being revoked removes further
 Copies already received cannot be recalled; this is not end-to-end encryption against the
 host process/operator. The client drops a revoked pending review on its next snapshot.
 
+Recipient review receipts are part of this private patch record: `pending` until the
+selected recipient explicitly marks it `reviewed` or `declined`. Only that recipient
+can change the receipt; sender and recipient see it, while unrelated members and the
+host's public snapshot do not. A review receipt records inspection outcome only: it
+does not mean the patch was applied, verified, or accepted as a task result. Older
+protocol-v3 patch records without this field load as `pending`.
+
 Absolute/traversal/link/alternate-stream paths, .env/.git/.ssh and common credential files
 are blocked. Private-key markers and common quoted credential assignments are rejected
 on both client preparation and server submission. This is best-effort filtering, not a

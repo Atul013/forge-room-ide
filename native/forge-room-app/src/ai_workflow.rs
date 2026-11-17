@@ -604,6 +604,7 @@ mod tests {
             path: "code.txt".into(),
             before: "wrong revision".into(),
             after: "reviewed\n".into(),
+            review: forge_room_core::transport::PatchReview::Pending,
         };
         assert!(Workflow::received_patch(&root, &patch).is_err());
         patch.before = "base\n".into();
