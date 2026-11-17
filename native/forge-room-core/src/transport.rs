@@ -170,6 +170,17 @@ pub struct Snapshot {
     pub cursor: u64,
     /// The requested cursor predates retained history. Events are a replacement window.
     pub reset: bool,
+    /// Host controlled lifecycle; defaults to Active for older protocol-v3 snapshots.
+    #[serde(default)]
+    pub lifecycle: RoomLifecycle,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoomLifecycle {
+    #[default]
+    Active,
+    Paused,
+    Archived,
 }
 #[derive(Serialize, Deserialize)]
 enum Request {
@@ -223,6 +234,7 @@ struct Session {
 }
 struct Authority {
     room: String,
+    lifecycle: RoomLifecycle,
     grants: HashMap<String, Grant>,
     sessions: HashMap<String, Session>,
     events: VecDeque<Event>,
@@ -276,6 +288,7 @@ impl Authority {
                 .collect(),
             cursor: self.sequence,
             reset,
+            lifecycle: self.lifecycle,
         }
     }
     fn handle(&mut self, request: Request) -> Result<Response> {
@@ -292,6 +305,14 @@ impl Authority {
                 invite,
                 name,
             } => {
+                if self.lifecycle != RoomLifecycle::Active {
+                    return Err(match self.lifecycle {
+                        RoomLifecycle::Paused => "Room is paused; ask the host to resume it",
+                        RoomLifecycle::Archived => "Room is archived and read-only",
+                        RoomLifecycle::Active => unreachable!(),
+                    }
+                    .into());
+                }
                 if version != VERSION {
                     return Err("Protocol version mismatch".into());
                 }
@@ -403,33 +424,41 @@ impl Authority {
             return Err("Invalid operation sequence or changed retry".into());
         }
         let actor = session.id.clone();
-        let rejection = match &action {
-            Action::SharePatch {
-                recipient,
-                path,
-                before,
-                after,
-            } => self
-                .share_patch(&actor, recipient, path, before, after)
-                .err(),
-            Action::RevokePatch { id } => self.revoke_patch(&actor, *id, false).err(),
-            Action::Message {
-                text,
-                recipient,
-                task,
-                decision,
-                parent,
-            } => self
-                .message(
-                    &actor,
+        let rejection = if self.lifecycle != RoomLifecycle::Active {
+            Some(match self.lifecycle {
+                RoomLifecycle::Paused => "Room is paused by the host".to_owned(),
+                RoomLifecycle::Archived => "Room is archived and read-only".to_owned(),
+                RoomLifecycle::Active => unreachable!(),
+            })
+        } else {
+            match &action {
+                Action::SharePatch {
+                    recipient,
+                    path,
+                    before,
+                    after,
+                } => self
+                    .share_patch(&actor, recipient, path, before, after)
+                    .err(),
+                Action::RevokePatch { id } => self.revoke_patch(&actor, *id, false).err(),
+                Action::Message {
                     text,
-                    recipient.clone(),
-                    task.clone(),
-                    *decision,
-                    *parent,
-                )
-                .err(),
-            _ => self.shared.apply(&actor, action.clone()).err(),
+                    recipient,
+                    task,
+                    decision,
+                    parent,
+                } => self
+                    .message(
+                        &actor,
+                        text,
+                        recipient.clone(),
+                        task.clone(),
+                        *decision,
+                        *parent,
+                    )
+                    .err(),
+                _ => self.shared.apply(&actor, action.clone()).err(),
+            }
         };
         let session = self
             .sessions
@@ -596,6 +625,7 @@ impl Host {
         listener.set_nonblocking(true).map_err(|e| e.to_string())?;
         let authority = Arc::new(Mutex::new(Authority {
             room,
+            lifecycle: RoomLifecycle::Active,
             grants: HashMap::new(),
             sessions: HashMap::new(),
             events: VecDeque::new(),
@@ -650,6 +680,15 @@ impl Host {
             return Err("Invite lifetime must be 1 second to 1 hour".into());
         }
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        match state.lifecycle {
+            RoomLifecycle::Active => {}
+            RoomLifecycle::Paused => {
+                return Err("Room is paused; resume it before issuing invites".into())
+            }
+            RoomLifecycle::Archived => {
+                return Err("Room is archived; no new invites can be issued".into())
+            }
+        }
         let now = Instant::now();
         let active: Vec<_> = state
             .sessions
@@ -694,12 +733,54 @@ impl Host {
             .audit(&host, "revoked an invite and its joined session");
         Ok(())
     }
+    pub fn lifecycle(&self) -> Result<RoomLifecycle> {
+        Ok(self
+            .authority
+            .lock()
+            .map_err(|_| "Room unavailable")?
+            .lifecycle)
+    }
+    pub fn pause(&self) -> Result<()> {
+        let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        if state.lifecycle != RoomLifecycle::Active {
+            return Err("Only an active Room can be paused".into());
+        }
+        state.lifecycle = RoomLifecycle::Paused;
+        let host = state.shared.state.host_id.clone();
+        state.shared.audit(&host, "paused the network Room");
+        Ok(())
+    }
+    pub fn resume(&self) -> Result<()> {
+        let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        if state.lifecycle != RoomLifecycle::Paused {
+            return Err("Only a paused Room can be resumed".into());
+        }
+        state.lifecycle = RoomLifecycle::Active;
+        let host = state.shared.state.host_id.clone();
+        state.shared.audit(&host, "resumed the network Room");
+        Ok(())
+    }
+    pub fn archive(&self) -> Result<()> {
+        let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        if state.lifecycle == RoomLifecycle::Archived {
+            return Err("Room is already archived".into());
+        }
+        state.lifecycle = RoomLifecycle::Archived;
+        let host = state.shared.state.host_id.clone();
+        state
+            .shared
+            .audit(&host, "archived the network Room as read-only");
+        Ok(())
+    }
     /// Host-local authority only. No serialized request can select the host actor.
     pub fn control(&self, action: Action) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
         let now = Instant::now();
         state.sessions.retain(|_, s| s.expires > now);
         state.sync_members();
+        if state.lifecycle != RoomLifecycle::Active {
+            return Err("Host edits are unavailable while the Room is paused or archived".into());
+        }
         let actor = state.shared.state.host_id.clone();
         if let Action::RevokePatch { id } = action {
             return state.revoke_patch(&actor, id, true);
@@ -993,6 +1074,14 @@ mod tests {
             task: "T1".into(),
         }));
         assert!(workflow::validate(&invalid).is_err());
+    }
+
+    #[test]
+    fn lifecycle_snapshot_field_defaults_for_older_protocol_three_peers() {
+        let mut value = serde_json::to_value(Snapshot::default()).unwrap();
+        value.as_object_mut().unwrap().remove("lifecycle");
+        let decoded: Snapshot = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.lifecycle, RoomLifecycle::Active);
     }
 
     #[test]
