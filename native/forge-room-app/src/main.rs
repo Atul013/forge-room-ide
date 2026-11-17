@@ -3536,30 +3536,33 @@ impl ForgeRoomApp {
         if let Some(folder) = self.trust_prompt.take() {
             let (mut trust, mut restricted) = (false, false);
             let focus_safe_choice = std::mem::take(&mut self.trust_focus_pending);
-            egui::Window::new("Trust this folder?")
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
-                    ui.set_max_width(440.0);
+            // Escape (or a click outside) is the safe answer: browse without Git and tools.
+            restricted = dialog_shell(
+                &self.egui_ctx,
+                "trust-dialog",
+                "Trust this folder?",
+                440.0,
+                |ui| {
                     ui.label(format!("{}", folder.display()));
                     ui.add_space(4.0);
                     ui.label(
-                        "Forge Room runs Git, your project's tools and the AI agent in this folder. \
-                         A folder from someone you do not trust can carry settings that make them \
-                         start programs. Trust it only if you know where it came from. Trusting a \
-                         folder also trusts the folders inside it.",
-                    );
-                    ui.add_space(6.0);
+                    "Forge Room runs Git, your project's tools and the AI agent in this folder. \
+                     A folder from someone you do not trust can carry settings that make them \
+                     start programs. Trust it only if you know where it came from. Trusting a \
+                     folder also trusts the folders inside it. You can stop trusting it later \
+                     with Folder: Stop Trusting This Folder.",
+                );
+                    ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         trust = ui.button("Trust this folder").clicked();
                         let safe = ui.button("Browse without Git and tools");
                         if focus_safe_choice {
                             safe.request_focus();
                         }
-                        restricted = safe.clicked();
+                        restricted |= safe.clicked();
                     });
-                });
+                },
+            ) || restricted;
             if trust {
                 let shown = folder.display().to_string();
                 let _ = settings::update(|settings| {
@@ -3666,19 +3669,12 @@ impl ForgeRoomApp {
                     "End terminal",
                 ),
             };
-            egui::Window::new(title)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
-                    ui.set_max_width(380.0);
-                    ui.label(text);
-                    ui.horizontal(|ui| {
-                        yes = ui.button(button).clicked();
-                        no = ui.button("Cancel").clicked();
-                    });
-                });
-            if ui_escape(&self.egui_ctx) {
+            // Only a cargo check is not destructive: the rest end a program, drop or rewrite work.
+            let destructive = !matches!(question, Confirm::RunCheck);
+            if dialog_shell(&self.egui_ctx, "confirm-dialog", title, 380.0, |ui| {
+                ui.label(text);
+                (yes, no) = dialog_buttons(ui, button, destructive, true);
+            }) {
                 no = true;
             }
             if yes {
@@ -3744,29 +3740,21 @@ impl ForgeRoomApp {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            egui::Window::new("Delete")
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
-                    ui.label(format!(
-                        "Move {} {name:?} to the Recycle Bin?",
-                        if path.is_dir() {
-                            "the folder"
-                        } else {
-                            "the file"
-                        }
-                    ));
-                    ui.label(
-                        egui::RichText::new("You can restore it from the Recycle Bin.")
-                            .color(theme::text_dim()),
-                    );
-                    ui.horizontal(|ui| {
-                        confirm = ui.button("Move to Recycle Bin").clicked();
-                        cancel = ui.button("Cancel").clicked();
-                    });
-                });
-            if ui_escape(&self.egui_ctx) {
+            if dialog_shell(&self.egui_ctx, "delete-dialog", "Delete", 380.0, |ui| {
+                ui.label(format!(
+                    "Move {} {name:?} to the Recycle Bin?",
+                    if path.is_dir() {
+                        "the folder"
+                    } else {
+                        "the file"
+                    }
+                ));
+                ui.label(
+                    egui::RichText::new("You can restore it from the Recycle Bin.")
+                        .color(theme::text_dim()),
+                );
+                (confirm, cancel) = dialog_buttons(ui, "Move to Recycle Bin", false, true);
+            }) {
                 cancel = true;
             }
             // The open folder itself, or a folder that holds it, is not something to delete from here.
@@ -3800,28 +3788,24 @@ impl ForgeRoomApp {
         if let Some((path, mut name)) = self.rename.take() {
             let (mut confirm, mut cancel) = (false, false);
             let error = file_ops::valid_name(&name).err();
-            egui::Window::new("Rename")
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
-                    ui.label(format!("{}", path.display()));
-                    let field = ui.text_edit_singleline(&mut name);
+            if dialog_shell(&self.egui_ctx, "rename-dialog", "Rename", 420.0, |ui| {
+                ui.label(format!("{}", path.display()));
+                let field = ui.text_edit_singleline(&mut name);
+                // Focus the name once, when the box opens: asking every frame would keep Tab from
+                // ever reaching the buttons.
+                if ui.memory(|memory| memory.focused().is_none()) {
                     field.request_focus();
-                    if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
-                        confirm = true;
-                    }
-                    if let Some(error) = &error {
-                        ui.colored_label(theme::danger(), error);
-                    }
-                    ui.horizontal(|ui| {
-                        confirm |= ui
-                            .add_enabled(error.is_none(), egui::Button::new("Rename"))
-                            .clicked();
-                        cancel = ui.button("Cancel").clicked();
-                    });
-                });
-            if ui_escape(&self.egui_ctx) {
+                }
+                if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                    confirm = true;
+                }
+                if let Some(error) = &error {
+                    ui.colored_label(theme::danger(), error);
+                }
+                let (yes, no) = dialog_buttons(ui, "Rename", false, error.is_none());
+                confirm |= yes;
+                cancel = no;
+            }) {
                 cancel = true;
             }
             if confirm && error.is_none() {
@@ -3849,33 +3833,38 @@ impl ForgeRoomApp {
         if let Some(parent) = self.new_folder_parent.clone() {
             let mut create = false;
             let mut cancel = false;
-            egui::Window::new("New folder")
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
+            let typed = self.new_folder_name.trim().to_string();
+            let error = file_ops::valid_name(&typed).err();
+            if dialog_shell(
+                &self.egui_ctx,
+                "new-folder-dialog",
+                "New folder",
+                420.0,
+                |ui| {
                     ui.label(format!("In {}", parent.display()));
                     let field = ui.text_edit_singleline(&mut self.new_folder_name);
+                    if ui.memory(|memory| memory.focused().is_none()) {
+                        field.request_focus();
+                    }
                     if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
                         create = true;
                     }
-                    ui.horizontal(|ui| {
-                        create |= ui.button("Create").clicked();
-                        cancel = ui.button("Cancel").clicked();
-                    });
-                });
+                    if let (Some(error), false) = (&error, typed.is_empty()) {
+                        ui.colored_label(theme::danger(), error);
+                    }
+                    let (yes, no) = dialog_buttons(ui, "Create", false, error.is_none());
+                    create |= yes;
+                    cancel = no;
+                },
+            ) {
+                cancel = true;
+            }
             if cancel {
                 self.new_folder_parent = None;
-            }
-            if create {
+            } else if create {
                 let name = self.new_folder_name.trim();
-                if name.is_empty()
-                    || name == "."
-                    || name == ".."
-                    || name.contains('/')
-                    || name.contains('\\')
-                {
-                    self.status = "Enter one valid folder name".into();
+                if let Err(message) = file_ops::valid_name(name) {
+                    self.status = message;
                 } else {
                     match fs::create_dir(parent.join(name)) {
                         Ok(()) => {
@@ -5695,8 +5684,56 @@ struct Recycled {
 }
 
 /// Whether Escape was pressed this frame (and takes it, so nothing else reacts).
-fn ui_escape(context: &egui::Context) -> bool {
-    context.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+/// The one look for a question: a modal box (the page behind cannot be used meanwhile) with a
+/// heading, centred. Returns true when it was dismissed with Escape or a click outside.
+fn dialog_shell(
+    context: &egui::Context,
+    id: &'static str,
+    title: &str,
+    width: f32,
+    body: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    egui::Modal::new(egui::Id::unique(id))
+        .show(context, |ui| {
+            ui.set_max_width(width);
+            ui.heading(title);
+            ui.add_space(6.0);
+            body(ui);
+        })
+        .should_close()
+}
+
+/// The confirm and Cancel buttons of a question: `(confirmed, cancelled)`. A destructive confirm is
+/// red and Cancel takes the keyboard focus first, so a stray Enter does the safe thing; otherwise
+/// the confirm button does. `enabled` greys the confirm button out.
+fn dialog_buttons(
+    ui: &mut egui::Ui,
+    confirm: &str,
+    destructive: bool,
+    enabled: bool,
+) -> (bool, bool) {
+    ui.add_space(10.0);
+    let first_frame = ui.memory(|memory| memory.focused().is_none());
+    ui.horizontal(|ui| {
+        let (fill, text) = if destructive {
+            (theme::danger(), theme::readable_on(theme::danger()))
+        } else {
+            (theme::button(), theme::readable_on(theme::button()))
+        };
+        let yes_button =
+            egui::Button::new(egui::RichText::new(confirm).strong().color(text)).fill(fill);
+        let yes = ui.add_enabled(enabled, yes_button);
+        let no = ui.button("Cancel");
+        if first_frame {
+            if destructive || !enabled {
+                no.request_focus();
+            } else {
+                yes.request_focus();
+            }
+        }
+        (yes.clicked(), no.clicked())
+    })
+    .inner
 }
 
 fn language_name(name: &str) -> Option<&'static str> {
