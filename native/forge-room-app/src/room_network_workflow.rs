@@ -8,6 +8,8 @@ use std::{collections::HashSet, time::Instant};
 
 #[derive(Default)]
 pub struct Workflow {
+    milestone_title: String,
+    milestone_due: Option<u64>,
     tab: usize,
     draft: String,
     recipient: Option<String>,
@@ -136,6 +138,57 @@ impl Workflow {
                 }
             });
         }
+        egui::CollapsingHeader::new("Room milestones").show(ui, |ui| {
+            for milestone in &snapshot.shared.milestones {
+                let mut done = milestone.done;
+                if ui
+                    .add_enabled(
+                        host,
+                        egui::Checkbox::new(
+                            &mut done,
+                            format!("{}: {}", milestone.id, milestone.title),
+                        ),
+                    )
+                    .changed()
+                {
+                    actions.push(Action::MilestoneDone {
+                        id: milestone.id.clone(),
+                        done,
+                    });
+                }
+                if !milestone.done
+                    && let Some(deadline) = milestone.due_at_epoch_seconds
+                {
+                    ui.small(if deadline <= snapshot.server_time_epoch_seconds {
+                        "Overdue".into()
+                    } else {
+                        format!(
+                            "Due in {} min",
+                            (deadline - snapshot.server_time_epoch_seconds) / 60
+                        )
+                    });
+                }
+            }
+            if host {
+                ui.label("New shared milestone");
+                ui.add(egui::TextEdit::singleline(&mut self.milestone_title).char_limit(200));
+                due(ui, "network-milestone-due", &mut self.milestone_due);
+                if ui
+                    .add_enabled(
+                        !self.milestone_title.trim().is_empty()
+                            && snapshot.shared.milestones.len() < 20,
+                        egui::Button::new("Create milestone"),
+                    )
+                    .clicked()
+                {
+                    actions.push(Action::CreateMilestone {
+                        title: self.milestone_title.clone(),
+                        due_hours: self.milestone_due,
+                    });
+                    self.milestone_title.clear();
+                }
+            }
+        });
         match self.tab {
             0 => self.chat(ui, snapshot, &mut actions),
             1 => self.tasks(ui, snapshot, host, &mut actions),

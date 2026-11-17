@@ -8,6 +8,14 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
+    CreateMilestone {
+        title: String,
+        due_hours: Option<u64>,
+    },
+    MilestoneDone {
+        id: String,
+        done: bool,
+    },
     SharePatch {
         recipient: String,
         path: String,
@@ -79,8 +87,17 @@ pub struct Countdown {
     pub remaining_seconds: u64,
     pub running: bool,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Milestone {
+    pub id: String,
+    pub title: String,
+    pub due_at_epoch_seconds: Option<u64>,
+    pub done: bool,
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SharedSnapshot {
+    #[serde(default)]
+    pub milestones: Vec<Milestone>,
     pub tasks: Vec<Task>,
     pub handoffs: Vec<HandoffRequest>,
     pub evidence: Vec<Evidence>,
@@ -88,6 +105,7 @@ pub struct SharedSnapshot {
     pub countdown: Countdown,
 }
 pub(super) struct SharedRoom {
+    milestones: Vec<Milestone>,
     pub(super) state: RoomState,
     remaining: Duration,
     started: Option<Instant>,
@@ -96,6 +114,7 @@ pub(super) struct SharedRoom {
 impl SharedRoom {
     pub(super) fn new() -> Result<Self, String> {
         Ok(Self {
+            milestones: Vec::new(),
             state: RoomState::new(
                 "network",
                 Participant {
@@ -123,6 +142,7 @@ impl SharedRoom {
     }
     pub(super) fn snapshot(&self) -> SharedSnapshot {
         SharedSnapshot {
+            milestones: self.milestones.clone(),
             tasks: self.state.tasks.clone(),
             handoffs: self.state.pending_handoffs.clone(),
             evidence: self.state.evidence.clone(),
@@ -158,6 +178,43 @@ impl SharedRoom {
     pub(super) fn apply(&mut self, actor: &str, action: Action) -> Result<(), String> {
         let before = self.state.activity.len();
         match action {
+            Action::CreateMilestone { title, due_hours } => {
+                if actor != self.state.host_id {
+                    return Err("Only the host can create milestones".into());
+                }
+                if self.milestones.len() >= 20 {
+                    return Err("Room milestone limit reached".into());
+                }
+                let title = super::bounded(&title, 200)?;
+                let deadline = due(due_hours)?;
+                let id = format!("M{}", self.milestones.len() + 1);
+                self.milestones.push(Milestone {
+                    id: id.clone(),
+                    title,
+                    due_at_epoch_seconds: deadline,
+                    done: false,
+                });
+                self.audit(actor, &format!("created milestone {id}"));
+                return Ok(());
+            }
+            Action::MilestoneDone { id, done } => {
+                if actor != self.state.host_id {
+                    return Err("Only the host can update milestones".into());
+                }
+                self.milestones
+                    .iter_mut()
+                    .find(|m| m.id == id)
+                    .ok_or("Milestone not found")?
+                    .done = done;
+                self.audit(
+                    actor,
+                    &format!(
+                        "marked milestone {id} {}",
+                        if done { "complete" } else { "open" }
+                    ),
+                );
+                return Ok(());
+            }
             Action::Message { .. } => return Err("Use the message channel".into()),
             Action::SharePatch { .. } | Action::RevokePatch { .. } => {
                 return Err("Use the patch channel".into())
@@ -292,6 +349,14 @@ fn due(hours: Option<u64>) -> Result<Option<u64>, String> {
     Ok(hours.map(|h| now_epoch_seconds().saturating_add(h * 3600)))
 }
 pub(super) fn validate(snapshot: &SharedSnapshot) -> Result<(), String> {
+    if snapshot.milestones.len() > 20
+        || snapshot
+            .milestones
+            .iter()
+            .any(|m| m.id.len() > 16 || super::bounded(&m.title, 200).is_err())
+    {
+        return Err("Invalid milestone state".into());
+    }
     if snapshot.tasks.len() > 100
         || snapshot.handoffs.len() > 100
         || snapshot.evidence.len() > 128

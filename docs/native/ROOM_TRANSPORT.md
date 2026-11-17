@@ -96,8 +96,10 @@ agents, join approval queue, relay, discovery or hosted service here.
   message sequence progress; this is not traffic-analysis protection.
 - The host sets, pauses, resumes and resets a countdown up to seven days. It advances from
   a monotonic host clock; clients display the latest host sample with local interpolation.
-  It ends with the hosting session. Milestones, reminders, shared file/diff transport,
-  persistent room recovery and read-only follow remain separate unfinished features.
+  It ends with the hosting session. Up to twenty host-owned milestones have shared titles,
+  optional host-clock deadlines and open/completed state; clients see overdue status. Only
+  the host creates or completes them. Reminders, persistent room recovery and read-only
+  follow remain separate unfinished features; saved patch transport is described below.
 
 No persisted RoomState field or schema changes are required. Existing local rooms load
 unchanged. Local Chat, Tasks and acting-as controls retain their local meaning. R03/R05 have the bounded shared workflow above. R06 adds the recipient-scoped saved patch

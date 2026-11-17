@@ -162,6 +162,35 @@ fn independent_clients_share_tasks_handoffs_clock_and_private_conversations() {
     .unwrap();
     let paused = b.request(json!({"command":"poll"}));
     assert_eq!(paused["snapshot"]["shared"]["countdown"]["running"], false);
+    assert!(outsider.execute(Action::CreateMilestone {
+        title: "unauthorized".into(),
+        due_hours: None
+    })["rejection"]
+        .is_string());
+    host.control(Action::CreateMilestone {
+        title: "Working demo".into(),
+        due_hours: Some(1),
+    })
+    .unwrap();
+    let milestone = b.request(json!({"command":"poll"}));
+    assert_eq!(
+        milestone["snapshot"]["shared"]["milestones"][0]["title"],
+        "Working demo"
+    );
+    assert!(a.execute(Action::MilestoneDone {
+        id: "M1".into(),
+        done: true
+    })["rejection"]
+        .is_string());
+    host.control(Action::MilestoneDone {
+        id: "M1".into(),
+        done: true,
+    })
+    .unwrap();
+    assert_eq!(
+        a.request(json!({"command":"poll"}))["snapshot"]["shared"]["milestones"][0]["done"],
+        true
+    );
     let private = "private-content-must-never-reach-third-client";
     let sent = a.execute(Action::Message {
         text: private.into(),
