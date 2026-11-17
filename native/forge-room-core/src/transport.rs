@@ -22,7 +22,9 @@ pub use readiness::{
     assess, Assessment, Declaration, HelpRequest, Impact, ReadinessProfile, ReadinessState,
     TaskReadiness,
 };
-pub use workflow::{Action, CodeLocation, Countdown, Milestone, SharedSnapshot, TaskFocus};
+pub use workflow::{
+    Action, CodeLocation, CodeReference, Countdown, Milestone, SharedSnapshot, TaskFocus,
+};
 
 const VERSION: u32 = 3;
 // Includes escaped text for bounded shared tasks, messages and eight private patches.
@@ -91,6 +93,9 @@ pub struct Event {
     pub parent: Option<u64>,
     #[serde(default)]
     pub mentions: Vec<String>,
+    /// Optional user-attached workspace-relative code location; message visibility still applies.
+    #[serde(default)]
+    pub code_reference: Option<CodeReference>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageReaction {
@@ -253,6 +258,7 @@ struct MessageDraft {
     decision: bool,
     parent: Option<u64>,
     mentions: Vec<String>,
+    code_reference: Option<CodeReference>,
 }
 struct Authority {
     room: String,
@@ -503,9 +509,35 @@ impl Authority {
                             decision: *decision,
                             parent: *parent,
                             mentions: Vec::new(),
+                            code_reference: None,
                         },
                     )
                     .err(),
+                Action::ContextMessage {
+                    text,
+                    recipient,
+                    task,
+                    decision,
+                    parent,
+                    path,
+                    line,
+                } => match workflow::validate_code_location(path, *line) {
+                    Ok(path) => self
+                        .message(
+                            &actor,
+                            MessageDraft {
+                                text: text.clone(),
+                                recipient: recipient.clone(),
+                                task: task.clone(),
+                                decision: *decision,
+                                parent: *parent,
+                                mentions: Vec::new(),
+                                code_reference: Some(CodeReference { path, line: *line }),
+                            },
+                        )
+                        .err(),
+                    Err(error) => Some(error),
+                },
                 Action::MentionMessage {
                     text,
                     mentions,
@@ -522,6 +554,7 @@ impl Authority {
                             decision: *decision,
                             parent: *parent,
                             mentions: mentions.clone(),
+                            code_reference: None,
                         },
                     )
                     .err(),
@@ -550,6 +583,7 @@ impl Authority {
             decision,
             parent,
             mentions,
+            code_reference,
         } = draft;
         let text = bounded(&text, 2000)?;
         if recipient
@@ -603,6 +637,7 @@ impl Authority {
             decision,
             parent,
             mentions,
+            code_reference,
         });
         if self.events.len() > MAX_EVENTS {
             if let Some(expired) = self.events.pop_front() {
@@ -1042,6 +1077,9 @@ impl Client {
                     || (e.recipient.is_some() && !e.mentions.is_empty())
                     || e.mentions.iter().any(|id| id.len() != 64)
                     || e.mentions.iter().collect::<HashSet<_>>().len() != e.mentions.len()
+                    || e.code_reference.as_ref().is_some_and(|reference| {
+                        workflow::validate_code_location(&reference.path, reference.line).is_err()
+                    })
                     || e.recipient.as_ref().is_some_and(|recipient| {
                         recipient.len() != 64
                             || (e.actor != self.identity && recipient != &self.identity)
@@ -1295,11 +1333,13 @@ mod tests {
             decision: false,
             parent: None,
             mentions: Vec::new(),
+            code_reference: None,
         };
         let mut value = serde_json::to_value(event).unwrap();
         value.as_object_mut().unwrap().remove("mentions");
         let decoded: Event = serde_json::from_value(value).unwrap();
         assert!(decoded.mentions.is_empty());
+        assert!(decoded.code_reference.is_none());
 
         let mut authority = Authority {
             room: "trial".into(),
@@ -1371,6 +1411,7 @@ mod tests {
                 decision: false,
                 parent: None,
                 mentions: Vec::new(),
+                code_reference: None,
             });
             snapshot.shared.evidence.push(crate::Evidence {
                 id: index.to_string(),

@@ -65,6 +65,16 @@ pub enum Action {
         decision: bool,
         parent: Option<u64>,
     },
+    /// Send a public or private Room message with an explicitly attached path and line.
+    ContextMessage {
+        text: String,
+        recipient: Option<String>,
+        task: Option<String>,
+        decision: bool,
+        parent: Option<u64>,
+        path: String,
+        line: u32,
+    },
     /// Public message which explicitly notifies selected joined members.
     MentionMessage {
         text: String,
@@ -145,6 +155,11 @@ pub struct Milestone {
 pub struct TaskFocus {
     pub actor: String,
     pub task: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeReference {
+    pub path: String,
+    pub line: u32,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeLocation {
@@ -367,7 +382,10 @@ impl SharedRoom {
                 );
                 return Ok(());
             }
-            Action::Message { .. } | Action::MentionMessage { .. } | Action::React { .. } => {
+            Action::Message { .. }
+            | Action::ContextMessage { .. }
+            | Action::MentionMessage { .. }
+            | Action::React { .. } => {
                 return Err("Use the message channel".into());
             }
             Action::SharePatch { .. } | Action::RevokePatch { .. } => {
@@ -579,7 +597,7 @@ pub(super) fn validate(snapshot: &SharedSnapshot) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_code_location(path: &str, line: u32) -> Result<String, String> {
+pub(super) fn validate_code_location(path: &str, line: u32) -> Result<String, String> {
     if path.is_empty()
         || path.len() > 512
         || path.contains(['\\', ':'])

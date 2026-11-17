@@ -298,6 +298,7 @@ mod tests {
             decision: false,
             parent: None,
             mentions: Vec::new(),
+            code_reference: None,
         });
         snapshot.patches.push(forge_room_core::transport::Patch {
             id: 1,

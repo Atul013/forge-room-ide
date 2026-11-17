@@ -17,6 +17,9 @@ pub struct Workflow {
     milestone_due: Option<u64>,
     tab: usize,
     draft: String,
+    attach_code_reference: bool,
+    code_reference_path: String,
+    code_reference_line: String,
     recipient: Option<String>,
     task_link: Option<String>,
     decision: bool,
@@ -78,7 +81,9 @@ impl Workflow {
     }
     fn slot_free(&self, action: &Action) -> bool {
         match action {
-            Action::Message { .. } | Action::MentionMessage { .. } => self.draft.is_empty(),
+            Action::Message { .. }
+            | Action::ContextMessage { .. }
+            | Action::MentionMessage { .. } => self.draft.is_empty(),
             Action::CreateTask { .. } => self.title.is_empty(),
             Action::Evidence { task, .. } => {
                 self.evidence.get(task).is_none_or(|text| text.is_empty())
@@ -107,6 +112,24 @@ impl Workflow {
                 self.task_link = task;
                 self.decision = decision;
                 self.reply = parent;
+            }
+            Action::ContextMessage {
+                text,
+                recipient,
+                task,
+                decision,
+                parent,
+                path,
+                line,
+            } => {
+                self.draft = text;
+                self.recipient = recipient;
+                self.task_link = task;
+                self.decision = decision;
+                self.reply = parent;
+                self.attach_code_reference = true;
+                self.code_reference_path = path;
+                self.code_reference_line = line.to_string();
             }
             Action::MentionMessage {
                 text,
@@ -159,7 +182,9 @@ impl Workflow {
                     let mut discard = None;
                     for (index, action) in self.failed_drafts.iter().enumerate() {
                         ui.label(match action {
-                            Action::Message { text, .. } | Action::MentionMessage { text, .. } => {
+                            Action::Message { text, .. }
+                            | Action::ContextMessage { text, .. }
+                            | Action::MentionMessage { text, .. } => {
                                 format!("Message: {}", text.chars().take(120).collect::<String>())
                             }
                             Action::CreateTask { title, .. } => format!("Task: {title}"),
@@ -200,7 +225,9 @@ impl Workflow {
                     if let Some(index) = restore {
                         let action = self.failed_drafts.remove(index);
                         match &action {
-                            Action::Message { .. } | Action::MentionMessage { .. } => self.tab = 0,
+                            Action::Message { .. }
+                            | Action::ContextMessage { .. }
+                            | Action::MentionMessage { .. } => self.tab = 0,
                             Action::Evidence { task, .. } => {
                                 self.selected = Some(task.clone());
                                 self.checked.clear();
@@ -737,6 +764,9 @@ impl Workflow {
         {
             self.mention_target = None;
         }
+        if self.mention_target.is_some() {
+            self.attach_code_reference = false;
+        }
         ui.label(if self.recipient.is_some() {
             "Visible only to you and the selected recipient."
         } else {
@@ -779,6 +809,12 @@ impl Workflow {
                             .unwrap_or_default(),
                         event.text
                     ));
+                    if let Some(reference) = &event.code_reference {
+                        ui.monospace(format!(
+                            "Code context · {}:{}",
+                            reference.path, reference.line
+                        ));
+                    }
                     if !event.mentions.is_empty() {
                         ui.small(format!(
                             "Mentioned: {}{}",
@@ -868,6 +904,29 @@ impl Workflow {
                     }
                 });
         }
+        ui.add_enabled_ui(self.mention_target.is_none(), |ui| {
+            ui.checkbox(
+                &mut self.attach_code_reference,
+                "Attach a code path and line",
+            );
+        });
+        if self.attach_code_reference {
+            ui.label("This path and line will be included with the message for its selected audience. No code is sent.");
+            ui.horizontal(|ui| {
+                ui.label("Workspace-relative path");
+                ui.add(egui::TextEdit::singleline(&mut self.code_reference_path).char_limit(512));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Line");
+                ui.add(egui::TextEdit::singleline(&mut self.code_reference_line).char_limit(10));
+            });
+        }
+        let parsed_reference_line = self.code_reference_line.trim().parse::<u32>().ok();
+        let valid_code_reference = !self.code_reference_path.trim().is_empty()
+            && parsed_reference_line.is_some_and(|line| (1..=10_000_000).contains(&line));
+        if self.attach_code_reference && !valid_code_reference {
+            ui.small("Enter a workspace-relative path and line from 1 to 10,000,000.");
+        }
         if let Some(parent) = self.reply {
             ui.horizontal(|ui| {
                 ui.label(format!("Replying to #{parent}"));
@@ -881,11 +940,11 @@ impl Workflow {
                 .desired_rows(2)
                 .char_limit(2000),
         );
+        let send_enabled = !self.draft.trim().is_empty()
+            && self.failed_drafts.len() < 16
+            && (!self.attach_code_reference || valid_code_reference);
         if ui
-            .add_enabled(
-                !self.draft.trim().is_empty() && self.failed_drafts.len() < 16,
-                egui::Button::new("Send message to Room"),
-            )
+            .add_enabled(send_enabled, egui::Button::new("Send message to Room"))
             .clicked()
         {
             if self.recipient.is_none()
@@ -897,6 +956,16 @@ impl Workflow {
                     task: self.task_link.clone(),
                     decision: self.decision,
                     parent: self.reply,
+                });
+            } else if self.attach_code_reference {
+                actions.push(Action::ContextMessage {
+                    text: self.draft.clone(),
+                    recipient: self.recipient.clone(),
+                    task: self.task_link.clone(),
+                    decision: self.decision,
+                    parent: self.reply,
+                    path: self.code_reference_path.trim().to_owned(),
+                    line: parsed_reference_line.expect("validated above"),
                 });
             } else {
                 actions.push(Action::Message {
@@ -911,6 +980,7 @@ impl Workflow {
             self.decision = false;
             self.reply = None;
             self.mention_target = None;
+            self.attach_code_reference = false;
         }
     }
     fn tasks(

@@ -20,9 +20,11 @@ This is task-level awareness, not file/cursor spectating, edit access or co-edit
 
 A member can manually share one workspace-relative saved-file path and positive line number up to 10 million, then update or clear it. The server rejects absolute, traversal, hidden and oversized paths, invalid line numbers and malformed snapshots. Locations are visible to all joined members, cleared when their member leaves or is revoked, and use the same authenticated invite/session boundary as other shared Room state. A viewer can follow one member in a separate read-only location preview and stop following at any time. Following never opens a file, moves the local caret or changes the viewer's editor selection.
 
+Chat messages can also attach one explicitly entered path and line, for a public Room message or the selected DM. The target inherits the message audience, so a third client never receives a private message's text or attached reference. Mentions and code references are separate message modes. The reference can be searched/displayed as metadata only; it never reads or includes source text and does not open a file.
+
 The feature shares path and line metadata only. It does not read or validate that path against the sender's disk, transmit file contents, unsaved buffers, cursor selection, diagnostics, or edits. It is an explicit location share, not automatic cursor streaming or collaborative editing. Receivers must have their own workspace copy to navigate manually.
 
-The independent-process test checks delivery to a second client, no content/selection fields, traversal/hidden-path and line rejection, opt-out, and cleanup after leave. Windows CI and desktop acceptance remain separate; two-machine LAN and visible UI trials are still required.
+Independent-process tests check public location delivery, opt-out/leave cleanup, and public plus private anchored messages with a third client denied the DM and reference. Traversal/hidden-path and line rejection are covered. Windows CI and desktop acceptance remain separate; two-machine LAN and visible UI trials are still required.
 
 ## Verification boundaries
 
