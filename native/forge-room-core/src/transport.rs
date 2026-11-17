@@ -5,7 +5,7 @@ use rustls::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{
@@ -29,6 +29,9 @@ const VERSION: u32 = 3;
 const MAX_FRAME: usize = 8 * 1024 * 1024;
 const MAX_MEMBERS: usize = 32;
 const MAX_EVENTS: usize = 128;
+const MAX_REACTIONS_PER_EVENT: usize = 32;
+const MAX_MENTIONS: usize = 8;
+const REACTION_EMOJI: [&str; 5] = ["👍", "✅", "👀", "🎉", "❤️"];
 const LEASE: Duration = Duration::from_secs(10);
 const SESSION: Duration = Duration::from_secs(3600);
 type Result<T> = std::result::Result<T, String>;
@@ -86,6 +89,14 @@ pub struct Event {
     pub task: Option<String>,
     pub decision: bool,
     pub parent: Option<u64>,
+    #[serde(default)]
+    pub mentions: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MessageReaction {
+    pub sequence: u64,
+    pub actor: String,
+    pub emoji: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Patch {
@@ -173,6 +184,9 @@ pub struct Snapshot {
     /// Host controlled lifecycle; defaults to Active for older protocol-v3 snapshots.
     #[serde(default)]
     pub lifecycle: RoomLifecycle,
+    /// Reactions are scoped to visible retained events; absent on older v3 peers.
+    #[serde(default)]
+    pub reactions: Vec<MessageReaction>,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -232,6 +246,14 @@ struct Session {
     last_action: Option<Action>,
     last_rejection: Option<String>,
 }
+struct MessageDraft {
+    text: String,
+    recipient: Option<String>,
+    task: Option<String>,
+    decision: bool,
+    parent: Option<u64>,
+    mentions: Vec<String>,
+}
 struct Authority {
     room: String,
     lifecycle: RoomLifecycle,
@@ -241,6 +263,7 @@ struct Authority {
     sequence: u64,
     shared: workflow::SharedRoom,
     patches: Vec<Patch>,
+    reactions: Vec<MessageReaction>,
     patch_sequence: u64,
 }
 impl Authority {
@@ -262,6 +285,11 @@ impl Authority {
                 .events
                 .front()
                 .is_some_and(|e| cursor.saturating_add(1) < e.sequence);
+        let visible_event = |event: &&Event| {
+            event.recipient.is_none()
+                || viewer
+                    .is_some_and(|id| event.actor == id || event.recipient.as_deref() == Some(id))
+        };
         Snapshot {
             room: self.room.clone(),
             you: viewer.unwrap_or_default().into(),
@@ -289,6 +317,17 @@ impl Authority {
             cursor: self.sequence,
             reset,
             lifecycle: self.lifecycle,
+            reactions: self
+                .reactions
+                .iter()
+                .filter(|reaction| {
+                    self.events
+                        .iter()
+                        .find(|event| event.sequence == reaction.sequence)
+                        .is_some_and(|event| visible_event(&event))
+                })
+                .cloned()
+                .collect(),
         }
     }
     fn handle(&mut self, request: Request) -> Result<Response> {
@@ -414,6 +453,13 @@ impl Authority {
                 })
                 .collect(),
         );
+        let joined: HashSet<_> = self
+            .sessions
+            .values()
+            .map(|session| session.id.as_str())
+            .collect();
+        self.reactions
+            .retain(|reaction| joined.contains(reaction.actor.as_str()));
     }
     fn execute(&mut self, token: &str, operation: u64, action: Action) -> Result<Option<String>> {
         let session = self.sessions.get(token).ok_or("Session denied")?;
@@ -450,13 +496,40 @@ impl Authority {
                 } => self
                     .message(
                         &actor,
-                        text,
-                        recipient.clone(),
-                        task.clone(),
-                        *decision,
-                        *parent,
+                        MessageDraft {
+                            text: text.clone(),
+                            recipient: recipient.clone(),
+                            task: task.clone(),
+                            decision: *decision,
+                            parent: *parent,
+                            mentions: Vec::new(),
+                        },
                     )
                     .err(),
+                Action::MentionMessage {
+                    text,
+                    mentions,
+                    task,
+                    decision,
+                    parent,
+                } => self
+                    .message(
+                        &actor,
+                        MessageDraft {
+                            text: text.clone(),
+                            recipient: None,
+                            task: task.clone(),
+                            decision: *decision,
+                            parent: *parent,
+                            mentions: mentions.clone(),
+                        },
+                    )
+                    .err(),
+                Action::React {
+                    sequence,
+                    emoji,
+                    active,
+                } => self.react(&actor, *sequence, emoji, *active).err(),
                 _ => self.shared.apply(&actor, action.clone()).err(),
             }
         };
@@ -469,16 +542,16 @@ impl Authority {
         session.last_rejection = rejection.clone();
         Ok(rejection)
     }
-    fn message(
-        &mut self,
-        actor: &str,
-        text: &str,
-        recipient: Option<String>,
-        task: Option<String>,
-        decision: bool,
-        parent: Option<u64>,
-    ) -> Result<()> {
-        let text = bounded(text, 2000)?;
+    fn message(&mut self, actor: &str, draft: MessageDraft) -> Result<()> {
+        let MessageDraft {
+            text,
+            recipient,
+            task,
+            decision,
+            parent,
+            mentions,
+        } = draft;
+        let text = bounded(&text, 2000)?;
         if recipient
             .as_ref()
             .is_some_and(|id| !self.sessions.values().any(|s| &s.id == id))
@@ -490,6 +563,17 @@ impl Authority {
             .is_some_and(|id| !self.shared.state.tasks.iter().any(|t| &t.id == id))
         {
             return Err("Task is not a shared Room task".into());
+        }
+        if mentions.len() > MAX_MENTIONS || (recipient.is_some() && !mentions.is_empty()) {
+            return Err("Mentions are limited to eight members in public messages".into());
+        }
+        let unique: HashSet<_> = mentions.iter().collect();
+        if unique.len() != mentions.len()
+            || mentions
+                .iter()
+                .any(|id| id == actor || !self.sessions.values().any(|session| &session.id == id))
+        {
+            return Err("Choose distinct, currently joined members other than yourself".into());
         }
         if let Some(parent) = parent {
             let event = self
@@ -518,9 +602,13 @@ impl Authority {
             task,
             decision,
             parent,
+            mentions,
         });
         if self.events.len() > MAX_EVENTS {
-            self.events.pop_front();
+            if let Some(expired) = self.events.pop_front() {
+                self.reactions
+                    .retain(|reaction| reaction.sequence != expired.sequence);
+            }
         }
         if public {
             self.shared.audit(
@@ -531,6 +619,47 @@ impl Authority {
                     "posted a public Room message"
                 },
             );
+        }
+        Ok(())
+    }
+    fn react(&mut self, actor: &str, sequence: u64, emoji: &str, active: bool) -> Result<()> {
+        if !REACTION_EMOJI.contains(&emoji) {
+            return Err("Choose one of the supported Room reactions".into());
+        }
+        let event = self
+            .events
+            .iter()
+            .find(|event| event.sequence == sequence)
+            .ok_or("Message is no longer retained")?;
+        if event
+            .recipient
+            .as_ref()
+            .is_some_and(|recipient| event.actor != actor && recipient != actor)
+        {
+            return Err("Message is not visible to this member".into());
+        }
+        let existing = self.reactions.iter().position(|reaction| {
+            reaction.sequence == sequence && reaction.actor == actor && reaction.emoji == emoji
+        });
+        if active && existing.is_none() {
+            if self
+                .reactions
+                .iter()
+                .filter(|reaction| reaction.sequence == sequence)
+                .count()
+                >= MAX_REACTIONS_PER_EVENT
+            {
+                return Err("Message reaction limit reached".into());
+            }
+            self.reactions.push(MessageReaction {
+                sequence,
+                actor: actor.into(),
+                emoji: emoji.into(),
+            });
+        } else if !active {
+            if let Some(index) = existing {
+                self.reactions.remove(index);
+            }
         }
         Ok(())
     }
@@ -632,6 +761,7 @@ impl Host {
             sequence: 0,
             shared: workflow::SharedRoom::new()?,
             patches: Vec::new(),
+            reactions: Vec::new(),
             patch_sequence: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -908,6 +1038,10 @@ impl Client {
                 e.actor.len() != 64
                     || bounded(&e.text, 2000).is_err()
                     || e.sequence > snapshot.cursor
+                    || e.mentions.len() > MAX_MENTIONS
+                    || (e.recipient.is_some() && !e.mentions.is_empty())
+                    || e.mentions.iter().any(|id| id.len() != 64)
+                    || e.mentions.iter().collect::<HashSet<_>>().len() != e.mentions.len()
                     || e.recipient.as_ref().is_some_and(|recipient| {
                         recipient.len() != 64
                             || (e.actor != self.identity && recipient != &self.identity)
@@ -919,6 +1053,29 @@ impl Client {
                 .events
                 .windows(2)
                 .any(|pair| pair[0].sequence >= pair[1].sequence)
+            || snapshot.reactions.len() > MAX_EVENTS * MAX_REACTIONS_PER_EVENT
+            || {
+                let mut seen = HashSet::new();
+                let mut counts = HashMap::new();
+                snapshot.reactions.iter().any(|reaction| {
+                    let count = counts.entry(reaction.sequence).or_insert(0usize);
+                    *count += 1;
+                    reaction.sequence == 0
+                        || reaction.sequence > snapshot.cursor
+                        || reaction.actor.len() != 64
+                        || !snapshot
+                            .members
+                            .iter()
+                            .any(|member| member.id == reaction.actor)
+                        || !REACTION_EMOJI.contains(&reaction.emoji.as_str())
+                        || *count > MAX_REACTIONS_PER_EVENT
+                        || !seen.insert((
+                            reaction.sequence,
+                            reaction.actor.as_str(),
+                            reaction.emoji.as_str(),
+                        ))
+                })
+            }
         {
             return Err("Invalid room snapshot".into());
         }
@@ -1080,8 +1237,51 @@ mod tests {
     fn lifecycle_snapshot_field_defaults_for_older_protocol_three_peers() {
         let mut value = serde_json::to_value(Snapshot::default()).unwrap();
         value.as_object_mut().unwrap().remove("lifecycle");
+        value.as_object_mut().unwrap().remove("reactions");
         let decoded: Snapshot = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.lifecycle, RoomLifecycle::Active);
+        assert!(decoded.reactions.is_empty());
+    }
+
+    #[test]
+    fn older_message_events_default_to_no_mentions_and_reactions_are_bounded() {
+        let event = Event {
+            sequence: 1,
+            actor: "a".repeat(64),
+            text: "hello".into(),
+            recipient: None,
+            task: None,
+            decision: false,
+            parent: None,
+            mentions: Vec::new(),
+        };
+        let mut value = serde_json::to_value(event).unwrap();
+        value.as_object_mut().unwrap().remove("mentions");
+        let decoded: Event = serde_json::from_value(value).unwrap();
+        assert!(decoded.mentions.is_empty());
+
+        let mut authority = Authority {
+            room: "trial".into(),
+            lifecycle: RoomLifecycle::Active,
+            grants: HashMap::new(),
+            sessions: HashMap::new(),
+            events: VecDeque::from([decoded]),
+            sequence: 1,
+            shared: workflow::SharedRoom::new().unwrap(),
+            patches: Vec::new(),
+            reactions: (0..MAX_REACTIONS_PER_EVENT)
+                .map(|index| MessageReaction {
+                    sequence: 1,
+                    actor: format!("{index:064x}"),
+                    emoji: REACTION_EMOJI[index % REACTION_EMOJI.len()].into(),
+                })
+                .collect(),
+            patch_sequence: 0,
+        };
+        assert!(authority
+            .react(&"f".repeat(64), 1, "👍", true)
+            .unwrap_err()
+            .contains("limit"));
     }
 
     #[test]
@@ -1129,6 +1329,7 @@ mod tests {
                 task: None,
                 decision: false,
                 parent: None,
+                mentions: Vec::new(),
             });
             snapshot.shared.evidence.push(crate::Evidence {
                 id: index.to_string(),

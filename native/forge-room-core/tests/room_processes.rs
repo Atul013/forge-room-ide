@@ -795,3 +795,135 @@ fn independent_clients_observe_host_pause_resume_archive_and_public_export_priva
         .iter()
         .all(|event| event["text"] != "private note"));
 }
+
+#[test]
+fn independent_clients_share_validated_mentions_and_visibility_scoped_reactions() {
+    use forge_room_core::transport::Action;
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "conversation trial").unwrap();
+    let (mut a, mut b, mut outsider) = (Peer::start(), Peer::start(), Peer::start());
+    let aj = a.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    let bj = b.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Grace"}));
+    outsider.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Lin"}));
+    let aid = aj["identity"].as_str().unwrap().to_owned();
+    let bid = bj["identity"].as_str().unwrap().to_owned();
+
+    let mentioned = a.execute(Action::MentionMessage {
+        text: "Review the updated contract".into(),
+        mentions: vec![bid.clone()],
+        task: None,
+        decision: false,
+        parent: None,
+    });
+    assert!(mentioned["rejection"].is_null());
+    assert_eq!(mentioned["snapshot"]["events"][0]["mentions"][0], bid);
+    assert!(
+        b.request(json!({"command":"poll"}))["snapshot"]["events"][0]["mentions"][0].is_string()
+    );
+    assert!(
+        outsider.request(json!({"command":"poll"}))["snapshot"]["events"][0]["mentions"][0]
+            .is_string()
+    );
+
+    for mentions in [
+        vec!["f".repeat(64)],
+        vec![bid.clone(), bid.clone()],
+        vec![aid.clone()],
+    ] {
+        assert!(a.execute(Action::MentionMessage {
+            text: "invalid mention list".into(),
+            mentions,
+            task: None,
+            decision: false,
+            parent: None
+        })["rejection"]
+            .is_string());
+    }
+    assert!(a.execute(Action::MentionMessage {
+        text: "too many mentions".into(),
+        mentions: vec![bid.clone(); 9],
+        task: None,
+        decision: false,
+        parent: None
+    })["rejection"]
+        .is_string());
+
+    assert!(a.execute(Action::Message {
+        text: "private detail".into(),
+        recipient: Some(bid.clone()),
+        task: None,
+        decision: false,
+        parent: None
+    })["rejection"]
+        .is_null());
+    assert!(b.execute(Action::React {
+        sequence: 2,
+        emoji: "🤖".into(),
+        active: true
+    })["rejection"]
+        .is_string());
+    assert!(outsider.execute(Action::React {
+        sequence: 2,
+        emoji: "👀".into(),
+        active: true
+    })["rejection"]
+        .as_str()
+        .unwrap()
+        .contains("not visible"));
+    assert!(b.execute(Action::React {
+        sequence: 2,
+        emoji: "👀".into(),
+        active: true
+    })["rejection"]
+        .is_null());
+    let participant_view = a.request(json!({"command":"poll"}));
+    assert_eq!(
+        participant_view["snapshot"]["reactions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(participant_view["snapshot"]["reactions"][0]["sequence"], 2);
+    let outsider_view = outsider.request(json!({"command":"poll"}));
+    assert!(outsider_view["snapshot"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|event| event["text"] != "private detail"));
+    assert!(outsider_view["snapshot"]["reactions"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(
+        serde_json::to_value(host.snapshot().unwrap()).unwrap()["reactions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    assert!(b.execute(Action::React {
+        sequence: 1,
+        emoji: "✅".into(),
+        active: true
+    })["rejection"]
+        .is_null());
+    let public_view = outsider.request(json!({"command":"poll"}));
+    assert!(public_view["snapshot"]["reactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reaction| reaction["sequence"] == 1 && reaction["actor"] == bid));
+    assert!(b.execute(Action::React {
+        sequence: 2,
+        emoji: "👀".into(),
+        active: false
+    })["rejection"]
+        .is_null());
+    assert!(
+        a.request(json!({"command":"poll"}))["snapshot"]["reactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|reaction| reaction["sequence"] != 2)
+    );
+}

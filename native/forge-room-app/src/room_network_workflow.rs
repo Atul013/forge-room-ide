@@ -20,6 +20,8 @@ pub struct Workflow {
     recipient: Option<String>,
     task_link: Option<String>,
     decision: bool,
+    mention_target: Option<String>,
+    mentions_only: bool,
     reply: Option<u64>,
     query: String,
     decisions_only: bool,
@@ -72,7 +74,7 @@ impl Workflow {
     }
     fn slot_free(&self, action: &Action) -> bool {
         match action {
-            Action::Message { .. } => self.draft.is_empty(),
+            Action::Message { .. } | Action::MentionMessage { .. } => self.draft.is_empty(),
             Action::CreateTask { .. } => self.title.is_empty(),
             Action::Evidence { task, .. } => {
                 self.evidence.get(task).is_none_or(|text| text.is_empty())
@@ -98,6 +100,20 @@ impl Workflow {
             } => {
                 self.draft = text;
                 self.recipient = recipient;
+                self.task_link = task;
+                self.decision = decision;
+                self.reply = parent;
+            }
+            Action::MentionMessage {
+                text,
+                mentions,
+                task,
+                decision,
+                parent,
+            } => {
+                self.draft = text;
+                self.mention_target = mentions.into_iter().next();
+                self.recipient = None;
                 self.task_link = task;
                 self.decision = decision;
                 self.reply = parent;
@@ -139,7 +155,7 @@ impl Workflow {
                     let mut discard = None;
                     for (index, action) in self.failed_drafts.iter().enumerate() {
                         ui.label(match action {
-                            Action::Message { text, .. } => {
+                            Action::Message { text, .. } | Action::MentionMessage { text, .. } => {
                                 format!("Message: {}", text.chars().take(120).collect::<String>())
                             }
                             Action::CreateTask { title, .. } => format!("Task: {title}"),
@@ -180,7 +196,7 @@ impl Workflow {
                     if let Some(index) = restore {
                         let action = self.failed_drafts.remove(index);
                         match &action {
-                            Action::Message { .. } => self.tab = 0,
+                            Action::Message { .. } | Action::MentionMessage { .. } => self.tab = 0,
                             Action::Evidence { task, .. } => {
                                 self.selected = Some(task.clone());
                                 self.checked.clear();
@@ -199,12 +215,27 @@ impl Workflow {
         }
 
         let unread = self.observe_activity(snapshot);
+        let mention_count = snapshot
+            .events
+            .iter()
+            .filter(|event| event.mentions.contains(&snapshot.you))
+            .count();
         ui.horizontal_wrapped(|ui| {
-            for (index, label) in ["Chat", "Tasks", "Activity", "Readiness", "Follow"]
-                .iter()
-                .enumerate()
+            for (index, label) in [
+                if mention_count > 0 {
+                    format!("Chat · {mention_count} mentions")
+                } else {
+                    "Chat".to_owned()
+                },
+                "Tasks".to_owned(),
+                "Activity".to_owned(),
+                "Readiness".to_owned(),
+                "Follow".to_owned(),
+            ]
+            .iter()
+            .enumerate()
             {
-                let title = if *label == "Activity" && unread > 0 {
+                let title = if label == "Activity" && unread > 0 {
                     format!("Activity · {unread} new")
                 } else {
                     (*label).to_owned()
@@ -605,6 +636,14 @@ impl Workflow {
             });
         if self.recipient != previous {
             self.reply = None;
+            self.mention_target = None;
+        }
+        if self
+            .mention_target
+            .as_ref()
+            .is_some_and(|id| !snapshot.members.iter().any(|member| &member.id == id))
+        {
+            self.mention_target = None;
         }
         ui.label(if self.recipient.is_some() {
             "Visible only to you and the selected recipient."
@@ -614,6 +653,7 @@ impl Workflow {
         ui.label("Search conversation");
         ui.add(egui::TextEdit::singleline(&mut self.query).char_limit(200));
         ui.checkbox(&mut self.decisions_only, "Decisions only");
+        ui.checkbox(&mut self.mentions_only, "Only messages mentioning me");
         let query = self.query.to_lowercase();
         egui::ScrollArea::vertical()
             .id_salt("network-message-history")
@@ -631,6 +671,7 @@ impl Workflow {
                     };
                     if !channel
                         || (self.decisions_only && !event.decision)
+                        || (self.mentions_only && !event.mentions.contains(&snapshot.you))
                         || !event.text.to_lowercase().contains(&query)
                     {
                         continue;
@@ -646,6 +687,22 @@ impl Workflow {
                             .unwrap_or_default(),
                         event.text
                     ));
+                    if !event.mentions.is_empty() {
+                        ui.small(format!(
+                            "Mentioned: {}{}",
+                            event
+                                .mentions
+                                .iter()
+                                .map(|id| format!("@{}", name(snapshot, id)))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            if event.mentions.contains(&snapshot.you) {
+                                " · You were mentioned"
+                            } else {
+                                ""
+                            }
+                        ));
+                    }
                     if let Some(parent) = event.parent {
                         ui.small(format!("Reply to #{parent}"));
                     }
@@ -655,6 +712,32 @@ impl Workflow {
                     {
                         self.reply = Some(event.sequence);
                     }
+                    ui.horizontal_wrapped(|ui| {
+                        for emoji in ["👍", "✅", "👀", "🎉", "❤️"] {
+                            let matching: Vec<_> = snapshot
+                                .reactions
+                                .iter()
+                                .filter(|reaction| {
+                                    reaction.sequence == event.sequence && reaction.emoji == emoji
+                                })
+                                .collect();
+                            let mine = matching
+                                .iter()
+                                .any(|reaction| reaction.actor == snapshot.you);
+                            let label = if matching.is_empty() {
+                                emoji.to_owned()
+                            } else {
+                                format!("{emoji} {}", matching.len())
+                            };
+                            if ui.small_button(label).clicked() {
+                                actions.push(Action::React {
+                                    sequence: event.sequence,
+                                    emoji: emoji.into(),
+                                    active: !mine,
+                                });
+                            }
+                        }
+                    });
                 }
             });
         egui::ComboBox::from_id_salt("network-message-task")
@@ -670,6 +753,29 @@ impl Workflow {
                 }
             });
         ui.checkbox(&mut self.decision, "Record as decision");
+        if self.recipient.is_none() {
+            egui::ComboBox::from_id_salt("network-message-mention")
+                .selected_text(
+                    self.mention_target
+                        .as_ref()
+                        .map(|id| format!("Mention {}", name(snapshot, id)))
+                        .unwrap_or("No mention".into()),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.mention_target, None, "No mention");
+                    for member in snapshot
+                        .members
+                        .iter()
+                        .filter(|member| member.id != snapshot.you)
+                    {
+                        ui.selectable_value(
+                            &mut self.mention_target,
+                            Some(member.id.clone()),
+                            format!("Mention {}", member.name),
+                        );
+                    }
+                });
+        }
         if let Some(parent) = self.reply {
             ui.horizontal(|ui| {
                 ui.label(format!("Replying to #{parent}"));
@@ -690,16 +796,29 @@ impl Workflow {
             )
             .clicked()
         {
-            actions.push(Action::Message {
-                text: self.draft.clone(),
-                recipient: self.recipient.clone(),
-                task: self.task_link.clone(),
-                decision: self.decision,
-                parent: self.reply,
-            });
+            if self.recipient.is_none()
+                && let Some(mention) = self.mention_target.clone()
+            {
+                actions.push(Action::MentionMessage {
+                    text: self.draft.clone(),
+                    mentions: vec![mention],
+                    task: self.task_link.clone(),
+                    decision: self.decision,
+                    parent: self.reply,
+                });
+            } else {
+                actions.push(Action::Message {
+                    text: self.draft.clone(),
+                    recipient: self.recipient.clone(),
+                    task: self.task_link.clone(),
+                    decision: self.decision,
+                    parent: self.reply,
+                });
+            }
             self.draft.clear();
             self.decision = false;
             self.reply = None;
+            self.mention_target = None;
         }
     }
     fn tasks(

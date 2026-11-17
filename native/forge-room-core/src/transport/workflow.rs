@@ -60,6 +60,20 @@ pub enum Action {
         decision: bool,
         parent: Option<u64>,
     },
+    /// Public message which explicitly notifies selected joined members.
+    MentionMessage {
+        text: String,
+        mentions: Vec<String>,
+        task: Option<String>,
+        decision: bool,
+        parent: Option<u64>,
+    },
+    /// Add or remove the caller's reaction on a visible retained message.
+    React {
+        sequence: u64,
+        emoji: String,
+        active: bool,
+    },
     CreateTask {
         title: String,
         owner: String,
@@ -306,7 +320,9 @@ impl SharedRoom {
                 );
                 return Ok(());
             }
-            Action::Message { .. } => return Err("Use the message channel".into()),
+            Action::Message { .. } | Action::MentionMessage { .. } | Action::React { .. } => {
+                return Err("Use the message channel".into());
+            }
             Action::SharePatch { .. } | Action::RevokePatch { .. } => {
                 return Err("Use the patch channel".into())
             }
