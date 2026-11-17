@@ -253,6 +253,21 @@ impl RoomView {
             .unwrap_or(0)
     }
 
+    /// Open the people list with the add-person form (the Lobby's Add Member and Add Agent
+    /// buttons). Only the host can add people; anyone else is told so.
+    pub fn open_add_person(&mut self) {
+        let Some(host) = self.state().map(|state| state.host_id.clone()) else {
+            return;
+        };
+        self.people_open = true;
+        if self.acting_as == host {
+            self.new_person.open = true;
+            self.new_person.owner = host;
+        } else {
+            self.error = Some("Only the room host can add a participant.".into());
+        }
+    }
+
     pub fn show_overdue_tasks(&mut self) {
         self.task_query.clear();
         self.task_status_filter = None;

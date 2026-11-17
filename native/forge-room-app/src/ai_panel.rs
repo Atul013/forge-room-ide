@@ -373,7 +373,7 @@ impl State {
         // the default.
         if !self.model.is_empty() && !agent::valid_model(&self.model) {
             self.note(format!(
-                "\"{}\" is not a valid model name (letters, digits and . - _ : / [ ]), so the default                  model is used.",
+                "\"{}\" is not a valid model name (letters, digits and . - _ : / [ ]), so the default model is used.",
                 self.model
             ));
         }
@@ -487,7 +487,7 @@ impl State {
                             };
                             if old.is_some() {
                                 self.note(
-                                    "The conversation could not be continued; your next message                                      starts a new one.",
+                                    "The conversation could not be continued; your next message starts a new one.",
                                 );
                             }
                         }

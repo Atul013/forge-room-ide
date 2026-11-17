@@ -1458,7 +1458,8 @@ impl ForgeRoomApp {
                 }
             }
             for label in ["Debug Console", "Ports"] {
-                underline_tab(ui, label, false, false).on_hover_text("Adapter not connected");
+                underline_tab(ui, label, false, false)
+                    .on_hover_text("Not available in this preview");
             }
             if self.bottom_tab == BottomTab::Terminal {
                 // One small number per terminal, a plus for another and a cross to end the shown
@@ -2493,6 +2494,13 @@ impl ForgeRoomApp {
                 }
             });
         }
+    }
+
+    /// Show `tab` in the right dock; unlike `show_dock` it never closes a dock that is already on
+    /// that tab (a button that means "go there" must not hide the place).
+    fn reveal_dock(&mut self, tab: RightTab) {
+        self.show_right = true;
+        self.right_tab = tab;
     }
 
     fn show_dock(&mut self, tab: RightTab) {
@@ -5207,15 +5215,16 @@ impl ForgeRoomApp {
             }
             Some(lobby::Action::OpenActivity) => {
                 self.show_lobby = false;
-                self.show_dock(RightTab::Activity);
+                self.reveal_dock(RightTab::Activity);
             }
             Some(lobby::Action::CreateRoom) => {
                 if !self.room.create_room() {
-                    self.show_dock(RightTab::Room);
+                    self.reveal_dock(RightTab::Room);
                 }
             }
             Some(lobby::Action::AddMember | lobby::Action::AddAgent) => {
-                self.show_dock(RightTab::Room)
+                self.reveal_dock(RightTab::Room);
+                self.room.open_add_person();
             }
             None => {}
         }
