@@ -156,7 +156,7 @@ impl NetworkRoom {
                             self.notice=Some("Action queue busy or disconnected; try again".into());
                     }
                 }
-                ui.label("Presence expires after 10 seconds offline. Reconnect retains identity for one hour while host and client run. Local Room tasks and files are not imported.");
+                ui.label("Presence expires after 10 seconds offline. Active sessions renew; reconnect retains identity for one idle hour while the host runs. Local Room tasks and files are not imported.");
             }
           });
         });
@@ -179,7 +179,7 @@ impl NetworkRoom {
                 }
             };
             let mut pending = std::collections::VecDeque::new();
-            let mut last_rejection = None;
+            let mut rejections = std::collections::VecDeque::new();
             let _ = sender.try_send(Ok((snapshot.clone(), None)));
             loop {
                 let command = if pending.len() < 4 {
@@ -210,7 +210,7 @@ impl NetworkRoom {
                         if let Some(error) = rejection
                             && let Some(action) = pending.front()
                         {
-                            last_rejection = Some((error, action.clone()));
+                            rejections.push_back((error, action.clone()));
                         }
                         pending.pop_front();
                         if update.reset {
@@ -225,8 +225,10 @@ impl NetworkRoom {
                         snapshot.shared = update.shared;
                         snapshot.patches = update.patches;
                         snapshot.server_time_epoch_seconds = update.server_time_epoch_seconds;
-                        match sender.try_send(Ok((snapshot.clone(), last_rejection.clone()))) {
-                            Ok(()) => last_rejection = None,
+                        match sender.try_send(Ok((snapshot.clone(), rejections.front().cloned()))) {
+                            Ok(()) => {
+                                rejections.pop_front();
+                            }
                             Err(mpsc::TrySendError::Disconnected(_)) => break,
                             Err(mpsc::TrySendError::Full(_)) => {}
                         }

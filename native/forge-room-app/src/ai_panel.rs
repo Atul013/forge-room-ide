@@ -71,6 +71,9 @@ struct Message {
 
 pub struct State {
     workflow: crate::ai_workflow::Workflow,
+    isolated: crate::agent_workspaces::State,
+    run_workspace: Option<PathBuf>,
+    recovery: crate::review_checkpoints::State,
     messages: Vec<Message>,
     input: String,
     focus_input: bool,
@@ -112,6 +115,9 @@ impl Default for State {
     fn default() -> Self {
         Self {
             workflow: Default::default(),
+            isolated: Default::default(),
+            run_workspace: None,
+            recovery: Default::default(),
             messages: Vec::new(),
             input: String::new(),
             focus_input: false,
@@ -194,10 +200,16 @@ impl State {
         self.started = None;
         self.finish();
         self.messages.clear();
+        self.isolated.new_chat();
+        self.run_workspace = None;
+        let selected_flow = self.workflow.flow;
         self.workflow = Default::default();
+        self.workflow.flow = selected_flow;
         self.session = None;
         self.codex_session = None;
         self.workspace = Some(workspace.to_path_buf());
+        self.isolated.load(workspace);
+        self.run_workspace = None;
         let path = chat_path(workspace);
         if std::fs::metadata(&path).is_ok_and(|meta| meta.len() <= 2 * 1024 * 1024)
             && let Ok(bytes) = std::fs::read(path)
@@ -338,6 +350,15 @@ impl State {
             None
         }
     }
+    pub fn take_checkpoint_request(&mut self) -> bool {
+        std::mem::take(&mut self.recovery.restore_requested)
+    }
+    pub fn restore_checkpoint(&mut self, root: &Path, dirty: &[PathBuf]) -> Result<usize, String> {
+        if self.busy() {
+            return Err("Stop the agent before recovery".into());
+        }
+        self.recovery.restore_selected(root, dirty)
+    }
     pub fn apply_review(
         &mut self,
         root: &Path,
@@ -359,8 +380,41 @@ impl State {
         self.login_requested.take()
     }
 
+    pub fn take_workspace_open_request(&mut self) -> Option<PathBuf> {
+        self.isolated.open_requested.take()
+    }
     pub fn take_terminal_request(&mut self) -> Option<String> {
-        self.terminal_requested.take()
+        let command = self.terminal_requested.take()?;
+        if self.isolated.creating() {
+            self.fail("Wait for the isolated workspace to finish creating");
+            return None;
+        }
+        if self.isolated.enabled && self.workflow.flow == crate::ai_workflow::Flow::Direct {
+            let root = self.workspace.as_deref()?;
+            match self.isolated.target(root) {
+                Ok(Some(path)) => {
+                    #[cfg(windows)]
+                    {
+                        let path = path.to_string_lossy().replace('\'', "''");
+                        Some(format!(
+                            "try {{ Set-Location -LiteralPath '{path}' -ErrorAction Stop; {command} }} catch {{ Write-Error $_ }}"
+                        ))
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        let path = path.to_string_lossy().replace('\'', "'\\''");
+                        Some(format!("cd -- '{path}' && {command}"))
+                    }
+                }
+                Ok(None) => Some(command),
+                Err(error) => {
+                    self.fail(error);
+                    None
+                }
+            }
+        } else {
+            Some(command)
+        }
     }
 
     pub fn busy(&self) -> bool {
@@ -439,6 +493,12 @@ impl State {
     /// refused stays in the box, and the reason is shown.
     fn send(&mut self, context: &egui::Context, cwd: Option<&Path>, trusted: bool) {
         let text = self.input.trim().to_string();
+        if self.isolated.creating() {
+            self.fail(
+                "Wait for the isolated workspace to finish creating before starting an agent",
+            );
+            return;
+        }
         if (text.is_empty() && self.image.is_none()) || self.run.is_some() {
             return;
         }
@@ -497,15 +557,28 @@ impl State {
                 return;
             }
         };
+        let isolated = if self.workflow.flow == crate::ai_workflow::Flow::Direct {
+            match self.isolated.target(cwd) {
+                Ok(target) => target,
+                Err(error) => {
+                    self.fail(error);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let request = agent::Request {
             provider,
             model: self.model.clone(),
             effort: self.effort.clone(),
             mode: self.workflow.flow.mode(self.mode),
             prompt,
-            cwd: cwd.to_path_buf(),
+            cwd: isolated.clone().unwrap_or_else(|| cwd.to_path_buf()),
             session: if self.workflow.flow != crate::ai_workflow::Flow::Direct {
                 None
+            } else if let Some(path) = &isolated {
+                self.isolated.session(path, provider)
             } else {
                 match provider {
                     Provider::Claude => self.session.clone(),
@@ -519,6 +592,13 @@ impl State {
         match agent::start(&program, &request, move || wake.request_repaint()) {
             Ok(run) => {
                 self.run = Some(run);
+                self.run_workspace = isolated;
+                if let Some(path) = &self.run_workspace {
+                    self.note(format!(
+                        "Agent execution folder: {} (isolated Git checkout)",
+                        path.display()
+                    ));
+                }
                 self.run_provider = Some(provider);
                 self.started = Some(std::time::Instant::now());
                 self.messages.push(Message {
@@ -540,6 +620,9 @@ impl State {
     /// Take what the running agent has said since the last frame. True when the run just ended
     /// (files may have changed, so the caller refreshes what shows them).
     pub fn poll(&mut self) -> bool {
+        for note in self.isolated.poll() {
+            self.note(note);
+        }
         if self.chat_dirty && self.chat_saved.elapsed() >= std::time::Duration::from_secs(2) {
             self.save_chat();
         }
@@ -577,7 +660,13 @@ impl State {
                     text: line,
                 }),
                 agent::Event::Session(id) => {
-                    if self.workflow.run_flow == Some(crate::ai_workflow::Flow::Direct) {
+                    if self.workflow.run_flow == Some(crate::ai_workflow::Flow::Direct)
+                        && let Some(path) = &self.run_workspace
+                        && let Some(provider) = self.run_provider
+                    {
+                        self.isolated
+                            .record_session(path.clone(), provider, Some(id));
+                    } else if self.workflow.run_flow == Some(crate::ai_workflow::Flow::Direct) {
                         match self.run_provider {
                             Some(Provider::Claude) => self.session = Some(id),
                             Some(Provider::Codex) => self.codex_session = Some(id),
@@ -594,8 +683,13 @@ impl State {
                             self.fail(error);
                             // A conversation that failed (an expired or unknown session) is not
                             // continued by the next message: that would fail the same way for ever.
-                            let old = if self.workflow.run_flow
-                                == Some(crate::ai_workflow::Flow::Direct)
+                            if let Some(path) = &self.run_workspace
+                                && let Some(provider) = self.run_provider
+                            {
+                                self.isolated.record_session(path.clone(), provider, None);
+                            }
+                            let old = if self.run_workspace.is_none()
+                                && self.workflow.run_flow == Some(crate::ai_workflow::Flow::Direct)
                             {
                                 match self.run_provider {
                                     Some(Provider::Claude) => self.session.take(),
@@ -632,6 +726,7 @@ impl State {
             }
             self.run = None;
             self.run_provider = None;
+            self.run_workspace = None;
             self.started = None;
             self.clear_image();
             self.save_chat();
@@ -653,7 +748,11 @@ impl State {
         self.run_provider = None;
         self.started = None;
         self.messages.clear();
+        self.isolated.new_chat();
+        self.run_workspace = None;
+        let selected_flow = self.workflow.flow;
         self.workflow = Default::default();
+        self.workflow.flow = selected_flow;
         self.session = None;
         self.codex_session = None;
         self.confirm_full = false;
@@ -725,6 +824,11 @@ pub fn show(
             header(ui);
             ui.add_space(8.0);
             controls(ui, state);
+            let busy = state.busy();
+            for note in state.isolated.show(ui, cwd, trusted, busy) {
+                state.note(note);
+            }
+            state.recovery.show(ui, cwd, trusted, busy);
             let busy = state.busy();
             let old_plan = state.workflow.plan.clone();
             for note in state.workflow.show(ui, cwd, busy, trusted) {
@@ -937,7 +1041,7 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
                 state.login_requested = Some(command);
             }
             if ui
-                .add_enabled(!state.busy(), egui::Button::new("Interactive agent"))
+                .add_enabled(!state.busy(), egui::Button::new("Interactive direct agent"))
                 .on_hover_text(
                     "Opens the installed agent in a terminal so you can answer permission prompts",
                 )
@@ -1525,7 +1629,9 @@ fn composer(
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(34.0, 30.0), Sense::click());
                     let busy = state.busy();
-                    let ready = (!state.input.trim().is_empty() || state.image.is_some()) && !busy;
+                    let ready = (!state.input.trim().is_empty() || state.image.is_some())
+                        && !busy
+                        && !state.isolated.creating();
                     let fill = if ready {
                         theme::button()
                     } else {
@@ -1596,6 +1702,84 @@ mod tests {
     fn older_chat_files_load_without_a_plan() {
         let chat: StoredChat = serde_json::from_str(r#"{"messages":[],"session":null}"#).unwrap();
         assert!(chat.plan.is_empty() && chat.codex_session.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn direct_agent_runs_in_its_worktree_without_reusing_primary_conversation() {
+        let root =
+            std::env::temp_dir().join(format!("forge-isolated-agent-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        crate::git::run(&root, &["init"]).unwrap();
+        crate::git::run(&root, &["config", "core.autocrlf", "false"]).unwrap();
+        crate::git::run(&root, &["config", "user.name", "Test"]).unwrap();
+        crate::git::run(&root, &["config", "user.email", "test@example.invalid"]).unwrap();
+        std::fs::write(root.join("main.txt"), "committed\n").unwrap();
+        crate::git::run(&root, &["add", "main.txt"]).unwrap();
+        crate::git::run(&root, &["commit", "-m", "base"]).unwrap();
+        std::fs::write(root.join("main.txt"), "primary dirty\n").unwrap();
+        let workspace = crate::agent_workspaces::create(&root, "Direct isolated task").unwrap();
+        let program = root.join("isolated-mock.cmd");
+        std::fs::write(&program,"@echo off\r\necho %* > isolated-args.txt\r\necho agent isolated edit> main.txt\r\necho {\"type\":\"thread.started\",\"thread_id\":\"isolated-thread\"}\r\necho {\"type\":\"turn.completed\"}\r\n").unwrap();
+        let mut state = State::default();
+        state.set_workspace(&root);
+        state.provider = Provider::Codex;
+        state.mode = Mode::Edit;
+        state.programs = Some([None, Some(program)]);
+        state.codex_session = Some("primary-thread".into());
+        state.isolated.adopt(workspace.clone()).unwrap();
+        state.input = "Work only in the task checkout".into();
+        state.send(&egui::Context::default(), Some(&root), true);
+        let start = std::time::Instant::now();
+        while state.busy() && start.elapsed() < std::time::Duration::from_secs(8) {
+            state.poll();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!state.busy());
+        assert_eq!(
+            std::fs::read_to_string(root.join("main.txt")).unwrap(),
+            "primary dirty\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.folder.join("main.txt"))
+                .unwrap()
+                .trim(),
+            "agent isolated edit"
+        );
+        assert_eq!(state.codex_session.as_deref(), Some("primary-thread"));
+        assert_eq!(
+            state
+                .isolated
+                .session(&workspace.folder, Provider::Codex)
+                .as_deref(),
+            Some("isolated-thread")
+        );
+        assert!(
+            !std::fs::read_to_string(workspace.folder.join("isolated-args.txt"))
+                .unwrap()
+                .contains("resume")
+        );
+        state.new_chat();
+        assert!(
+            state
+                .isolated
+                .session(&workspace.folder, Provider::Codex)
+                .is_none()
+        );
+        assert!(workspace.folder.exists());
+        workspace.validate(&root).unwrap();
+        crate::git::run(
+            &root,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                &workspace.folder.to_string_lossy(),
+            ],
+        )
+        .unwrap();
+        let _ = std::fs::remove_file(chat_path(&root));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]
@@ -1676,8 +1860,12 @@ mod tests {
             text: "x".into(),
         });
         state.session = Some("s".into());
+        state.mode = Mode::Full;
+        state.workflow.flow = crate::ai_workflow::Flow::Plan;
         state.new_chat();
         assert!(state.messages.is_empty() && state.session.is_none());
+        assert!(state.workflow.flow == crate::ai_workflow::Flow::Plan);
+        assert_eq!(state.workflow.flow.mode(state.mode), Mode::ReadOnly);
     }
 
     #[test]

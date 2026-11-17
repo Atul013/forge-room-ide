@@ -238,6 +238,14 @@ impl SharedRoom {
                     .iter()
                     .map(|c| super::bounded(c, 200))
                     .collect::<Result<Vec<_>, _>>()?;
+                if criteria
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+                    != criteria.len()
+                {
+                    return Err("Acceptance criteria must be unique".into());
+                }
                 if dependencies
                     .iter()
                     .any(|id| !self.state.tasks.iter().any(|t| &t.id == id))

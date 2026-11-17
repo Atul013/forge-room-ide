@@ -356,6 +356,7 @@ impl Workflow {
                 return Err("Save open edited files before applying or undoing".into());
             }
         }
+        crate::review_checkpoints::save(&root, preview)?;
         crate::lsp_rename::apply(preview)?;
         if undo {
             self.undo = None;

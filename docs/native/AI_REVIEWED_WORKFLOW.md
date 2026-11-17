@@ -23,6 +23,8 @@ Forge Room does not claim an OS execution sandbox or that attachments restrict C
    a separate explicit action. A completed model response alone never applies a proposal.
 6. Undo last applied proposal is available for this chat while touched files remain unchanged.
    Later edits to those files block undo. Unrelated files and dirty editor buffers are preserved.
+7. Recovery checkpoints now retain pre-apply originals across New Chat/app restart. Load one,
+   review it and explicitly restore only matching or missing targets. See RECOVERY_CHECKPOINTS.md.
 
 ## File boundary and recovery
 
@@ -43,7 +45,8 @@ Apply/undo reuses the existing staged multi-file edit engine with fresh workspac
 dirty-buffer checks. Originals are backed up during replacement; failed writes attempt
 rollback. Rollback preserves files changed after application and reports remaining .bak
 files when restoration fails. Undo uses exact inverse replacements, not git reset or stash.
-This is session undo, not a durable crash-recovery checkpoint or isolated worktree.
+Immediate undo remains session-scoped; durable reviewed-change recovery is described in
+RECOVERY_CHECKPOINTS.md. Direct-agent Git isolation is described in AGENT_WORKSPACES.md.
 
 ## Evidence and open gates
 
@@ -56,4 +59,5 @@ file test checks rollback of the first file after a partial multi-file failure.
 
 Visible desktop, provider authentication/inference, accessibility and two-language/project
 acceptance remain open. Autonomous Build, native tool approvals, test execution/evidence,
-per-task worktrees, durable checkpoints and provider-neutral native adapters remain future work.
+Direct-agent per-action checkpoints, resource budgets and provider-neutral native adapters
+remain future work. Git task workspaces and reviewed-change checkpoints are now separate bounded features.

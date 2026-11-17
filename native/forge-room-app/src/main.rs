@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
+mod agent_workspaces;
 mod ai_panel;
 mod ai_workflow;
 mod autosave;
@@ -35,6 +36,7 @@ mod position;
 mod preview;
 mod project_tools;
 mod recovery;
+mod review_checkpoints;
 mod room_changes;
 mod room_network;
 mod room_network_workflow;
@@ -5010,6 +5012,22 @@ impl ForgeRoomApp {
                     cwd.as_deref(),
                     self.trusted,
                 );
+                if let Some(path) = self.ai.take_workspace_open_request() {
+                    let result =
+                        std::env::current_exe()
+                            .map_err(|e| e.to_string())
+                            .and_then(|program| {
+                                std::process::Command::new(program)
+                                    .arg(path)
+                                    .spawn()
+                                    .map(|_| ())
+                                    .map_err(|e| e.to_string())
+                            });
+                    self.status = match result {
+                        Ok(()) => "Opened isolated workspace in another Forge Room window".into(),
+                        Err(error) => format!("Could not open isolated workspace: {error}"),
+                    };
+                }
                 // "Sign in" in the panel opens a terminal that runs the provider's own login.
                 if let Some(command) = self.ai.take_login_request() {
                     self.show_terminal = true;
@@ -5531,6 +5549,23 @@ impl eframe::App for ForgeRoomApp {
             self.status = "Received Room patch updated local files".into();
         }
         let finished = self.ai.poll();
+        if self.ai.take_checkpoint_request() {
+            let root = self.repo_root();
+            let dirty = self.tabs.dirty_paths();
+            let result = if !self.trusted {
+                Err("Trust this folder before recovery".into())
+            } else if let Some(root) = root {
+                self.ai.restore_checkpoint(&root, &dirty)
+            } else {
+                Err("Open the original folder before recovery".into())
+            };
+            self.reload_clean_tabs();
+            self.refresh_git();
+            self.status = match result {
+                Ok(count) => format!("Recovered {count} checkpoint file(s)"),
+                Err(error) => format!("Recovery stopped: {error}"),
+            };
+        }
         if let Some(undo) = self.ai.take_review_request() {
             let root = self.repo_root();
             let dirty: Vec<_> = self

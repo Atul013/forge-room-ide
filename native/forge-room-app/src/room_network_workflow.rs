@@ -4,10 +4,14 @@ use forge_room_core::{
     EvidenceKind, TaskPriority, TaskStatus,
     transport::{Action, Snapshot},
 };
-use std::{collections::HashSet, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 #[derive(Default)]
 pub struct Workflow {
+    failed_drafts: Vec<Action>,
     milestone_title: String,
     milestone_due: Option<u64>,
     tab: usize,
@@ -27,12 +31,29 @@ pub struct Workflow {
     selected: Option<String>,
     checked: HashSet<String>,
     target: String,
-    evidence: String,
+    evidence: HashMap<String, String>,
     minutes: u64,
     clock_sample: Option<(u64, bool, Instant)>,
 }
 impl Workflow {
+    fn slot_free(&self, action: &Action) -> bool {
+        match action {
+            Action::Message { .. } => self.draft.is_empty(),
+            Action::CreateTask { .. } => self.title.is_empty(),
+            Action::Evidence { task, .. } => {
+                self.evidence.get(task).is_none_or(|text| text.is_empty())
+            }
+            _ => true,
+        }
+    }
     pub fn restore(&mut self, action: Action) {
+        if !self.slot_free(&action) || matches!(&action, Action::Evidence { .. }) {
+            self.failed_drafts.push(action);
+            return;
+        }
+        self.restore_fields(action);
+    }
+    fn restore_fields(&mut self, action: Action) {
         match action {
             Action::Message {
                 text,
@@ -41,13 +62,11 @@ impl Workflow {
                 decision,
                 parent,
             } => {
-                if self.draft.is_empty() {
-                    self.draft = text;
-                    self.recipient = recipient;
-                    self.task_link = task;
-                    self.decision = decision;
-                    self.reply = parent;
-                }
+                self.draft = text;
+                self.recipient = recipient;
+                self.task_link = task;
+                self.decision = decision;
+                self.reply = parent;
             }
             Action::CreateTask {
                 title,
@@ -57,23 +76,88 @@ impl Workflow {
                 priority,
                 due_hours,
             } => {
-                if self.title.is_empty() {
-                    self.title = title;
-                    self.owner = owner;
-                    self.criteria = criteria.join("\n");
-                    self.dependencies = dependencies.join(",");
-                    self.priority = priority;
-                    self.due = due_hours;
-                }
+                self.title = title;
+                self.owner = owner;
+                self.criteria = criteria.join("\n");
+                self.dependencies = dependencies.join(",");
+                self.priority = priority;
+                self.due = due_hours;
             }
-            Action::Evidence { text, .. } if self.evidence.is_empty() => {
-                self.evidence = text;
+            Action::Evidence { task, text, .. } => {
+                self.evidence.insert(task, text);
             }
             _ => {}
         }
     }
     pub fn show(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot, host: bool) -> Vec<Action> {
         let mut actions = Vec::new();
+        if !self.failed_drafts.is_empty() {
+            egui::CollapsingHeader::new(format!("Rejected drafts ({})", self.failed_drafts.len()))
+                .default_open(true)
+                .show(ui, |ui| {
+                    let mut restore = None;
+                    let mut discard = None;
+                    for (index, action) in self.failed_drafts.iter().enumerate() {
+                        ui.label(match action {
+                            Action::Message { text, .. } => {
+                                format!("Message: {}", text.chars().take(120).collect::<String>())
+                            }
+                            Action::CreateTask { title, .. } => format!("Task: {title}"),
+                            Action::Evidence { task, text, .. } => format!(
+                                "Evidence for {task}: {}",
+                                text.chars().take(120).collect::<String>()
+                            ),
+                            _ => "Rejected action".into(),
+                        });
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(
+                                    self.slot_free(action)
+                                        && match action {
+                                            Action::Evidence { task, .. } => {
+                                                host || snapshot.shared.tasks.iter().any(|t| {
+                                                    &t.id == task && t.owner_id == snapshot.you
+                                                })
+                                            }
+                                            _ => true,
+                                        },
+                                    egui::Button::new("Restore draft"),
+                                )
+                                .clicked()
+                            {
+                                restore = Some(index);
+                            }
+                            if ui.button("Copy draft data").clicked()
+                                && let Ok(text) = serde_json::to_string_pretty(action)
+                            {
+                                ui.ctx().copy_text(text);
+                            }
+                            if ui.button("Discard draft").clicked() {
+                                discard = Some(index);
+                            }
+                        });
+                    }
+                    if let Some(index) = restore {
+                        let action = self.failed_drafts.remove(index);
+                        match &action {
+                            Action::Message { .. } => self.tab = 0,
+                            Action::Evidence { task, .. } => {
+                                self.selected = Some(task.clone());
+                                self.checked.clear();
+                                self.tab = 1;
+                            }
+                            _ => self.tab = 1,
+                        }
+                        self.restore_fields(action);
+                    } else if let Some(index) = discard {
+                        self.failed_drafts.remove(index);
+                    }
+                });
+        }
+        if self.failed_drafts.len() >= 16 {
+            ui.label("Resolve rejected drafts before sending more messages or task text.");
+        }
+
         ui.horizontal_wrapped(|ui| {
             for (index, label) in ["Chat", "Tasks", "Activity"].iter().enumerate() {
                 ui.selectable_value(&mut self.tab, index, *label);
@@ -220,7 +304,7 @@ impl Workflow {
                     ui.selectable_value(
                         &mut self.recipient,
                         Some(member.id.clone()),
-                        format!("Private: {}", member.name),
+                        format!("Private: {}", name(snapshot, &member.id)),
                     );
                 }
             });
@@ -306,7 +390,7 @@ impl Workflow {
         );
         if ui
             .add_enabled(
-                !self.draft.trim().is_empty(),
+                !self.draft.trim().is_empty() && self.failed_drafts.len() < 16,
                 egui::Button::new("Send message to Room"),
             )
             .clicked()
@@ -340,7 +424,11 @@ impl Workflow {
                 .selected_text(name(snapshot, &self.owner))
                 .show_ui(ui, |ui| {
                     for member in &snapshot.members {
-                        ui.selectable_value(&mut self.owner, member.id.clone(), &member.name);
+                        ui.selectable_value(
+                            &mut self.owner,
+                            member.id.clone(),
+                            name(snapshot, &member.id),
+                        );
                     }
                 });
             ui.label("Acceptance criteria (up to 8, one per line)");
@@ -355,7 +443,7 @@ impl Workflow {
             due(ui, "network-create-due", &mut self.due);
             if ui
                 .add_enabled(
-                    !self.title.trim().is_empty(),
+                    !self.title.trim().is_empty() && self.failed_drafts.len() < 16,
                     egui::Button::new("Create shared task"),
                 )
                 .clicked()
@@ -500,15 +588,16 @@ impl Workflow {
             }
         }
         if writer {
+            let mut evidence = self.evidence.remove(&task.id).unwrap_or_default();
             ui.label("Verification evidence (up to 500 characters)");
             ui.add(
-                egui::TextEdit::multiline(&mut self.evidence)
+                egui::TextEdit::multiline(&mut evidence)
                     .desired_rows(2)
                     .char_limit(500),
             );
             if ui
                 .add_enabled(
-                    !self.evidence.trim().is_empty(),
+                    !evidence.trim().is_empty() && self.failed_drafts.len() < 16,
                     egui::Button::new("Attach evidence"),
                 )
                 .clicked()
@@ -516,17 +605,22 @@ impl Workflow {
                 actions.push(Action::Evidence {
                     task: task.id.clone(),
                     kind: EvidenceKind::Check,
-                    text: self.evidence.clone(),
+                    text: evidence.clone(),
                 });
-                self.evidence.clear();
+                evidence.clear();
             }
+            self.evidence.insert(task.id.clone(), evidence);
         }
         if task.owner_id == snapshot.you && task.status != TaskStatus::Done {
             egui::ComboBox::from_id_salt("network-handoff-target")
                 .selected_text(name(snapshot, &self.target))
                 .show_ui(ui, |ui| {
                     for member in snapshot.members.iter().filter(|m| m.id != task.owner_id) {
-                        ui.selectable_value(&mut self.target, member.id.clone(), &member.name);
+                        ui.selectable_value(
+                            &mut self.target,
+                            member.id.clone(),
+                            name(snapshot, &member.id),
+                        );
                     }
                 });
             if ui
@@ -615,4 +709,37 @@ fn due(ui: &mut egui::Ui, id: &str, value: &mut Option<u64>) {
                 ui.selectable_value(value, Some(hours), format!("Due in {hours} hours"));
             }
         });
+}
+
+#[cfg(test)]
+mod draft_tests {
+    use super::*;
+    #[test]
+    fn a_rejected_message_does_not_replace_a_newer_draft() {
+        let mut state = Workflow {
+            draft: "newer text".into(),
+            ..Default::default()
+        };
+        state.restore(Action::message("rejected text"));
+        assert_eq!(state.draft, "newer text");
+        assert_eq!(state.failed_drafts.len(), 1);
+        state.draft.clear();
+        let action = state.failed_drafts.remove(0);
+        state.restore(action);
+        assert_eq!(state.draft, "rejected text");
+    }
+    #[test]
+    fn evidence_drafts_keep_their_task_scope_after_rejection() {
+        let mut state = Workflow::default();
+        state.evidence.insert("T1".into(), "new T1 draft".into());
+        state.evidence.insert("T2".into(), "T2 draft".into());
+        state.restore(Action::Evidence {
+            task: "T1".into(),
+            kind: EvidenceKind::Check,
+            text: "rejected T1".into(),
+        });
+        assert_eq!(state.failed_drafts.len(), 1);
+        assert_eq!(state.evidence["T1"], "new T1 draft");
+        assert_eq!(state.evidence["T2"], "T2 draft");
+    }
 }

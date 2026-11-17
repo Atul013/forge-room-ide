@@ -28,6 +28,14 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Integrated safety fixes with recovery: preserve Ask/Plan/Reviewed flow across New Chat/folder changes, retain rejected drafts without overwriting newer input, keep evidence text task-scoped, renew active Room sessions by idle deadline for long rooms, reject duplicate criteria, and bind client snapshot identity to the authenticated actor. These are code/test changes in the A04 follow-on, not new desktop acceptance claims.
+
+- 2026-11-17 Codex: Extended PR #65 with durable workspace-scoped recovery copies saved/flushed before reviewed AI/Room patch apply or undo. Native checkpoint preview/explicit restore survives chat/app restart; matching, already-original and missing targets are handled while later edits/dirty buffers/changed recovery data are refused. Partial recovery and no-overwrite temporary-file tests pass; local full app suite 293 passed/7 ignored, build/Clippy passed. Source #64 is green; final extended #65 CI pending. Direct CLI per-action journaling and native desktop/provider acceptance remain open.
+
+- 2026-11-17 Codex: Completed A04 isolated-workspace batch on feat/native-agent-workspaces: explicit trusted Git branch/worktree creation, source/subproject mapping, retained records, scoped Direct-agent cwd/conversation IDs, interactive terminal targeting and review/new-window controls. Real Git/stand-in CLI tests and local full app suite (292 passed/7 ignored), build/Clippy passed. PR #64 final source 76ac658 passed Windows CI after the short-path fix; this separate workspaces PR is stacked on it. Native desktop/live provider and durable checkpoint/budget gates remain open.
+
+- 2026-11-17 Codex: Started separate substantive A04 isolated agent workspace batch on feat/native-agent-workspaces, stacked on PR #64. Explicit trusted-folder Git worktree creation, selected Direct-agent execution in that checkout, separate conversation scope, persisted workspace records and manual review/open controls. Primary uncommitted files are preserved; this is Git isolation, not an OS sandbox, auto-merge or automatic cleanup.
+
 - 2026-11-17 Codex: Windows CI exposed short/long path alias mismatch in explicit AI file attachments (RUNNER~1). Fixed canonical containment while retaining original-chain symlink/junction checks. Added native Windows short-path regression; affected AI review/stand-in CLI tests pass locally. Final CI rerun pending; no desktop acceptance claim.
 
 - 2026-11-17 Codex: Added the remaining bounded shared timing workflow to the same PR #64: twenty host-owned milestones with deadlines/completion and client-visible overdue state. Independent clients test host-only creation/update and synchronized results. Final combined CI remains separate from native desktop/provider/two-machine acceptance.
