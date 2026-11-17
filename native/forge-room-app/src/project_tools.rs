@@ -576,7 +576,7 @@ pub fn show(
                 ui.add_space(6.0);
             }
             if page == Page::RunDebug {
-                ui.small("Debugger adapters and breakpoints are not connected yet.");
+                ui.small("Local DAP attach and breakpoints are available below when the folder is trusted.");
             }
         }
         Page::Models => {

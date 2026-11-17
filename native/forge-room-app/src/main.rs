@@ -7,6 +7,7 @@ mod background;
 #[allow(dead_code)] // Keep optional brand artwork available to the AI panel and future themes.
 mod brand;
 mod commands;
+mod dap;
 mod diagnostics;
 mod document;
 mod editing;
@@ -258,6 +259,13 @@ struct ForgeRoomApp {
     lsp_references: Vec<(PathBuf, usize, usize)>,
     lsp_rename_name: Option<String>,
     lsp_rename_preview: Option<lsp_rename::Preview>,
+    dap: Option<dap::Session>,
+    dap_port: String,
+    dap_attach_args: String,
+    dap_status: String,
+    dap_thread: Option<i64>,
+    dap_stack: Vec<String>,
+    dap_breakpoints: std::collections::HashMap<PathBuf, Vec<usize>>,
     /// The last session written to disk, and when it was last compared with the window.
     session_saved: session::Session,
     session_checked: std::time::Instant,
@@ -412,6 +420,13 @@ impl ForgeRoomApp {
             lsp_references: Vec::new(),
             lsp_rename_name: None,
             lsp_rename_preview: None,
+            dap: None,
+            dap_port: "5678".into(),
+            dap_attach_args: "{}".into(),
+            dap_status: "No adapter connected".into(),
+            dap_thread: None,
+            dap_stack: Vec::new(),
+            dap_breakpoints: std::collections::HashMap::new(),
             session_saved: session::Session::default(),
             session_checked: std::time::Instant::now(),
             auto_saves: autosave::Tracker::default(),
@@ -736,6 +751,15 @@ impl ForgeRoomApp {
                 );
             });
             let previous = self.repo_root();
+            if previous.as_ref().is_some_and(|old| *old != folder) {
+                if let Some(session) = self.dap.take() {
+                    session.disconnect();
+                }
+                self.dap_status = "Disconnected after switching folders".into();
+                self.dap_breakpoints.clear();
+                self.dap_stack.clear();
+                self.dap_thread = None;
+            }
             self.explorer_state = explorer::State::default();
             self.problems = None;
             // Keep each folder's local agent conversation separate and restore it on return.
@@ -2795,6 +2819,12 @@ impl ForgeRoomApp {
     /// Switch the open folder to trusted or restricted, and read the repository when trusted.
     fn set_trust(&mut self, trusted: bool) {
         self.trusted = trusted;
+        if !trusted {
+            if let Some(session) = self.dap.take() {
+                session.disconnect();
+            }
+            self.dap_status = "Disconnected when folder trust was removed".into();
+        }
         self.git_top = None;
         if trusted {
             if let Some(root) = self.repo_root() {
@@ -3498,7 +3528,110 @@ impl ForgeRoomApp {
                     }
                     None => {}
                 }
+                if page == project_tools::Page::RunDebug {
+                    self.debug_adapter_panel(ui);
+                }
             }
+        }
+    }
+
+    fn debug_adapter_panel(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        ui.heading("Debug adapter");
+        ui.small("Connect to a DAP adapter already listening on this computer. Attach arguments are adapter-specific JSON. The adapter may require its own setup.");
+        ui.label(&self.dap_status);
+        if !self.trusted {
+            ui.small("Trust this folder before connecting to an adapter.");
+            return;
+        }
+        self.debug_breakpoint_control(ui);
+        if self.dap.is_none() {
+            ui.horizontal(|ui| {
+                ui.label("Local port");
+                ui.add(egui::TextEdit::singleline(&mut self.dap_port).desired_width(70.0));
+            });
+            ui.label("Attach arguments (JSON object)");
+            ui.add(egui::TextEdit::multiline(&mut self.dap_attach_args).desired_rows(3));
+            if ui.button("Connect and attach").clicked() {
+                let port = self.dap_port.parse::<u16>();
+                let args = serde_json::from_str::<serde_json::Value>(&self.dap_attach_args);
+                match (port, args) {
+                    (Ok(port), Ok(args))
+                        if args.is_object() && self.dap_attach_args.len() <= 16 * 1024 =>
+                    {
+                        match dap::Session::connect(port) {
+                            Ok(session) => {
+                                self.dap = Some(session);
+                                self.dap_status = "Initializing local adapter…".into();
+                            }
+                            Err(error) => self.dap_status = error,
+                        }
+                    }
+                    _ => {
+                        self.dap_status = "Enter a valid port and JSON object (up to 16 KB)".into()
+                    }
+                }
+            }
+            return;
+        }
+        let Some(session) = self.dap.as_ref() else {
+            return;
+        };
+        if ui.button("Disconnect (leave target running)").clicked() {
+            session.disconnect();
+            self.dap = None;
+            self.dap_thread = None;
+            self.dap_stack.clear();
+            self.dap_status = "Disconnected".into();
+            return;
+        }
+        if let Some(thread) = self.dap_thread {
+            ui.horizontal(|ui| {
+                for (label, command) in [
+                    ("Continue", "continue"),
+                    ("Step over", "next"),
+                    ("Step in", "stepIn"),
+                    ("Step out", "stepOut"),
+                ] {
+                    if ui.button(label).clicked() {
+                        session.request(command, serde_json::json!({"threadId":thread}));
+                        self.dap_status = format!("Requested {label}");
+                    }
+                }
+            });
+        } else {
+            ui.small("Step controls appear after the adapter reports a stopped thread.");
+        }
+        for frame in &self.dap_stack {
+            ui.monospace(frame);
+        }
+    }
+
+    fn debug_breakpoint_control(&mut self, ui: &mut egui::Ui) {
+        if let Some(path) = self.tabs.active_path().map(PathBuf::from)
+            && let Some(root) = self.repo_root().and_then(|p| p.canonicalize().ok())
+            && let Ok(file) = path.canonicalize()
+            && file.starts_with(root)
+        {
+            let line = self.cursor.0 + 1;
+            let lines = self.dap_breakpoints.entry(file.clone()).or_default();
+            if ui
+                .button(format!("Toggle breakpoint at line {line}"))
+                .clicked()
+            {
+                if let Some(index) = lines.iter().position(|item| *item == line) {
+                    lines.remove(index);
+                } else if lines.len() < 100 {
+                    lines.push(line);
+                    lines.sort_unstable();
+                }
+                if let Some(session) = &self.dap {
+                    session.request("setBreakpoints", serde_json::json!({
+                                "source":{"path":file}, "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
+                            }));
+                }
+            }
+            ui.small(format!("Breakpoints in this file: {:?}", lines));
         }
     }
 
@@ -5210,6 +5343,41 @@ impl eframe::App for ForgeRoomApp {
         self.auto_save_tabs();
         self.poll_check();
         self.poll_lsp_query();
+        if let Some(session) = &self.dap {
+            for event in session.drain() {
+                match event {
+                    dap::Event::Connected => {
+                        let args = serde_json::from_str(&self.dap_attach_args).unwrap_or_default();
+                        session.request("attach", args);
+                        self.dap_status = "Adapter initialized; attach requested".into();
+                    }
+                    dap::Event::Initialized => {
+                        for (file, lines) in &self.dap_breakpoints {
+                            session.request("setBreakpoints", serde_json::json!({
+                                "source":{"path":file},
+                                "breakpoints":lines.iter().map(|line| serde_json::json!({"line":line})).collect::<Vec<_>>()
+                            }));
+                        }
+                        session.request("configurationDone", serde_json::json!({}));
+                        self.dap_status = "Breakpoints sent; debugger configured".into();
+                    }
+                    dap::Event::Message(message) => self.dap_status = message,
+                    dap::Event::Stopped { reason, thread } => {
+                        self.dap_thread = Some(thread);
+                        self.dap_status = format!("Stopped: {reason}");
+                    }
+                    dap::Event::Stack(frames) => self.dap_stack = frames,
+                    dap::Event::Ended(message) => {
+                        self.dap_status = message;
+                        self.dap_thread = None;
+                        self.dap_stack.clear();
+                        self.dap = None;
+                        break;
+                    }
+                }
+            }
+            context.request_repaint_after(std::time::Duration::from_millis(250));
+        }
         if let Some(hover) = &self.lsp_hover {
             let mut open = true;
             egui::Window::new("Language hover")
