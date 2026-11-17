@@ -31,7 +31,7 @@ impl Page {
 struct Action {
     label: String,
     command: String,
-    detail: &'static str,
+    detail: String,
 }
 
 pub enum Selected {
@@ -50,7 +50,7 @@ fn action(label: &str, command: &str, detail: &'static str) -> Action {
     Action {
         label: label.into(),
         command: command.into(),
-        detail,
+        detail: detail.into(),
     }
 }
 
@@ -87,12 +87,68 @@ fn package_scripts(root: &Path, page: Page) -> Vec<Action> {
         .map(|name| Action {
             label: (*name).clone(),
             command: format!("npm run {name}"),
-            detail: "Project-defined npm script; inspect package.json before running",
+            detail: "Project-defined npm script; inspect package.json before running".into(),
         })
         .collect()
 }
 
 fn actions(root: &Path, page: Page) -> Vec<Action> {
+    let mut configured = configured_tasks(root, page);
+    configured.extend(detected_actions(root, page));
+    configured
+}
+
+/// Tasks are project code. Keep their command visible and require a deliberate click in a
+/// trusted folder. Bad configuration never prevents the built-in project actions from appearing.
+fn configured_tasks(root: &Path, page: Page) -> Vec<Action> {
+    let path = root.join(".forge-room").join("tasks.json");
+    let Ok(bytes) = fs::read(path) else {
+        return Vec::new();
+    };
+    if bytes.len() > 128 * 1024 {
+        return Vec::new();
+    }
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Vec::new();
+    };
+    let Some(tasks) = value.get("tasks").and_then(|value| value.as_array()) else {
+        return Vec::new();
+    };
+    tasks
+        .iter()
+        .take(50)
+        .filter_map(|task| {
+            let label = task.get("label")?.as_str()?.trim();
+            let command = task.get("command")?.as_str()?.trim();
+            let group = task.get("group")?.as_str()?;
+            let shown = matches!(
+                (page, group),
+                (Page::Workflows, "build" | "check")
+                    | (Page::Tests, "test")
+                    | (Page::RunDebug, "run")
+            );
+            if !shown
+                || label.is_empty()
+                || label.len() > 100
+                || command.is_empty()
+                || command.len() > 2048
+                || label.chars().any(char::is_control)
+                || command
+                    .chars()
+                    .any(|c| c == '\0' || (c.is_control() && c != '\t'))
+            {
+                return None;
+            }
+            Some(Action {
+                label: label.into(),
+                command: command.into(),
+                detail: "Project task from .forge-room/tasks.json".into(),
+            })
+        })
+        .collect()
+}
+
+fn detected_actions(root: &Path, page: Page) -> Vec<Action> {
     let rust_manifest = if root.join("Cargo.toml").exists() {
         Some("")
     } else if root.join("native").join("Cargo.toml").exists() {
@@ -320,6 +376,13 @@ pub fn show(
             };
             ui.label(format!("Project: {}", root.display()));
             ui.add_space(8.0);
+            let task_file = root.join(".forge-room").join("tasks.json");
+            if task_file.exists() {
+                ui.small("Project tasks from .forge-room/tasks.json run in a new terminal after you click them.");
+                if let Some(error) = task_file_error(&task_file) {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                }
+            }
             let actions = actions(root, page);
             if actions.is_empty() {
                 ui.label("No supported local command detected for this project.");
@@ -484,9 +547,58 @@ pub fn show(
     None
 }
 
+fn task_file_error(path: &Path) -> Option<String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => return Some(format!("Cannot read project tasks: {error}")),
+    };
+    if bytes.len() > 128 * 1024 {
+        return Some("Project tasks file exceeds 128 KiB".into());
+    }
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(error) => return Some(format!("Invalid project tasks JSON: {error}")),
+    };
+    if !value.get("tasks").is_some_and(serde_json::Value::is_array) {
+        return Some("Project tasks file needs a tasks array".into());
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_tasks_appear_only_in_their_page_and_keep_builtins() {
+        let folder = std::env::temp_dir().join(format!(
+            "forge-room-project-tasks-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(folder.join(".forge-room")).unwrap();
+        fs::write(
+            folder.join("Cargo.toml"),
+            "[package]\nname='sample'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        fs::write(
+            folder.join(".forge-room/tasks.json"),
+            r#"{"tasks":[{"label":"Build app","group":"build","command":"cargo build --release"},{"label":"Integration suite","group":"test","command":"cargo test --test integration"},{"label":"Serve","group":"run","command":"cargo run -- --serve"},{"label":"Bad","group":"test","command":"echo x\nother"}]}"#,
+        )
+        .unwrap();
+        let build = actions(&folder, Page::Workflows);
+        assert_eq!(build[0].command, "cargo build --release");
+        assert!(build.iter().any(|action| action.command == "cargo check"));
+        let test = actions(&folder, Page::Tests);
+        assert_eq!(test[0].command, "cargo test --test integration");
+        assert_eq!(test.len(), 2);
+        assert_eq!(actions(&folder, Page::RunDebug)[0].label, "Serve");
+        fs::remove_dir_all(folder).unwrap();
+    }
 
     #[test]
     fn gradle_actions_prefer_project_wrapper() {
