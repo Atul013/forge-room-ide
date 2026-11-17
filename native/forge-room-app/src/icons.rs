@@ -255,13 +255,28 @@ pub fn arrow(painter: &Painter, center: Pos2, up: bool, color: Color32) {
     );
 }
 
-/// A flat 26px icon button: no frame until hovered, dim until hovered.
+/// Give a custom-painted button what the built-in ones have: a name for screen readers (a hover
+/// tooltip is only a description) and a 2 px ring while it has keyboard focus.
+pub fn mark_button(ui: &egui::Ui, response: &egui::Response, rect: egui::Rect, label: &str) {
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(1.0),
+            6.0,
+            egui::Stroke::new(2.0, crate::theme::accent()),
+            egui::StrokeKind::Outside,
+        );
+    }
+}
+
+/// A flat 28px icon button: no frame until hovered, dim until hovered.
 pub fn icon_button(
     ui: &mut egui::Ui,
     tooltip: &str,
     draw: impl FnOnce(&Painter, Pos2, Color32),
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
+    mark_button(ui, &response, rect, tooltip);
     let hovered = response.hovered();
     if hovered {
         ui.painter()
@@ -291,7 +306,7 @@ pub fn split(painter: &Painter, center: Pos2, color: Color32) {
     draw(painter, "split", center, 16.0, color);
 }
 
-/// A bin, for "Kill terminal".
+/// A bin, for "End terminal".
 pub fn trash(painter: &Painter, center: Pos2, color: Color32) {
     draw(painter, "trash", center, 16.0, color);
 }

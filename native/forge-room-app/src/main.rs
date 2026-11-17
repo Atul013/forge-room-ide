@@ -1547,7 +1547,7 @@ impl ForgeRoomApp {
                             ui.close();
                         }
                     });
-                    if icons::icon_button(ui, "Kill terminal", icons::trash).clicked() {
+                    if icons::icon_button(ui, "End terminal", icons::trash).clicked() {
                         close_terminal = true;
                     }
                     let split_tip = if self.split_pair.is_some() {
@@ -2151,6 +2151,7 @@ impl ForgeRoomApp {
                 for (kind, tip) in [(0, "Close"), (1, "Maximize"), (2, "Minimize")] {
                     let (rect, response) = ui
                         .allocate_exact_size(egui::vec2(40.0, TITLE_HEIGHT), egui::Sense::click());
+                    icons::mark_button(ui, &response, rect, tip);
                     let hovered = response.hovered();
                     if hovered {
                         let fill = if kind == 0 {
@@ -2203,6 +2204,7 @@ impl ForgeRoomApp {
                 ] {
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::click());
+                    icons::mark_button(ui, &response, rect, tip);
                     if response.hovered() {
                         ui.painter().rect_filled(rect, 8.0, theme::overlay(14));
                     }
@@ -2218,6 +2220,7 @@ impl ForgeRoomApp {
                 if bar.width() > 1140.0 {
                     let (pill, response) =
                         ui.allocate_exact_size(egui::vec2(300.0, 28.0), egui::Sense::click());
+                    icons::mark_button(ui, &response, pill, "Search, run, or ask Forge");
                     let painter = ui.painter();
                     painter.rect_filled(
                         pill,
@@ -4060,12 +4063,19 @@ impl ForgeRoomApp {
                         );
                         let close_rect = egui::Rect::from_center_size(
                             egui::pos2(rect.right() - 18.0, rect.center().y),
-                            egui::vec2(18.0, 18.0),
+                            egui::vec2(24.0, 24.0),
                         );
                         let close_response = ui.interact(
                             close_rect,
                             ui.scope_id().with(("tab-close", tab.id)),
                             egui::Sense::click(),
+                        );
+                        icons::mark_button(ui, &response, rect, &full_title);
+                        icons::mark_button(
+                            ui,
+                            &close_response,
+                            close_rect,
+                            &format!("Close {full_title}"),
                         );
                         let hovered = response.hovered() || close_response.hovered();
                         response.clone().on_hover_text(full_title);
