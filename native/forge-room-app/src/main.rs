@@ -3537,6 +3537,7 @@ impl ForgeRoomApp {
             let (mut trust, mut restricted) = (false, false);
             let focus_safe_choice = std::mem::take(&mut self.trust_focus_pending);
             egui::Window::new("Trust this folder?")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(&self.egui_ctx, |ui| {
@@ -3666,6 +3667,7 @@ impl ForgeRoomApp {
                 ),
             };
             egui::Window::new(title)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(&self.egui_ctx, |ui| {
@@ -3743,6 +3745,7 @@ impl ForgeRoomApp {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
             egui::Window::new("Delete")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(&self.egui_ctx, |ui| {
@@ -3798,6 +3801,7 @@ impl ForgeRoomApp {
             let (mut confirm, mut cancel) = (false, false);
             let error = file_ops::valid_name(&name).err();
             egui::Window::new("Rename")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(&self.egui_ctx, |ui| {
@@ -3846,6 +3850,7 @@ impl ForgeRoomApp {
             let mut create = false;
             let mut cancel = false;
             egui::Window::new("New folder")
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .collapsible(false)
                 .resizable(false)
                 .show(&self.egui_ctx, |ui| {
