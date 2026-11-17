@@ -4,6 +4,7 @@ version = "0.110.0-alpha.3"
 edition = "2021"
 license = "MIT"
 description = "Editor-independent native Forge Room domain slice"
+default-run = "forge-room-preview"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
