@@ -397,4 +397,55 @@ mod tests {
         assert!(python_launch(&root, &outside).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    #[test]
+    fn live_debugpy_launch_when_adapter_port_is_supplied() {
+        let Ok(port) = std::env::var("FORGE_DAP_LIVE_PORT") else {
+            return;
+        };
+        let port = port.parse::<u16>().unwrap();
+        let root = std::env::temp_dir().join(format!("forge-dap-live-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("sample.py");
+        std::fs::write(&file, "print('FORGE_DAP_LIVE_OK')\n").unwrap();
+        let args = python_launch(&root, &file).unwrap();
+        let session = Session::connect(port).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let mut launched = false;
+        let mut configured = false;
+        let mut ended = false;
+        let mut output = false;
+        let mut errors = Vec::new();
+        while std::time::Instant::now() < deadline && !ended {
+            for event in session.drain() {
+                match event {
+                    Event::Connected => {
+                        session.request("launch", args.clone());
+                        launched = true;
+                    }
+                    Event::Initialized => {
+                        session.request("configurationDone", json!({}));
+                        configured = true;
+                    }
+                    Event::Message(message) => {
+                        output |= message.contains("FORGE_DAP_LIVE_OK");
+                        if message.starts_with("launch:")
+                            || message.starts_with("configurationDone:")
+                        {
+                            errors.push(message);
+                        }
+                    }
+                    Event::Ended(_) => ended = true,
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(errors.is_empty(), "adapter errors: {errors:?}");
+        assert!(
+            launched && configured && ended && output,
+            "launch={launched} configured={configured} ended={ended} output={output}"
+        );
+    }
 }
