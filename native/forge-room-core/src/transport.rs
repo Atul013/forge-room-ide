@@ -16,7 +16,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod readiness;
 mod workflow;
+pub use readiness::{
+    assess, Assessment, Declaration, HelpRequest, Impact, ReadinessProfile, ReadinessState,
+    TaskReadiness,
+};
 pub use workflow::{Action, Countdown, SharedSnapshot};
 
 const VERSION: u32 = 3;
@@ -962,6 +967,18 @@ mod tests {
             ..Snapshot::default()
         };
         for index in 0..100 {
+            snapshot.shared.readiness.profiles.push(TaskReadiness {
+                task: format!("T{index}"),
+                revision: 1,
+                owner: id.clone(),
+                updated: 0,
+                profile: ReadinessProfile {
+                    estimate_minutes: Some(10080),
+                    blocker: "x".repeat(500),
+                    files: (0..8).map(|i| format!("{i}{}", "x".repeat(500))).collect(),
+                    ..Default::default()
+                },
+            });
             snapshot.shared.tasks.push(crate::Task {
                 id: format!("T{index}"),
                 title: "😀".repeat(200),

@@ -62,6 +62,12 @@ impl Drop for NetworkRoom {
     }
 }
 impl NetworkRoom {
+    pub fn cancel_local_checks(&mut self) {
+        self.workflow.readiness.preflight.reset();
+    }
+    pub fn take_ai_brief(&mut self) -> Option<String> {
+        self.workflow.readiness.brief.take()
+    }
     pub fn take_files_changed(&mut self) -> bool {
         std::mem::take(&mut self.changes.changed)
     }
@@ -90,6 +96,10 @@ impl NetworkRoom {
             }
         }
         let panel_height = (ui.available_height() * 0.65).max(120.0);
+        self.workflow
+            .readiness
+            .preflight
+            .reconcile(root.filter(|_| trusted), &self.snapshot);
         egui::CollapsingHeader::new("Network Room · host / join").default_open(false).show(ui, |ui| {
           egui::ScrollArea::vertical().id_salt("network-room-controls").max_height(panel_height).show(ui, |ui| {
             ui.label(&self.status);
@@ -145,7 +155,7 @@ impl NetworkRoom {
                 for member in &self.snapshot.members {
                     ui.label(format!("{} ({}) · {}", member.name, member.id.chars().take(8).collect::<String>(), if member.online { "online" } else { "offline" }));
                 }
-                let mut actions=self.workflow.show(ui,&self.snapshot,self.host.is_some());
+                let mut actions=self.workflow.show(ui,&self.snapshot,self.host.is_some(),root.filter(|_|trusted));
                 actions.extend(self.changes.show(ui,&self.snapshot,root,trusted,dirty,self.status.starts_with("Connected")));
                 for action in actions {
                     if !matches!(action,Action::Message {..}|Action::RequestHandoff {..}|Action::SharePatch {..}) && let Some(host)=&self.host {

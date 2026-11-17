@@ -8,6 +8,30 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
+    UpdateReadiness {
+        task: String,
+        expected_revision: u64,
+        profile: super::ReadinessProfile,
+    },
+    RequestHelp {
+        task: String,
+        expected_revision: u64,
+        reason: String,
+    },
+    CloseHelp {
+        task: String,
+    },
+    DeclareImpact {
+        revision: String,
+        source: String,
+        target: String,
+        file: String,
+        summary: String,
+    },
+    AcknowledgeImpact {
+        id: u64,
+        accepted: bool,
+    },
     CreateMilestone {
         title: String,
         due_hours: Option<u64>,
@@ -97,6 +121,8 @@ pub struct Milestone {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SharedSnapshot {
     #[serde(default)]
+    pub readiness: super::ReadinessState,
+    #[serde(default)]
     pub milestones: Vec<Milestone>,
     pub tasks: Vec<Task>,
     pub handoffs: Vec<HandoffRequest>,
@@ -105,6 +131,7 @@ pub struct SharedSnapshot {
     pub countdown: Countdown,
 }
 pub(super) struct SharedRoom {
+    readiness: super::readiness::Authority,
     milestones: Vec<Milestone>,
     pub(super) state: RoomState,
     remaining: Duration,
@@ -114,6 +141,7 @@ pub(super) struct SharedRoom {
 impl SharedRoom {
     pub(super) fn new() -> Result<Self, String> {
         Ok(Self {
+            readiness: Default::default(),
             milestones: Vec::new(),
             state: RoomState::new(
                 "network",
@@ -142,6 +170,7 @@ impl SharedRoom {
     }
     pub(super) fn snapshot(&self) -> SharedSnapshot {
         SharedSnapshot {
+            readiness: self.readiness.view.clone(),
             milestones: self.milestones.clone(),
             tasks: self.state.tasks.clone(),
             handoffs: self.state.pending_handoffs.clone(),
@@ -176,8 +205,19 @@ impl SharedRoom {
         }
     }
     pub(super) fn apply(&mut self, actor: &str, action: Action) -> Result<(), String> {
+        if let Some(detail) = self.readiness.apply(actor, &action, &self.state)? {
+            self.audit(actor, &detail);
+            return Ok(());
+        }
         let before = self.state.activity.len();
         match action {
+            Action::UpdateReadiness { .. }
+            | Action::RequestHelp { .. }
+            | Action::CloseHelp { .. }
+            | Action::DeclareImpact { .. }
+            | Action::AcknowledgeImpact { .. } => {
+                unreachable!("readiness authority handled this action")
+            }
             Action::CreateMilestone { title, due_hours } => {
                 if actor != self.state.host_id {
                     return Err("Only the host can create milestones".into());
@@ -357,6 +397,7 @@ fn due(hours: Option<u64>) -> Result<Option<u64>, String> {
     Ok(hours.map(|h| now_epoch_seconds().saturating_add(h * 3600)))
 }
 pub(super) fn validate(snapshot: &SharedSnapshot) -> Result<(), String> {
+    snapshot.readiness.validate(&snapshot.tasks)?;
     if snapshot.milestones.len() > 20
         || snapshot
             .milestones

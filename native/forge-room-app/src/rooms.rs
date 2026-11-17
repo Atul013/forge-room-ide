@@ -169,6 +169,12 @@ const AMBER: Color32 = Color32::from_rgb(226, 192, 141);
 const RED: Color32 = Color32::from_rgb(240, 113, 120);
 
 impl RoomView {
+    pub fn cancel_local_checks(&mut self) {
+        self.network.cancel_local_checks();
+    }
+    pub fn take_ai_brief(&mut self) -> Option<String> {
+        self.network.take_ai_brief()
+    }
     /// Switch to the room of `root`, reading it from disk when one exists.
     pub fn load_for(&mut self, root: Option<&Path>) {
         *self = Self::default();

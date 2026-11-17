@@ -41,8 +41,11 @@ mod project_tools;
 mod recovery;
 mod review_checkpoints;
 mod room_changes;
+mod room_impact_scan;
 mod room_network;
 mod room_network_workflow;
+mod room_preflight;
+mod room_readiness;
 mod room_state;
 mod rooms;
 mod search;
@@ -3059,6 +3062,7 @@ impl ForgeRoomApp {
         self.trusted = trusted;
         if !trusted {
             self.ai.restrict();
+            self.room.cancel_local_checks();
             self.stop_language_sessions();
             if let Some(session) = self.dap.take() {
                 if self.dap_owned {
@@ -5294,6 +5298,29 @@ impl ForgeRoomApp {
                     self.trusted,
                     &self.tabs.dirty_paths(),
                 );
+                if let Some(brief) = self.room.take_ai_brief() {
+                    if let Some(root) = self
+                        .repo_root()
+                        .filter(|_| self.trusted && !self.ai.busy() && !self.ai.context_locked())
+                    {
+                        self.status = match self.ai.context.capture(
+                            &root,
+                            ai_context::Kind::RoomTasks,
+                            "Network Room task rescue brief (manual)".into(),
+                            brief,
+                            false,
+                        ) {
+                            Ok(()) => {
+                                self.right_tab = RightTab::Ai;
+                                "Task brief captured locally; inspect and Include before sending"
+                                    .into()
+                            }
+                            Err(error) => error,
+                        };
+                    } else {
+                        self.status="Open an idle trusted AI workspace and end any controlled session before staging the brief".into();
+                    }
+                }
             }
             RightTab::Ai => {
                 let name = self.tabs.tabs.get(self.tabs.active).map(|tab| tab.title());

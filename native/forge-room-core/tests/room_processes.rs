@@ -459,14 +459,63 @@ fn independent_client_recovers_after_a_real_connection_drop() {
         .as_str()
         .expect("B joined through proxy")
         .to_string();
+    let owner = joined_a["identity"].as_str().unwrap().to_owned();
+    assert!(a.execute(forge_room_core::transport::Action::CreateTask {
+        title: "Reconnect readiness".into(),
+        owner,
+        criteria: vec![],
+        dependencies: vec![],
+        priority: forge_room_core::TaskPriority::High,
+        due_hours: Some(1)
+    })["rejection"]
+        .is_null());
+    assert!(
+        a.execute(forge_room_core::transport::Action::UpdateReadiness {
+            task: "T1".into(),
+            expected_revision: 0,
+            profile: forge_room_core::transport::ReadinessProfile {
+                estimate_minutes: Some(10),
+                help_allowed: true,
+                ..Default::default()
+            }
+        })["rejection"]
+            .is_null()
+    );
     dropping.store(true, Ordering::SeqCst);
     assert!(b.request(json!({"command":"poll"}))["error"].is_string());
+    assert!(
+        a.execute(forge_room_core::transport::Action::UpdateReadiness {
+            task: "T1".into(),
+            expected_revision: 1,
+            profile: forge_room_core::transport::ReadinessProfile {
+                estimate_minutes: Some(20),
+                blocker: "Updated while peer offline".into(),
+                help_allowed: true,
+                ..Default::default()
+            }
+        })["rejection"]
+            .is_null()
+    );
+    assert!(a.execute(forge_room_core::transport::Action::RequestHelp {
+        task: "T1".into(),
+        expected_revision: 2,
+        reason: "Review after reconnect".into()
+    })["rejection"]
+        .is_null());
     a.request(json!({"command":"post","text":"committed while B was offline"}));
     dropping.store(false, Ordering::SeqCst);
     let recovered = b.request(json!({"command":"poll"}));
     assert_eq!(
         recovered["snapshot"]["events"][0]["text"],
         "committed while B was offline"
+    );
+    assert_eq!(
+        recovered["snapshot"]["shared"]["readiness"]["profiles"][0]["revision"],
+        2
+    );
+    assert_eq!(
+        recovered["snapshot"]["shared"]["readiness"]["help"][0]["reason"],
+        "Review after reconnect"
     );
     let roster = recovered["snapshot"]["members"].as_array().unwrap();
     assert_eq!(roster.len(), 2);
@@ -478,4 +527,88 @@ fn independent_client_recovers_after_a_real_connection_drop() {
     host.revoke(&invite_b).unwrap();
     assert!(b.request(json!({"command":"poll"}))["error"].is_string());
     assert_eq!(host.snapshot().unwrap().events.len(), 1);
+}
+
+#[test]
+fn independent_owners_coordinate_readiness_help_and_dependency_impacts() {
+    use forge_room_core::{
+        transport::{Action, Declaration, ReadinessProfile},
+        TaskPriority,
+    };
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "readiness workflow").unwrap();
+    let (mut a, mut b) = (Peer::start(), Peer::start());
+    let aj=a.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    let bj=b.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Grace"}));
+    let aid = aj["identity"].as_str().unwrap().to_string();
+    let bid = bj["identity"].as_str().unwrap().to_string();
+    let create = |title: &str, owner: String, dependencies: Vec<String>| Action::CreateTask {
+        title: title.into(),
+        owner,
+        criteria: vec![],
+        dependencies,
+        priority: TaskPriority::High,
+        due_hours: Some(1),
+    };
+    assert!(a.execute(create("API", aid.clone(), vec![]))["rejection"].is_null());
+    assert!(b.execute(create("UI", bid.clone(), vec!["T1".into()]))["rejection"].is_null());
+    let profile = ReadinessProfile {
+        estimate_minutes: Some(45),
+        blocker: "Need contract review".into(),
+        files: vec!["src/api.rs".into()],
+        checks: Declaration::ClaimedFail,
+        help_allowed: true,
+        ..Default::default()
+    };
+    let publish = Action::UpdateReadiness {
+        task: "T1".into(),
+        expected_revision: 0,
+        profile: profile.clone(),
+    };
+    assert!(b.execute(publish.clone())["rejection"].is_string());
+    assert!(a.execute(publish.clone())["rejection"].is_null());
+    assert!(a.execute(publish)["rejection"].is_string());
+    assert!(a.execute(Action::RequestHelp {
+        task: "T1".into(),
+        expected_revision: 1,
+        reason: "Review the API contract".into()
+    })["rejection"]
+        .is_null());
+    let shared = b.request(json!({"command":"poll"}));
+    assert_eq!(
+        shared["snapshot"]["shared"]["readiness"]["help"][0]["reason"],
+        "Review the API contract"
+    );
+    assert_eq!(shared["snapshot"]["shared"]["tasks"][0]["ownerId"], aid);
+    assert!(a.execute(Action::DeclareImpact {
+        revision: "a".repeat(40),
+        source: "T1".into(),
+        target: "T2".into(),
+        file: "src/api.rs".into(),
+        summary: "Response schema changed; UI mapping needs review".into()
+    })["rejection"]
+        .is_null());
+    assert!(a.execute(Action::AcknowledgeImpact {
+        id: 1,
+        accepted: true
+    })["rejection"]
+        .is_string());
+    assert!(b.execute(Action::AcknowledgeImpact {
+        id: 1,
+        accepted: true
+    })["rejection"]
+        .is_null());
+    let mut opted_out = profile;
+    opted_out.help_allowed = false;
+    assert!(a.execute(Action::UpdateReadiness {
+        task: "T1".into(),
+        expected_revision: 1,
+        profile: opted_out
+    })["rejection"]
+        .is_null());
+    let shared = b.request(json!({"command":"poll"}));
+    let r = &shared["snapshot"]["shared"]["readiness"];
+    assert_eq!(r["profiles"][0]["revision"], 2);
+    assert_eq!(r["help"][0]["closed"], true);
+    assert_eq!(r["impacts"][0]["acknowledged_by"], bid);
+    assert_eq!(shared["snapshot"]["shared"]["tasks"][0]["status"], "open");
 }
