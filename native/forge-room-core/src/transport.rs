@@ -22,7 +22,7 @@ pub use readiness::{
     assess, Assessment, Declaration, HelpRequest, Impact, ReadinessProfile, ReadinessState,
     TaskReadiness,
 };
-pub use workflow::{Action, Countdown, SharedSnapshot};
+pub use workflow::{Action, Countdown, Milestone, SharedSnapshot, TaskFocus};
 
 const VERSION: u32 = 3;
 // Includes escaped text for bounded shared tasks, messages and eight private patches.
@@ -842,6 +842,22 @@ impl Client {
             return Err("Invalid room snapshot".into());
         }
         workflow::validate(&snapshot.shared)?;
+        let focus_actors: std::collections::HashSet<_> = snapshot
+            .shared
+            .task_focus
+            .iter()
+            .map(|focus| focus.actor.as_str())
+            .collect();
+        if focus_actors.len() != snapshot.shared.task_focus.len()
+            || snapshot.shared.task_focus.iter().any(|focus| {
+                !snapshot
+                    .members
+                    .iter()
+                    .any(|member| member.id == focus.actor)
+            })
+        {
+            return Err("Task focus belongs to a member who is no longer in the Room".into());
+        }
         if snapshot.patches.len() > 8
             || snapshot.patches.iter().any(|p| {
                 p.actor.len() != 64
@@ -956,6 +972,27 @@ mod tests {
     }
     fn invite(host: &Host) -> Invite {
         host.invite(Duration::from_secs(60)).unwrap()
+    }
+
+    #[test]
+    fn task_focus_field_is_additive_and_malformed_focus_is_rejected() {
+        let mut old = serde_json::to_value(SharedSnapshot::default()).unwrap();
+        old.as_object_mut().unwrap().remove("task_focus");
+        let decoded: SharedSnapshot = serde_json::from_value(old).unwrap();
+        assert!(decoded.task_focus.is_empty());
+
+        let mut invalid = SharedSnapshot::default();
+        invalid.task_focus.push(TaskFocus {
+            actor: "a".repeat(64),
+            task: "T404".into(),
+        });
+        assert!(workflow::validate(&invalid).is_err());
+        invalid.task_focus.clear();
+        invalid.task_focus.extend((0..33).map(|index| TaskFocus {
+            actor: format!("{index:064x}"),
+            task: "T1".into(),
+        }));
+        assert!(workflow::validate(&invalid).is_err());
     }
 
     #[test]

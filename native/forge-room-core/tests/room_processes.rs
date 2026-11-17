@@ -268,6 +268,66 @@ fn independent_clients_share_tasks_handoffs_clock_and_private_conversations() {
             .is_null()
     );
 }
+
+#[test]
+fn independent_clients_opt_in_to_read_only_task_focus_and_clear_it_on_optout_or_leave() {
+    use forge_room_core::{transport::Action, TaskPriority};
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "task focus trial").unwrap();
+    let (mut owner, mut viewer) = (Peer::start(), Peer::start());
+    let owner_join = owner.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    let owner_id = owner_join["identity"].as_str().unwrap().to_owned();
+    viewer.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Grace"}));
+    assert!(owner.execute(Action::CreateTask {
+        title: "Review API contract".into(),
+        owner: owner_id.clone(),
+        criteria: vec![],
+        dependencies: vec![],
+        priority: TaskPriority::Normal,
+        due_hours: Some(1),
+    })["rejection"]
+        .is_null());
+    assert!(owner.execute(Action::ShareFocus {
+        task: Some("T1".into())
+    })["rejection"]
+        .is_null());
+    let followed = viewer.request(json!({"command":"poll"}));
+    assert_eq!(
+        followed["snapshot"]["shared"]["task_focus"][0]["actor"],
+        owner_id
+    );
+    assert_eq!(
+        followed["snapshot"]["shared"]["task_focus"][0]["task"],
+        "T1"
+    );
+    let encoded = serde_json::to_string(&followed["snapshot"]["shared"]["task_focus"]).unwrap();
+    assert!(
+        !encoded.contains("path") && !encoded.contains("buffer") && !encoded.contains("cursor")
+    );
+    assert!(owner.execute(Action::ShareFocus {
+        task: Some("T404".into())
+    })["rejection"]
+        .is_string());
+    assert!(owner.execute(Action::ShareFocus { task: None })["rejection"].is_null());
+    assert!(
+        viewer.request(json!({"command":"poll"}))["snapshot"]["shared"]["task_focus"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(owner.execute(Action::ShareFocus {
+        task: Some("T1".into())
+    })["rejection"]
+        .is_null());
+    assert!(owner.request(json!({"command":"leave"}))["left"]
+        .as_bool()
+        .unwrap());
+    assert!(
+        viewer.request(json!({"command":"poll"}))["snapshot"]["shared"]["task_focus"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
 impl Drop for Peer {
     fn drop(&mut self) {
         let _ = self.child.kill();

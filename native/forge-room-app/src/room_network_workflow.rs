@@ -1,11 +1,11 @@
 //! Forms for shared Room intents. Authorization and visibility belong to the server.
 use eframe::egui;
 use forge_room_core::{
-    EvidenceKind, TaskPriority, TaskStatus,
+    ActivityEvent, EvidenceKind, TaskPriority, TaskStatus,
     transport::{Action, Snapshot},
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     time::Instant,
 };
 
@@ -35,6 +35,14 @@ pub struct Workflow {
     evidence: HashMap<String, String>,
     minutes: u64,
     clock_sample: Option<(u64, bool, Instant)>,
+    activity_seen: Option<u64>,
+    remind_minutes: u64,
+    reminded: HashSet<String>,
+    reminder_order: VecDeque<String>,
+    reminder_notice: Vec<String>,
+    shared_focus: Option<String>,
+    focus_initialized: bool,
+    following: Option<String>,
 }
 impl Workflow {
     fn slot_free(&self, action: &Action) -> bool {
@@ -165,12 +173,26 @@ impl Workflow {
             ui.label("Resolve rejected drafts before sending more messages or task text.");
         }
 
+        let latest_activity = snapshot
+            .shared
+            .activity
+            .iter()
+            .filter_map(|event| event.id.strip_prefix("network-")?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        let baseline = *self.activity_seen.get_or_insert(latest_activity);
+        let unread = unread_activity(&snapshot.shared.activity, baseline);
         ui.horizontal_wrapped(|ui| {
-            for (index, label) in ["Chat", "Tasks", "Activity", "Readiness"]
+            for (index, label) in ["Chat", "Tasks", "Activity", "Readiness", "Follow"]
                 .iter()
                 .enumerate()
             {
-                ui.selectable_value(&mut self.tab, index, *label);
+                let title = if *label == "Activity" && unread > 0 {
+                    format!("Activity · {unread} new")
+                } else {
+                    (*label).to_owned()
+                };
+                ui.selectable_value(&mut self.tab, index, title);
             }
         });
         let clock = &snapshot.shared.countdown;
@@ -191,6 +213,51 @@ impl Workflow {
                 seconds.saturating_sub(if *running { at.elapsed().as_secs() } else { 0 })
             })
             .unwrap_or(0);
+        let mut reminders = Vec::new();
+        if self.remind_minutes == 0 {
+            self.remind_minutes = 15;
+        }
+        ui.horizontal(|ui| {
+            ui.label("Remind me");
+            egui::ComboBox::from_id_salt("network-room-reminder-window")
+                .selected_text(format!("{} min before", self.remind_minutes))
+                .show_ui(ui, |ui| {
+                    for minutes in [5, 15, 60] {
+                        ui.selectable_value(
+                            &mut self.remind_minutes,
+                            minutes,
+                            format!("{minutes} min before"),
+                        );
+                    }
+                });
+        });
+        let reminder_seconds = self.remind_minutes.saturating_mul(60);
+        let due_notices = reminder_items(snapshot, reminder_seconds, remaining, clock.running);
+        if !clock.running || remaining > reminder_seconds {
+            self.reminded.remove("countdown");
+            self.reminder_order.retain(|key| key != "countdown");
+        }
+        for (key, message) in due_notices {
+            if self.remember_reminder(key) {
+                reminders.push(message);
+            }
+        }
+        self.reminder_notice.extend(reminders);
+        if self.reminder_notice.len() > 16 {
+            let excess = self.reminder_notice.len() - 16;
+            self.reminder_notice.drain(..excess);
+        }
+        if !self.reminder_notice.is_empty() {
+            ui.group(|ui| {
+                ui.label("Room reminders (visible while this panel is open)");
+                for notice in &self.reminder_notice {
+                    ui.label(format!("• {notice}"));
+                }
+                if ui.small_button("Dismiss reminders").clicked() {
+                    self.reminder_notice.clear();
+                }
+            });
+        }
         ui.label(format!(
             "Room countdown {:02}:{:02}:{:02} | {}",
             remaining / 3600,
@@ -284,6 +351,7 @@ impl Workflow {
             }
         });
         match self.tab {
+            4 => self.follow(ui, snapshot, &mut actions),
             3 => self
                 .readiness
                 .show(ui, snapshot, root, remaining, &mut actions),
@@ -291,16 +359,142 @@ impl Workflow {
             1 => self.tasks(ui, snapshot, host, &mut actions),
             _ => {
                 ui.label("Shared activity excludes message bodies and private-message metadata.");
+                ui.label(if unread == 0 {
+                    "You are caught up with shared activity."
+                } else {
+                    "New shared activity since you last opened this feed."
+                });
                 for event in snapshot.shared.activity.iter().rev() {
-                    ui.label(format!(
-                        "{}: {}",
-                        name(snapshot, &event.actor_id),
-                        event.detail
-                    ));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format!(
+                            "{}: {}",
+                            name(snapshot, &event.actor_id),
+                            event.detail
+                        ));
+                        if let Some(task_id) = event.detail.split_whitespace().find(|part| {
+                            part.len() <= 16
+                                && part.starts_with('T')
+                                && part[1..].chars().all(|ch| ch.is_ascii_digit())
+                        }) && snapshot.shared.tasks.iter().any(|task| task.id == task_id)
+                            && ui.small_button(format!("Open {task_id}")).clicked()
+                        {
+                            self.selected = Some(task_id.to_owned());
+                            self.tab = 1;
+                        }
+                    });
                 }
+                self.activity_seen = Some(latest_activity);
             }
         }
         actions
+    }
+    fn follow(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot, actions: &mut Vec<Action>) {
+        ui.label("Share only a task ID as your Room focus. No file, editor location or unsaved content is sent.");
+        if !self.focus_initialized {
+            self.shared_focus = snapshot
+                .shared
+                .task_focus
+                .iter()
+                .find(|focus| focus.actor == snapshot.you)
+                .map(|focus| focus.task.clone());
+            self.focus_initialized = true;
+        }
+        if self.shared_focus.as_ref().is_some_and(|task_id| {
+            !snapshot
+                .shared
+                .tasks
+                .iter()
+                .any(|task| &task.id == task_id && task.status != TaskStatus::Done)
+        }) {
+            self.shared_focus = None;
+            actions.push(Action::ShareFocus { task: None });
+        }
+        let mut selected = self.shared_focus.clone();
+        egui::ComboBox::from_id_salt("network-share-focus")
+            .selected_text(selected.as_deref().unwrap_or("Do not share task focus"))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut selected, None, "Do not share task focus");
+                for task in snapshot
+                    .shared
+                    .tasks
+                    .iter()
+                    .filter(|task| task.status != TaskStatus::Done)
+                {
+                    ui.selectable_value(
+                        &mut selected,
+                        Some(task.id.clone()),
+                        format!("{}: {}", task.id, task.title),
+                    );
+                }
+            });
+        if selected != self.shared_focus {
+            actions.push(Action::ShareFocus {
+                task: selected.clone(),
+            });
+            self.shared_focus = selected;
+        }
+        ui.separator();
+        ui.label("Members who chose to share a task focus");
+        let focuses = &snapshot.shared.task_focus;
+        let mut next_follow = self.following.clone();
+        if focuses.is_empty() {
+            ui.label("No one is sharing a task focus.");
+            next_follow = None;
+        }
+        for focus in focuses {
+            let member_name = name(snapshot, &focus.actor);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!("{member_name} is focused on {}", focus.task));
+                if ui
+                    .selectable_label(self.following.as_deref() == Some(&focus.actor), "Follow")
+                    .clicked()
+                {
+                    next_follow = Some(focus.actor.clone());
+                }
+                if self.following.as_deref() == Some(&focus.actor)
+                    && ui.small_button("Stop following").clicked()
+                {
+                    next_follow = None;
+                }
+            });
+        }
+        self.following = next_follow;
+        if let Some(actor) = &self.following {
+            if let Some(focus) = focuses.iter().find(|focus| &focus.actor == actor)
+                && let Some(task) = snapshot
+                    .shared
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == focus.task)
+            {
+                ui.group(|ui| {
+                    ui.heading(format!("Following {} · {}", name(snapshot, actor), task.id));
+                    ui.label(&task.title);
+                    ui.label(format!("{} · owner {} · {:?}", task.status, task.owner_name, task.priority));
+                    if let Some(deadline) = task.due_at_epoch_seconds {
+                        ui.label(if deadline <= snapshot.server_time_epoch_seconds { "Overdue".to_owned() } else { format!("Due in {} min", (deadline - snapshot.server_time_epoch_seconds) / 60) });
+                    }
+                    ui.label("Read-only task summary. Your task selection and editor navigation are unchanged.");
+                    for evidence in snapshot.shared.evidence.iter().filter(|evidence| evidence.task_id == task.id).rev().take(5) {
+                        ui.small(format!("{} · {}", name(snapshot, &evidence.actor_id), evidence.summary));
+                    }
+                });
+            } else {
+                self.following = None;
+            }
+        }
+    }
+    fn remember_reminder(&mut self, key: String) -> bool {
+        if !self.reminded.insert(key.clone()) {
+            return false;
+        }
+        self.reminder_order.push_back(key);
+        if self.reminder_order.len() > 256
+            && let Some(expired) = self.reminder_order.pop_front()
+        {
+            self.reminded.remove(&expired);
+        }
+        true
     }
     fn chat(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot, actions: &mut Vec<Action>) {
         let previous = self.recipient.clone();
@@ -679,6 +873,60 @@ impl Workflow {
         }
     }
 }
+fn unread_activity(activity: &[ActivityEvent], after: u64) -> usize {
+    activity
+        .iter()
+        .filter(|event| {
+            event
+                .id
+                .strip_prefix("network-")
+                .and_then(|sequence| sequence.parse::<u64>().ok())
+                .is_some_and(|sequence| sequence > after)
+        })
+        .count()
+}
+
+fn reminder_items(
+    snapshot: &Snapshot,
+    reminder_seconds: u64,
+    remaining: u64,
+    countdown_running: bool,
+) -> Vec<(String, String)> {
+    let mut reminders = Vec::new();
+    if countdown_running && remaining <= reminder_seconds {
+        reminders.push(("countdown".into(), "Room countdown is almost up".into()));
+    }
+    for task in &snapshot.shared.tasks {
+        if task.status != TaskStatus::Done
+            && let Some(deadline) = task.due_at_epoch_seconds
+            && deadline
+                <= snapshot
+                    .server_time_epoch_seconds
+                    .saturating_add(reminder_seconds)
+        {
+            reminders.push((
+                format!("task:{}:{deadline}", task.id),
+                format!("{} is due or overdue", task.title),
+            ));
+        }
+    }
+    for milestone in &snapshot.shared.milestones {
+        if !milestone.done
+            && let Some(deadline) = milestone.due_at_epoch_seconds
+            && deadline
+                <= snapshot
+                    .server_time_epoch_seconds
+                    .saturating_add(reminder_seconds)
+        {
+            reminders.push((
+                format!("milestone:{}:{deadline}", milestone.id),
+                format!("Milestone: {} is due or overdue", milestone.title),
+            ));
+        }
+    }
+    reminders
+}
+
 fn name(snapshot: &Snapshot, id: &str) -> String {
     snapshot
         .members
@@ -754,5 +1002,95 @@ mod draft_tests {
         assert_eq!(state.failed_drafts.len(), 1);
         assert_eq!(state.evidence["T1"], "new T1 draft");
         assert_eq!(state.evidence["T2"], "T2 draft");
+    }
+    #[test]
+    fn activity_unread_count_is_per_viewer_cursor_and_ignores_bad_ids() {
+        let activity = vec![
+            ActivityEvent {
+                id: "network-4".into(),
+                actor_id: "a".repeat(64),
+                detail: "started task T1".into(),
+                recorded_at_epoch_seconds: 0,
+            },
+            ActivityEvent {
+                id: "network-5".into(),
+                actor_id: "b".repeat(64),
+                detail: "completed task T1".into(),
+                recorded_at_epoch_seconds: 0,
+            },
+            ActivityEvent {
+                id: "invalid".into(),
+                actor_id: "b".repeat(64),
+                detail: "ignored".into(),
+                recorded_at_epoch_seconds: 0,
+            },
+        ];
+        assert_eq!(unread_activity(&activity, 4), 1);
+        assert_eq!(unread_activity(&activity, 5), 0);
+    }
+    #[test]
+    fn due_task_milestone_and_countdown_reminders_are_bounded_and_repeatable_by_key() {
+        let mut snapshot = Snapshot {
+            server_time_epoch_seconds: 10_000,
+            ..Snapshot::default()
+        };
+        snapshot.shared.tasks.push(forge_room_core::Task {
+            id: "T1".into(),
+            title: "API task".into(),
+            owner_id: "a".repeat(64),
+            owner_name: "Ada".into(),
+            status: TaskStatus::InProgress,
+            priority: TaskPriority::High,
+            dependencies: vec![],
+            acceptance_criteria: vec![],
+            completed_criteria: vec![],
+            worktree_branch: None,
+            due_at_epoch_seconds: Some(10_300),
+            updated_at_epoch_seconds: 0,
+        });
+        snapshot
+            .shared
+            .milestones
+            .push(forge_room_core::transport::Milestone {
+                id: "M1".into(),
+                title: "Demo".into(),
+                due_at_epoch_seconds: Some(10_200),
+                done: false,
+            });
+        let reminders = reminder_items(&snapshot, 300, 250, true);
+        assert_eq!(reminders.len(), 3);
+        assert!(
+            reminders
+                .iter()
+                .any(|(_, text)| text == "Room countdown is almost up")
+        );
+        assert!(reminders.iter().any(|(key, _)| key == "task:T1:10300"));
+        assert!(reminders.iter().any(|(key, _)| key == "milestone:M1:10200"));
+        let mut seen = HashSet::new();
+        let once: Vec<_> = reminders
+            .iter()
+            .filter(|(key, _)| seen.insert(key.clone()))
+            .collect();
+        let again: Vec<_> = reminders
+            .iter()
+            .filter(|(key, _)| seen.insert(key.clone()))
+            .collect();
+        assert_eq!(once.len(), 3);
+        assert!(again.is_empty());
+        assert!(
+            reminder_items(&snapshot, 300, 250, false)
+                .iter()
+                .all(|(key, _)| key != "countdown")
+        );
+    }
+    #[test]
+    fn reminder_deduplication_stays_bounded_and_keeps_recent_deadlines() {
+        let mut state = Workflow::default();
+        for index in 0..257 {
+            assert!(state.remember_reminder(format!("deadline-{index}")));
+        }
+        assert_eq!(state.reminded.len(), 256);
+        assert!(!state.remember_reminder("deadline-256".into()));
+        assert!(state.remember_reminder("deadline-0".into()));
     }
 }
