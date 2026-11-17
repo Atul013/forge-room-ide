@@ -328,6 +328,133 @@ fn independent_clients_opt_in_to_read_only_task_focus_and_clear_it_on_optout_or_
             .is_empty()
     );
 }
+
+#[test]
+fn independent_clients_explicitly_share_only_saved_code_location_and_clear_it() {
+    use forge_room_core::transport::Action;
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "code location trial").unwrap();
+    let (mut owner, mut viewer, mut outsider) = (Peer::start(), Peer::start(), Peer::start());
+    let joined = owner.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    let owner_id = joined["identity"].as_str().unwrap().to_owned();
+    let viewer_join = viewer.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Grace"}));
+    let viewer_id = viewer_join["identity"].as_str().unwrap().to_owned();
+    outsider.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Lin"}));
+
+    assert!(owner.execute(Action::ShareLocation {
+        path: Some("src/main.rs".into()),
+        line: Some(42),
+    })["rejection"]
+        .is_null());
+    let received = viewer.request(json!({"command":"poll"}));
+    let location = &received["snapshot"]["shared"]["code_locations"][0];
+    assert_eq!(location["actor"], owner_id);
+    assert_eq!(location["path"], "src/main.rs");
+    assert_eq!(location["line"], 42);
+    let encoded = serde_json::to_string(&received["snapshot"]["shared"]["code_locations"]).unwrap();
+    assert!(
+        !encoded.contains("buffer")
+            && !encoded.contains("selection")
+            && !encoded.contains("content")
+    );
+    assert_eq!(
+        outsider.request(json!({"command":"poll"}))["snapshot"]["shared"]["code_locations"][0]
+            ["path"],
+        "src/main.rs"
+    );
+    let sent = owner.execute(Action::ContextMessage {
+        text: "Review this private line".into(),
+        recipient: Some(viewer_id),
+        task: None,
+        decision: false,
+        parent: None,
+        path: "src/private.rs".into(),
+        line: 23,
+    });
+    assert!(sent["rejection"].is_null());
+    let owner_events = sent["snapshot"]["events"].clone();
+    let viewer_events = viewer.request(json!({"command":"poll"}))["snapshot"]["events"].clone();
+    let outsider_events = outsider.request(json!({"command":"poll"}))["snapshot"]["events"].clone();
+    assert_eq!(
+        owner_events[0]["code_reference"]["path"], "src/private.rs",
+        "{owner_events}"
+    );
+    assert_eq!(viewer_events[0]["code_reference"]["line"], 23);
+    assert!(outsider_events.as_array().unwrap().is_empty());
+    assert!(owner_events[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("private line"));
+    let public = owner.execute(Action::ContextMessage {
+        text: "Review the parser entry".into(),
+        recipient: None,
+        task: None,
+        decision: false,
+        parent: None,
+        path: "src/parser.rs".into(),
+        line: 8,
+    });
+    assert!(public["rejection"].is_null());
+    let public_view = outsider.request(json!({"command":"poll"}));
+    assert_eq!(
+        public_view["snapshot"]["events"][0]["code_reference"]["path"],
+        "src/parser.rs"
+    );
+    assert!(owner.execute(Action::ContextMessage {
+        text: "unsafe reference".into(),
+        recipient: None,
+        task: None,
+        decision: false,
+        parent: None,
+        path: "../outside.rs".into(),
+        line: 1,
+    })["rejection"]
+        .is_string());
+
+    for (path, line) in [
+        ("../secret.rs", 1),
+        (".env", 1),
+        ("src\\main.rs", 1),
+        ("src/main.rs", 0),
+        ("src/main.rs", 10_000_001),
+    ] {
+        assert!(owner.execute(Action::ShareLocation {
+            path: Some(path.into()),
+            line: Some(line),
+        })["rejection"]
+            .is_string());
+    }
+    assert!(owner.execute(Action::ShareLocation {
+        path: None,
+        line: Some(3)
+    })["rejection"]
+        .is_string());
+    assert!(owner.execute(Action::ShareLocation {
+        path: None,
+        line: None
+    })["rejection"]
+        .is_null());
+    assert!(
+        viewer.request(json!({"command":"poll"}))["snapshot"]["shared"]["code_locations"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    assert!(owner.execute(Action::ShareLocation {
+        path: Some("src/main.rs".into()),
+        line: Some(7),
+    })["rejection"]
+        .is_null());
+    assert!(owner.request(json!({"command":"leave"}))["left"]
+        .as_bool()
+        .unwrap());
+    assert!(
+        viewer.request(json!({"command":"poll"}))["snapshot"]["shared"]["code_locations"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
 impl Drop for Peer {
     fn drop(&mut self) {
         let _ = self.child.kill();

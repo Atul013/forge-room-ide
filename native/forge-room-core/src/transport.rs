@@ -22,7 +22,9 @@ pub use readiness::{
     assess, Assessment, Declaration, HelpRequest, Impact, ReadinessProfile, ReadinessState,
     TaskReadiness,
 };
-pub use workflow::{Action, Countdown, Milestone, SharedSnapshot, TaskFocus};
+pub use workflow::{
+    Action, CodeLocation, CodeReference, Countdown, Milestone, SharedSnapshot, TaskFocus,
+};
 
 const VERSION: u32 = 3;
 // Includes escaped text for bounded shared tasks, messages and eight private patches.
@@ -91,6 +93,9 @@ pub struct Event {
     pub parent: Option<u64>,
     #[serde(default)]
     pub mentions: Vec<String>,
+    /// Optional user-attached workspace-relative code location; message visibility still applies.
+    #[serde(default)]
+    pub code_reference: Option<CodeReference>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageReaction {
@@ -253,6 +258,7 @@ struct MessageDraft {
     decision: bool,
     parent: Option<u64>,
     mentions: Vec<String>,
+    code_reference: Option<CodeReference>,
 }
 struct Authority {
     room: String,
@@ -503,9 +509,35 @@ impl Authority {
                             decision: *decision,
                             parent: *parent,
                             mentions: Vec::new(),
+                            code_reference: None,
                         },
                     )
                     .err(),
+                Action::ContextMessage {
+                    text,
+                    recipient,
+                    task,
+                    decision,
+                    parent,
+                    path,
+                    line,
+                } => match workflow::validate_code_location(path, *line) {
+                    Ok(path) => self
+                        .message(
+                            &actor,
+                            MessageDraft {
+                                text: text.clone(),
+                                recipient: recipient.clone(),
+                                task: task.clone(),
+                                decision: *decision,
+                                parent: *parent,
+                                mentions: Vec::new(),
+                                code_reference: Some(CodeReference { path, line: *line }),
+                            },
+                        )
+                        .err(),
+                    Err(error) => Some(error),
+                },
                 Action::MentionMessage {
                     text,
                     mentions,
@@ -522,6 +554,7 @@ impl Authority {
                             decision: *decision,
                             parent: *parent,
                             mentions: mentions.clone(),
+                            code_reference: None,
                         },
                     )
                     .err(),
@@ -550,6 +583,7 @@ impl Authority {
             decision,
             parent,
             mentions,
+            code_reference,
         } = draft;
         let text = bounded(&text, 2000)?;
         if recipient
@@ -603,6 +637,7 @@ impl Authority {
             decision,
             parent,
             mentions,
+            code_reference,
         });
         if self.events.len() > MAX_EVENTS {
             if let Some(expired) = self.events.pop_front() {
@@ -1042,6 +1077,9 @@ impl Client {
                     || (e.recipient.is_some() && !e.mentions.is_empty())
                     || e.mentions.iter().any(|id| id.len() != 64)
                     || e.mentions.iter().collect::<HashSet<_>>().len() != e.mentions.len()
+                    || e.code_reference.as_ref().is_some_and(|reference| {
+                        workflow::validate_code_location(&reference.path, reference.line).is_err()
+                    })
                     || e.recipient.as_ref().is_some_and(|recipient| {
                         recipient.len() != 64
                             || (e.actor != self.identity && recipient != &self.identity)
@@ -1095,6 +1133,22 @@ impl Client {
             })
         {
             return Err("Task focus belongs to a member who is no longer in the Room".into());
+        }
+        let location_actors: std::collections::HashSet<_> = snapshot
+            .shared
+            .code_locations
+            .iter()
+            .map(|location| location.actor.as_str())
+            .collect();
+        if location_actors.len() != snapshot.shared.code_locations.len()
+            || snapshot.shared.code_locations.iter().any(|location| {
+                !snapshot
+                    .members
+                    .iter()
+                    .any(|member| member.id == location.actor)
+            })
+        {
+            return Err("Code location belongs to a member who is no longer in the Room".into());
         }
         if snapshot.patches.len() > 8
             || snapshot.patches.iter().any(|p| {
@@ -1234,6 +1288,31 @@ mod tests {
     }
 
     #[test]
+    fn code_location_field_is_backward_compatible_and_rejects_invalid_or_oversized_state() {
+        let mut old = serde_json::to_value(SharedSnapshot::default()).unwrap();
+        old.as_object_mut().unwrap().remove("code_locations");
+        let decoded: SharedSnapshot = serde_json::from_value(old).unwrap();
+        assert!(decoded.code_locations.is_empty());
+
+        let mut invalid = SharedSnapshot::default();
+        invalid.code_locations.push(CodeLocation {
+            actor: "a".repeat(64),
+            path: "../outside.rs".into(),
+            line: 10,
+        });
+        assert!(workflow::validate(&invalid).is_err());
+        invalid.code_locations.clear();
+        invalid
+            .code_locations
+            .extend((0..33).map(|index| CodeLocation {
+                actor: format!("{index:064x}"),
+                path: "src/main.rs".into(),
+                line: 1,
+            }));
+        assert!(workflow::validate(&invalid).is_err());
+    }
+
+    #[test]
     fn lifecycle_snapshot_field_defaults_for_older_protocol_three_peers() {
         let mut value = serde_json::to_value(Snapshot::default()).unwrap();
         value.as_object_mut().unwrap().remove("lifecycle");
@@ -1254,11 +1333,13 @@ mod tests {
             decision: false,
             parent: None,
             mentions: Vec::new(),
+            code_reference: None,
         };
         let mut value = serde_json::to_value(event).unwrap();
         value.as_object_mut().unwrap().remove("mentions");
         let decoded: Event = serde_json::from_value(value).unwrap();
         assert!(decoded.mentions.is_empty());
+        assert!(decoded.code_reference.is_none());
 
         let mut authority = Authority {
             room: "trial".into(),
@@ -1330,6 +1411,7 @@ mod tests {
                 decision: false,
                 parent: None,
                 mentions: Vec::new(),
+                code_reference: None,
             });
             snapshot.shared.evidence.push(crate::Evidence {
                 id: index.to_string(),
