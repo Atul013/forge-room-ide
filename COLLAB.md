@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- 2026-11-17 Codex: Controlled build source complete as one combined feature: strict proposed reads/edits/checks/finish, sealed grants, request review, exact Apply/undo, approved closed validation recipes, bounded evidence and session reservations. Nine new regressions pass; full serial app suite 326 passed/9 ignored, build and Clippy pass. Initial parallel suite search cancellation timing failure passed isolated/serial. CI/desktop/live native provider/two-machine gates remain distinct.
+
+- 2026-11-17 Codex: Started one substantive controlled-native-build batch on feat/native-controlled-build from current main. Provider-neutral structured actions, sealed selected-file grants, per-action approval/denial, exact edit review, approved validation with bounded output/evidence and session request/check/time/cost-reservation limits are connected scope. No automatic arbitrary shell or provider tool execution; one combined PR after verification.
+
 - 2026-11-17 Codex: Completed source/package acceptance for 24f645e in run 44091986968. Downloaded ZIP/installer hashes match, portable archive contains CDLA identifier and agreement text, silent upgrade/data preservation/uninstall and headless launch passed. Existing Codex CLI ChatGPT sign-in returned READY in an empty read-only folder. No credential extraction or repository prompt upload. Desktop/interactive installer, native HTTP inference and two-machine gates remain open. Final receipt is log-only; runtime/package inputs are unchanged.
 
 - 2026-11-17 Codex: #68 merged at f14effc after source checks passed. The release binary compiled, then run 44089822812 failed strict packaging on webpki-roots CDLA-Permissive-2.0. Adding its exact data-license identifier to the existing accepted set so cargo-about includes the agreement in shipped notices; keeping --fail and all reporting intact. This is the required release follow-up to native HTTPS, not desktop/provider acceptance.
