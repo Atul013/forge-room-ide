@@ -35,6 +35,15 @@ impl Authority {
             None => Ok(()),
         }
     }
+    pub(in crate::transport) fn check_mutation(&self) -> Result<()> {
+        self.check_storage()?;
+        if self.journal_required && self.journal.is_none() {
+            return Err(
+                "Start a fresh public journal before changing a recovered journal Room".into(),
+            );
+        }
+        Ok(())
+    }
     pub(in crate::transport) fn persist(&mut self) -> Result<()> {
         self.check_storage()?;
         if self.journal.is_none() {

@@ -359,6 +359,9 @@ impl Authority {
     }
     fn handle(&mut self, request: Request) -> Result<Response> {
         self.check_storage()?;
+        if !matches!(&request, Request::Poll { .. }) {
+            self.check_mutation()?;
+        }
         let now = Instant::now();
         self.sessions.retain(|_, s| s.expires > now);
         self.sync_members();
@@ -953,7 +956,7 @@ impl Host {
     /// Revocation also ejects sessions created with this invite, including offline clients.
     pub fn revoke(&self, invite: &Invite) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
-        state.check_storage()?;
+        state.check_mutation()?;
         if let Some(grant) = state.grants.get_mut(&invite.token) {
             grant.revoked = true;
         }
@@ -974,7 +977,7 @@ impl Host {
     }
     pub fn pause(&self) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
-        state.check_storage()?;
+        state.check_mutation()?;
         if state.lifecycle != RoomLifecycle::Active {
             return Err("Only an active Room can be paused".into());
         }
@@ -985,7 +988,7 @@ impl Host {
     }
     pub fn resume(&self) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
-        state.check_storage()?;
+        state.check_mutation()?;
         if state.journal_required && state.journal.is_none() {
             return Err("Start a fresh public journal before resuming a recovered journal".into());
         }
@@ -999,7 +1002,7 @@ impl Host {
     }
     pub fn archive(&self) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
-        state.check_storage()?;
+        state.check_mutation()?;
         if state.lifecycle == RoomLifecycle::Archived {
             return Err("Room is already archived".into());
         }
@@ -1013,7 +1016,7 @@ impl Host {
     /// Host-local authority only. No serialized request can select the host actor.
     pub fn control(&self, action: Action) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
-        state.check_storage()?;
+        state.check_mutation()?;
         let now = Instant::now();
         state.sessions.retain(|_, s| s.expires > now);
         state.sync_members();

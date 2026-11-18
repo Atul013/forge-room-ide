@@ -48,6 +48,11 @@ fn killed_host_recovers_acknowledged_public_work_from_disk() {
         host.resume().is_err(),
         "fresh journal required after recovery"
     );
+    assert!(host.archive().is_err());
+    assert_eq!(
+        host.lifecycle().unwrap(),
+        forge_room_core::transport::RoomLifecycle::Paused
+    );
     let next = path.with_extension("next");
     host.enable_journal(&next).unwrap();
     host.resume().unwrap();
