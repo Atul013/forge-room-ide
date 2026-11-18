@@ -283,7 +283,8 @@ pub fn show(ui: &mut egui::Ui, workflow: &mut Workflow, contexts: &[String]) {
                 });
                 ui.horizontal(|ui| {
                     ui.label("Timeout seconds");
-                    ui.add(egui::DragValue::new(&mut step.timeout_seconds).range(1..=3600));
+                    let range=if matches!(step.action,StepKind::AiReview{..}){10..=600}else{1..=3600};
+                    ui.add(egui::DragValue::new(&mut step.timeout_seconds).range(range));
                     ui.label("Reviewed retries");
                     ui.add(egui::DragValue::new(&mut step.retries).range(0..=4));
                 });

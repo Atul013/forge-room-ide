@@ -285,7 +285,7 @@ impl State {
         tasks: &[forge_room_core::Task],
     ) -> Result<(), String> {
         if room.is_empty() {
-            return Err("Connect to a Network Room first".into());
+            return Err("Connect to a current Network Room with a unique receipt scope; older/legacy recovered Rooms cannot link workflow receipts".into());
         }
         let mut workflow = workflows::from_room_tasks("room-plan", "Room task acceptance", tasks)?;
         for step in &mut workflow.steps {

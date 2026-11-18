@@ -387,6 +387,9 @@ impl Workflow {
                     if !(128..=32768).contains(max_tokens) {
                         return Err("AI review token limit is invalid".into());
                     }
+                    if !(10..=600).contains(&step.timeout_seconds) {
+                        return Err("Native model steps require a 10–600 second timeout".into());
+                    }
                 }
                 StepKind::Manual { instructions } => text(instructions, 4000, true)?,
                 StepKind::Approval { prompt } => text(prompt, 4000, true)?,

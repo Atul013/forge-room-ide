@@ -621,3 +621,49 @@ fn native_node_and_cargo_recipes_execute_real_disposable_projects() {
         executed
     );
 }
+#[test]
+fn delayed_completion_cannot_outrun_expired_budget_or_removed_context() {
+    for remove_context in [false, true] {
+        let fixture = Fixture::new();
+        let mut workflow = manual();
+        workflow.steps[0].action = StepKind::Checkpoint {
+            label: "bounded checkpoint".into(),
+        };
+        if !remove_context {
+            workflow.policy.wall_seconds = 1;
+        }
+        let mut engine = fixture.engine();
+        let id = engine.add(fixture.review(workflow)).unwrap();
+        approve(&mut engine, &id);
+        tick(&fixture, &mut engine, None);
+        assert_eq!(engine.active_count(), 1);
+        std::thread::sleep(Duration::from_millis(if remove_context {
+            30
+        } else {
+            1100
+        }));
+        let contexts = if remove_context {
+            BTreeMap::new()
+        } else {
+            fixture.contexts()
+        };
+        engine.tick(
+            &egui::Context::default(),
+            Some(&fixture.root),
+            true,
+            &[],
+            &contexts,
+            None,
+        );
+        assert!(engine.fault.is_none());
+        assert_eq!(engine.records[0].saved.run.status, RunStatus::Canceled);
+        assert_eq!(engine.active_count(), 0);
+        assert!(
+            !engine.records[0].saved.run.steps[0].attempts[0]
+                .outcome
+                .as_ref()
+                .unwrap()
+                .passed
+        );
+    }
+}

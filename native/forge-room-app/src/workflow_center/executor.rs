@@ -212,6 +212,41 @@ impl Engine {
         if !valid {
             self.stop_all("Workspace trust, active root or saved-buffer state changed");
         }
+        // Invalidate before accepting queued worker completions, including after a delayed UI poll.
+        for record_index in 0..self.records.len() {
+            let record = &self.records[record_index];
+            let run = &record.saved.run;
+            if run.terminal()
+                || matches!(
+                    run.status,
+                    RunStatus::Draft | RunStatus::Interrupted | RunStatus::Stopping
+                )
+            {
+                continue;
+            }
+            let expired = run.elapsed(now()) >= run.plan.workflow.policy.wall_seconds
+                || self.clocks.get(&run.id).is_some_and(|clock| {
+                    clock.elapsed().as_secs() >= run.plan.workflow.policy.wall_seconds
+                });
+            let changed = record
+                .review
+                .steps
+                .values()
+                .any(|step| contexts.get(&step.context.alias) != Some(&step.context));
+            if expired || changed {
+                self.records[record_index].saved.run.stop(
+                    if expired {
+                        "Run wall time budget exhausted"
+                    } else {
+                        "Registered execution context changed"
+                    },
+                    now(),
+                );
+                if self.fault.is_none() {
+                    self.save_index(record_index);
+                }
+            }
+        }
         let mut index = 0;
         while index < self.active.len() {
             let record_index = self
@@ -354,6 +389,11 @@ impl Engine {
                                                     &reviewed.context.root,
                                                     &input.path,
                                                 )?;
+                                                if workflows::digest(source.before.as_bytes())
+                                                    != input.digest
+                                                {
+                                                    return Err("AI input changed while preparing its exact prompt".into());
+                                                }
                                                 forge_room_core::transport::validate_patch(
                                                     &source.relative,
                                                     &source.before,
