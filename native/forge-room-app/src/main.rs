@@ -32,6 +32,7 @@ mod local_models;
 mod lsp;
 mod lsp_rename;
 mod mark;
+mod merge_conflicts;
 mod native_models;
 mod palette;
 mod path_links;
@@ -3437,6 +3438,34 @@ impl ForgeRoomApp {
         let Some(root) = self.git_root() else {
             return;
         };
+        let action = match action {
+            Action::BeginConflictReview(path) => {
+                let full_path = root.join(&path);
+                let normalized = normalize(&full_path);
+                if self.tabs.tabs.iter().any(|tab| {
+                    tab.doc.is_dirty()
+                        && tab
+                            .doc
+                            .path()
+                            .is_some_and(|open| normalize(open) == normalized)
+                }) {
+                    self.status =
+                        "Save or discard the open edits before starting conflict review".into();
+                    return;
+                }
+                match merge_conflicts::Review::load(&root, path) {
+                    Ok(review) => {
+                        self.sc.conflict_review = Some(review);
+                        self.status.clear();
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not review merge conflicts: {error}")
+                    }
+                }
+                return;
+            }
+            action => action,
+        };
         let upstream = self.has_upstream();
         let (ahead, behind) = match &self.git_status {
             Some(Ok(status)) => (status.ahead, status.behind),
@@ -3460,7 +3489,7 @@ impl ForgeRoomApp {
             return;
         }
         let outcome: Result<String, String> = match action {
-            Action::None | Action::Trust => return,
+            Action::None | Action::Trust | Action::BeginConflictReview(_) => return,
             Action::Refresh => {
                 self.refresh_git();
                 return;
@@ -3532,6 +3561,25 @@ impl ForgeRoomApp {
             Action::Resolve { path, side } => {
                 git::resolve_conflict(&root, &path, side).map(|_| format!("Resolved {path}"))
             }
+            Action::ResolveHunks {
+                path,
+                original,
+                resolved,
+            } => match git::resolve_conflict_text(&root, &path, &original, &resolved) {
+                Ok(()) => {
+                    let full_path = root.join(&path);
+                    let normalized = normalize(&full_path);
+                    if let Some(tab) = self.tabs.tabs.iter_mut().find(|tab| {
+                        tab.doc
+                            .path()
+                            .is_some_and(|open| normalize(open) == normalized)
+                    }) {
+                        let _ = tab.doc.open(&full_path);
+                    }
+                    Ok(format!("Resolved and staged {path}"))
+                }
+                Err(error) => Err(error),
+            },
             Action::DiscardAsk(changes) => {
                 self.pending_discard = Some(changes);
                 return;

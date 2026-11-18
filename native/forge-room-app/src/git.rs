@@ -1,6 +1,7 @@
 //! Version control through the `git` command line, like VS Code does. No libgit2 and no extra
 //! runtime: it needs `git` on PATH and reports a clear message when it is missing.
 
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -922,6 +923,54 @@ pub fn resolve_conflict(root: &Path, path: &str, side: Side) -> Result<(), Strin
     }
     run(root, &["--literal-pathspecs", "checkout", flag, "--", path])?;
     run(root, &["--literal-pathspecs", "add", "--", path]).map(|_| ())
+}
+
+/// Apply a manually reviewed per-hunk merge result and stage it. The caller supplies the exact
+/// text shown in the review so a changed file cannot be overwritten by a stale dialog.
+pub fn resolve_conflict_text(
+    root: &Path,
+    path: &str,
+    expected: &str,
+    resolved: &str,
+) -> Result<(), String> {
+    use std::path::Component;
+
+    let relative = Path::new(path);
+    if path.is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err("the conflicted path is not a safe workspace-relative file".into());
+    }
+    if contains_conflict_marker_line(resolved) {
+        return Err("the proposed result still contains conflict markers".into());
+    }
+    let file = root.join(relative);
+    let metadata = fs::symlink_metadata(&file).map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("the conflicted path is no longer a regular file".into());
+    }
+    let current = fs::read_to_string(&file).map_err(|error| error.to_string())?;
+    if current != expected {
+        return Err("the conflicted file changed while the review was open; reopen it".into());
+    }
+    let stages = run(root, &["--literal-pathspecs", "ls-files", "-u", "--", path])?;
+    if stages.trim().is_empty() {
+        return Err("the file is no longer in an unresolved Git conflict".into());
+    }
+    crate::document::write_atomic(&file, resolved.as_bytes()).map_err(|error| error.to_string())?;
+    run(root, &["--literal-pathspecs", "add", "--", path]).map(|_| ())
+}
+
+fn contains_conflict_marker_line(text: &str) -> bool {
+    text.lines().any(|line| {
+        line.starts_with("<<<<<<< ")
+            || line.starts_with("||||||| ")
+            || line == "======="
+            || line.starts_with(">>>>>>> ")
+    })
 }
 
 pub fn stash_push(root: &Path, message: &str) -> Result<String, String> {
@@ -1847,6 +1896,56 @@ mod tests {
                 .unwrap()
                 .replace("\r\n", "\n"),
             "from main\n"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reviewed_hunk_resolution_is_stale_guarded_and_staged() {
+        if !git_available() {
+            return;
+        }
+        let (dir, main) = merge_fixture();
+        g(&dir, &["checkout", "-q", "-b", "feature"]);
+        fs::write(dir.join("a.txt"), "from feature\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "feature"]);
+        g(&dir, &["checkout", "-q", &main]);
+        fs::write(dir.join("a.txt"), "from main\n").unwrap();
+        g(&dir, &["commit", "-q", "-am", "main"]);
+        assert!(run(&dir, &["merge", "feature"]).is_err());
+
+        let path = "a.txt";
+        let original = fs::read_to_string(dir.join(path)).unwrap();
+        let parsed = crate::merge_conflicts::ConflictFile::parse(&original).unwrap();
+        let resolved = parsed
+            .resolve(&[crate::merge_conflicts::Choice::Incoming])
+            .unwrap();
+
+        fs::write(dir.join(path), "external edit\n").unwrap();
+        assert!(resolve_conflict_text(&dir, path, &original, &resolved).is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join(path)).unwrap(),
+            "external edit\n"
+        );
+        fs::write(dir.join(path), &original).unwrap();
+        assert!(resolve_conflict_text(&dir, "../outside.txt", &original, &resolved).is_err());
+        assert!(resolve_conflict_text(&dir, path, &original, "<<<<<<< unresolved\n").is_err());
+
+        resolve_conflict_text(&dir, path, &original, &resolved).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join(path)).unwrap(),
+            "from feature\n"
+        );
+        assert!(
+            !run(&dir, &["ls-files", "-u", "--", path])
+                .unwrap()
+                .contains(path)
+        );
+        let status = status(&dir).unwrap();
+        assert!(
+            status.changes.iter().any(|change| {
+                change.path == path && change.is_staged() && !change.is_conflict()
+            })
         );
         let _ = fs::remove_dir_all(dir);
     }

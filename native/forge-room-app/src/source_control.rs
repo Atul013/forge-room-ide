@@ -15,6 +15,7 @@ pub struct State {
     pub show_history: bool,
     /// The first click on Abort merge only arms it; the second one aborts.
     pub abort_armed: bool,
+    pub conflict_review: Option<crate::merge_conflicts::Review>,
 }
 
 impl Default for State {
@@ -28,6 +29,7 @@ impl Default for State {
             history_open: true,
             show_history: false,
             abort_armed: false,
+            conflict_review: None,
         }
     }
 }
@@ -72,6 +74,12 @@ pub enum Action {
     Resolve {
         path: String,
         side: git::Side,
+    },
+    BeginConflictReview(String),
+    ResolveHunks {
+        path: String,
+        original: String,
+        resolved: String,
     },
     ShowDiff {
         path: String,
@@ -230,6 +238,25 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo, compact: bool) -> 
         Repo::Ready(view) => {
             if let Some(next) = ready(ui, state, &view, compact) {
                 action = next;
+            }
+        }
+    }
+    if let Some(review) = &mut state.conflict_review
+        && let Some(result) = crate::merge_conflicts::show(ui.ctx(), review)
+    {
+        match result {
+            crate::merge_conflicts::ReviewAction::Cancel => state.conflict_review = None,
+            crate::merge_conflicts::ReviewAction::Apply {
+                path,
+                original,
+                resolved,
+            } => {
+                state.conflict_review = None;
+                action = Action::ResolveHunks {
+                    path,
+                    original,
+                    resolved,
+                };
             }
         }
     }
@@ -865,7 +892,12 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
     }
     if change.is_conflict() {
         let mut chosen = None;
+        let mut review = false;
         response.context_menu(|ui| {
+            if ui.button("Resolve conflicts by section...").clicked() {
+                review = true;
+                ui.close();
+            }
             if ui.button("Accept Current Change").clicked() {
                 chosen = Some(git::Side::Current);
                 ui.close();
@@ -881,6 +913,9 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
                     .color(theme::text_dim()),
             );
         });
+        if review {
+            return Some(Action::BeginConflictReview(change.path.clone()));
+        }
         if let Some(side) = chosen {
             return Some(Action::Resolve {
                 path: change.path.clone(),
