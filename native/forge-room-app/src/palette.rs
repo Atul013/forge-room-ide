@@ -95,6 +95,7 @@ impl Palette {
                             Some((format!("{label}/{relative}"), path))
                         })
                 })
+                .take(search::MAX_LISTED)
                 .collect();
             self.roots = roots.to_vec();
         }
