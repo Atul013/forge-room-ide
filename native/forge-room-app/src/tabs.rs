@@ -351,6 +351,13 @@ impl Tabs {
             self.active = (self.active + 1) % self.tabs.len();
         }
     }
+
+    /// The tab before the active one, wrapping from the first to the last.
+    pub fn previous(&mut self) {
+        if !self.tabs.is_empty() {
+            self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -370,6 +377,31 @@ mod tests {
         ));
         fs::write(&path, "hello").unwrap();
         path
+    }
+
+    #[test]
+    fn previous_wraps_from_the_first_tab_to_the_last_and_next_back() {
+        let (a, b, c) = (
+            temp_file("p1.txt"),
+            temp_file("p2.txt"),
+            temp_file("p3.txt"),
+        );
+        let mut tabs = Tabs::default();
+        tabs.previous(); // no tabs: nothing happens
+        for path in [&a, &b, &c] {
+            tabs.open_file(path).unwrap();
+        }
+        tabs.active = 0;
+        tabs.previous();
+        assert_eq!(tabs.active, 2);
+        tabs.previous();
+        assert_eq!(tabs.active, 1);
+        tabs.next();
+        tabs.next();
+        assert_eq!(tabs.active, 0);
+        for path in [a, b, c] {
+            fs::remove_file(path).unwrap();
+        }
     }
 
     #[test]

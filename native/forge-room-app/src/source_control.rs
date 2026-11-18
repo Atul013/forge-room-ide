@@ -107,11 +107,11 @@ const LANE_WIDTH: f32 = 14.0;
 
 pub fn letter_color(letter: char) -> Color32 {
     match letter {
-        'M' | 'T' => Color32::from_rgb(226, 192, 141),
-        'A' | 'U' => Color32::from_rgb(129, 199, 132),
-        'D' => Color32::from_rgb(240, 113, 120),
-        'R' | 'C' => Color32::from_rgb(110, 170, 225),
-        _ => Color32::from_rgb(255, 120, 100),
+        'M' | 'T' => theme::warn(),
+        'A' | 'U' => theme::ok(),
+        'D' => theme::danger(),
+        'R' | 'C' => theme::info(),
+        _ => theme::danger(),
     }
 }
 
@@ -182,7 +182,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut State, repo: Repo, compact: bool) -> 
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Amend last commit").clicked() {
+                    if ui
+                        .button("Amend last commit (uses the message above)")
+                        .clicked()
+                    {
                         action = Action::Amend;
                         ui.close();
                     }
@@ -297,11 +300,8 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
             .inner_margin(egui::Margin::symmetric(12, 0))
             .show(ui, |ui| {
                 egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(226, 160, 60, 30))
-                    .stroke(Stroke::new(
-                        1.0,
-                        Color32::from_rgba_unmultiplied(226, 160, 60, 120),
-                    ))
+                    .fill(theme::with_alpha(theme::warn(), 30))
+                    .stroke(Stroke::new(1.0, theme::with_alpha(theme::warn(), 120)))
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
@@ -357,10 +357,24 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                 && ui.input(|input| input.modifiers.command && input.key_pressed(egui::Key::Enter));
             ui.add_space(6.0);
 
-            let label = if staged.is_empty() {
-                "Commit".to_string()
+            // The reason a disabled button is disabled is part of its label, not only a tooltip.
+            let label = if !conflicts.is_empty() {
+                "Commit (resolve conflicts first)".to_string()
+            } else if staged.is_empty() {
+                "Commit (stage a file first)".to_string()
+            } else if !can_commit {
+                format!("Commit {} staged (add a message)", staged.len())
             } else {
                 format!("Commit {} staged", staged.len())
+            };
+            let hint = if !conflicts.is_empty() {
+                "Resolve the merge conflicts first"
+            } else if can_commit {
+                "Commit the staged changes"
+            } else if staged.is_empty() {
+                "Stage a file to commit"
+            } else {
+                "Write a commit message to commit"
             };
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -369,17 +383,13 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                         .fill(theme::button())
                         .corner_radius(6.0)
                         .min_size(egui::vec2((ui.available_width() - 32.0).max(80.0), 30.0));
-                let hint = if !conflicts.is_empty() {
-                    "Resolve the merge conflicts first"
-                } else if can_commit {
-                    "Commit the staged changes"
+                let commit = ui.add_enabled(can_commit, button);
+                let commit = if can_commit {
+                    commit.on_hover_text(hint)
                 } else {
-                    "Stage changes and write a message first"
+                    commit.on_disabled_hover_text(hint)
                 };
-                if ((ui.add(button).on_hover_text(hint).clicked() && can_commit)
-                    || (submit && can_commit))
-                    && action.is_none()
-                {
+                if (commit.clicked() || (submit && can_commit)) && action.is_none() {
                     action = Some(Action::Commit);
                 }
                 // Dropdown arrow drawn by hand: the UI font has no arrow glyph.
@@ -403,7 +413,10 @@ fn ready(ui: &mut egui::Ui, state: &mut State, view: &View, compact: bool) -> Op
                     {
                         action = Some(Action::CommitAndPush);
                     }
-                    if ui.button("Amend last commit").clicked() {
+                    if ui
+                        .button("Amend last commit (uses the message above)")
+                        .clicked()
+                    {
                         action = Some(Action::Amend);
                     }
                     if ui.button("Undo last commit").clicked() {
@@ -654,10 +667,10 @@ fn section(
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
     let y = rect.center().y;
-    let bulk = Rect::from_center_size(egui::pos2(rect.right() - 20.0, y), egui::vec2(22.0, 22.0));
+    let bulk = Rect::from_center_size(egui::pos2(rect.right() - 20.0, y), egui::vec2(28.0, 28.0));
     let bulk_response = ui.interact(bulk, ui.scope_id().with(("bulk", title)), Sense::click());
     let discard_all =
-        Rect::from_center_size(egui::pos2(rect.right() - 44.0, y), egui::vec2(22.0, 22.0));
+        Rect::from_center_size(egui::pos2(rect.right() - 50.0, y), egui::vec2(28.0, 28.0));
     let discard_all_response = if staged || title == "MERGE CONFLICTS" {
         None
     } else {
@@ -703,14 +716,10 @@ fn section(
             FontId::proportional(10.5),
             theme::text(),
         );
-        let hot = response.hovered()
-            || bulk_response.hovered()
-            || discard_all_response.as_ref().is_some_and(|r| r.hovered());
-        if hot {
-            icon_button(painter, bulk, staged, bulk_response.hovered());
-            if let Some(discard) = &discard_all_response {
-                discard_icon(painter, discard_all, discard.hovered());
-            }
+        // Always drawn: an action that shows only under the pointer cannot be found by keyboard.
+        icon_button(painter, bulk, staged, bulk_response.hovered());
+        if let Some(discard) = &discard_all_response {
+            discard_icon(painter, discard_all, discard.hovered());
         }
     }
     let owned: Vec<git::Change> = changes.iter().map(|change| (*change).clone()).collect();
@@ -746,7 +755,14 @@ fn icon_button(painter: &egui::Painter, rect: Rect, minus: bool, hovered: bool) 
     if hovered {
         painter.rect_filled(rect, 5.0, theme::overlay(24));
     }
-    let stroke = Stroke::new(1.5, theme::text());
+    let stroke = Stroke::new(
+        1.5,
+        if hovered {
+            theme::text()
+        } else {
+            theme::text_dim()
+        },
+    );
     let c = rect.center();
     painter.line_segment(
         [c + egui::vec2(-4.5, 0.0), c + egui::vec2(4.5, 0.0)],
@@ -765,7 +781,14 @@ fn discard_icon(painter: &egui::Painter, rect: Rect, hovered: bool) {
     if hovered {
         painter.rect_filled(rect, 5.0, theme::overlay(24));
     }
-    let stroke = Stroke::new(1.5, theme::text());
+    let stroke = Stroke::new(
+        1.5,
+        if hovered {
+            theme::text()
+        } else {
+            theme::text_dim()
+        },
+    );
     let c = rect.center();
     let mut points = Vec::new();
     for step in 0..=9 {
@@ -795,14 +818,14 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
     let y = rect.center().y;
     let stage_rect =
-        Rect::from_center_size(egui::pos2(rect.right() - 20.0, y), egui::vec2(22.0, 22.0));
+        Rect::from_center_size(egui::pos2(rect.right() - 20.0, y), egui::vec2(28.0, 28.0));
     let stage_response = ui.interact(
         stage_rect,
         ui.scope_id().with(("stage", staged, change.path.as_str())),
         Sense::click(),
     );
     let discard_rect =
-        Rect::from_center_size(egui::pos2(rect.right() - 44.0, y), egui::vec2(22.0, 22.0));
+        Rect::from_center_size(egui::pos2(rect.right() - 50.0, y), egui::vec2(28.0, 28.0));
     let discard_response = (!staged && !change.is_conflict()).then(|| {
         ui.interact(
             discard_rect,
@@ -845,11 +868,11 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
     );
     let name_width = name_galley.size().x;
     let text_left = rect.left() + 46.0;
-    // Room for the hover buttons only while they are shown.
-    let reserved = match (hovered, staged) {
-        (false, _) => 12.0,
-        (true, true) => 44.0,
-        (true, false) => 68.0,
+    // Room for the stage (and discard) buttons, which are always shown.
+    let reserved = if staged || discard_response.is_none() {
+        44.0
+    } else {
+        74.0
     };
     let clip = Rect::from_min_max(rect.min, egui::pos2(rect.right() - reserved, rect.bottom()));
     let text_painter = painter.with_clip_rect(clip);
@@ -869,11 +892,27 @@ fn change_row(ui: &mut egui::Ui, change: &git::Change, staged: bool) -> Option<A
             theme::mix(theme::bg_sidebar(), theme::text(), 0.45),
         );
     }
-    if hovered {
-        icon_button(painter, stage_rect, staged, stage_response.hovered());
-        if let Some(discard) = &discard_response {
-            discard_icon(painter, discard_rect, discard.hovered());
-        }
+    icon_button(painter, stage_rect, staged, stage_response.hovered());
+    if let Some(discard) = &discard_response {
+        discard_icon(painter, discard_rect, discard.hovered());
+    }
+    crate::icons::mark_button(
+        ui,
+        &stage_response,
+        stage_rect,
+        &format!(
+            "{} {}",
+            if staged { "Unstage" } else { "Stage" },
+            change.path
+        ),
+    );
+    if let Some(discard) = &discard_response {
+        crate::icons::mark_button(
+            ui,
+            discard,
+            discard_rect,
+            &format!("Discard changes to {}", change.path),
+        );
     }
 
     if stage_response
@@ -952,11 +991,19 @@ fn ref_pill(
     let galley = painter.layout_no_wrap(
         label.to_string(),
         FontId::proportional(11.0),
-        if filled { Color32::WHITE } else { color },
+        if filled {
+            theme::readable_on(color)
+        } else {
+            color
+        },
     );
     let width = galley.size().x + 14.0;
     let rect = Rect::from_min_size(egui::pos2(x, y - 9.0), egui::vec2(width, 18.0));
-    let text_color = if filled { Color32::WHITE } else { color };
+    let text_color = if filled {
+        theme::readable_on(color)
+    } else {
+        color
+    };
     if filled {
         painter.rect_filled(rect, 9.0, color);
     } else {
@@ -1056,7 +1103,7 @@ fn graph_row(
         } else if name == "HEAD" {
             ("HEAD".to_string(), p.accent, true)
         } else if let Some(tag) = name.strip_prefix("tag: ") {
-            (tag.to_string(), Color32::from_rgb(226, 192, 141), false)
+            (tag.to_string(), theme::warn(), false)
         } else if name.contains('/') {
             (name.clone(), p.keyword, false)
         } else {

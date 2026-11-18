@@ -65,6 +65,23 @@ pub fn trust(trusted: &mut Vec<String>, folder: &str) {
     }
 }
 
+/// True when both name the same folder (ignoring case and slash direction).
+pub fn trust_matches(a: &str, b: &str) -> bool {
+    trust_key(a) == trust_key(b)
+}
+
+/// Stop trusting `folder`: removes it and any trusted folder that contains it (trust covers the
+/// folders inside). Returns the entries that were removed.
+pub fn untrust(trusted: &mut Vec<String>, folder: &str) -> Vec<String> {
+    let key = trust_key(folder);
+    let (gone, kept): (Vec<String>, Vec<String>) = trusted.drain(..).partition(|known| {
+        let known = trust_key(known);
+        !known.is_empty() && (key == known || key.starts_with(&format!("{known}\\")))
+    });
+    *trusted = kept;
+    gone
+}
+
 /// Smallest and largest editor text scale.
 pub const MIN_SCALE: f32 = 0.6;
 pub const MAX_SCALE: f32 = 2.5;
@@ -152,6 +169,16 @@ pub fn save(settings: &Settings) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopping_trust_removes_the_folder_and_any_folder_that_covers_it() {
+        let mut trusted = vec![r"C:\Work".to_string(), r"D:\Other".to_string()];
+        let gone = untrust(&mut trusted, r"c:/work/app");
+        assert_eq!(gone, [r"C:\Work".to_string()]);
+        assert_eq!(trusted, [r"D:\Other".to_string()]);
+        assert!(!is_trusted(&trusted, r"C:\Work\app"));
+        assert!(untrust(&mut trusted, r"E:\Elsewhere").is_empty());
+    }
 
     #[test]
     fn round_trips_and_tolerates_unknown_or_missing_fields() {

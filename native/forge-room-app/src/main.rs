@@ -212,6 +212,10 @@ struct ForgeRoomApp {
     workspace: Option<Workspace>,
     show_sidebar: bool,
     status: String,
+    /// The status text last shown, how long an error holds the line, and what waits behind it.
+    status_shown: String,
+    status_hold_until: Option<std::time::Instant>,
+    status_queued: Option<String>,
     pending: Option<Pending>,
     allow_close: bool,
     last_disk_check: std::time::Instant,
@@ -344,6 +348,7 @@ struct ForgeRoomApp {
     delete: Option<PathBuf>,
     /// A question that waits for a yes: dropping a stash, ending a terminal.
     confirm: Option<Confirm>,
+    git_confirm: Option<(GitOp, String)>,
     /// A move to the Recycle Bin running on a worker thread.
     recycling: background::Latest<Recycled>,
 }
@@ -360,13 +365,13 @@ fn diff_job(text: &str, font_id: &egui::FontId) -> egui::text::LayoutJob {
         {
             format.color = theme::text_dim();
         } else if line.starts_with('+') {
-            format.color = egui::Color32::from_rgb(140, 210, 145);
-            format.background = egui::Color32::from_rgba_unmultiplied(87, 166, 74, 34);
+            format.color = theme::ok();
+            format.background = theme::with_alpha(theme::ok(), 34);
         } else if line.starts_with('-') {
-            format.color = egui::Color32::from_rgb(245, 130, 135);
-            format.background = egui::Color32::from_rgba_unmultiplied(229, 83, 75, 34);
+            format.color = theme::danger();
+            format.background = theme::with_alpha(theme::danger(), 34);
         } else if line.starts_with("@@") {
-            format.color = egui::Color32::from_rgb(110, 170, 225);
+            format.color = theme::info();
         }
         job.append(line, 0.0, format);
     }
@@ -398,6 +403,9 @@ impl ForgeRoomApp {
             workspace: None,
             show_sidebar: true,
             status: "Ready".into(),
+            status_shown: "Ready".into(),
+            status_hold_until: None,
+            status_queued: None,
             pending: None,
             allow_close: false,
             last_disk_check: std::time::Instant::now(),
@@ -499,6 +507,7 @@ impl ForgeRoomApp {
             rename: None,
             delete: None,
             confirm: None,
+            git_confirm: None,
             recycling: background::Latest::default(),
             find: find_bar::FindState::default(),
             pending_select: None,
@@ -1124,6 +1133,19 @@ impl ForgeRoomApp {
     fn run_command(&mut self, command: Command, palette_mode: bool) {
         // Whatever the command does, the tree no longer has the keyboard.
         self.explorer_state.unfocus();
+        // A Git command in a folder where Git is off would do nothing and say nothing.
+        if matches!(
+            command,
+            Command::SwitchBranch
+                | Command::MergeBranch
+                | Command::DeleteBranch
+                | Command::CreateTag
+                | Command::DeleteTag
+        ) && self.git_root().is_none()
+        {
+            self.git_off();
+            return;
+        }
         match command {
             Command::NewFile => self.new_file(),
             Command::OpenFile => self.open_file_dialog(),
@@ -1229,6 +1251,10 @@ impl ForgeRoomApp {
                 self.tabs.next();
                 self.focus_editor = true;
             }
+            Command::PreviousTab => {
+                self.tabs.previous();
+                self.focus_editor = true;
+            }
             Command::ToggleSidebar => self.show_sidebar = !self.show_sidebar,
             Command::ShowExplorer => self.switch_view(SidebarView::Explorer),
             Command::ShowSourceControl => self.switch_view(SidebarView::SourceControl),
@@ -1296,7 +1322,7 @@ impl ForgeRoomApp {
                         Ok(list) => self
                             .palette
                             .open_branches(list, palette::BranchPurpose::Checkout),
-                        Err(error) => self.status = format!("Git: {error}"),
+                        Err(error) => self.status = format!("Git: {}", git::explain(&error)),
                     }
                 }
             }
@@ -1309,7 +1335,7 @@ impl ForgeRoomApp {
                 if let Some(root) = self.git_root() {
                     match git::branches(&root) {
                         Ok(list) => self.palette.open_branches(list, purpose),
-                        Err(error) => self.status = format!("Git: {error}"),
+                        Err(error) => self.status = format!("Git: {}", git::explain(&error)),
                     }
                 }
             }
@@ -1333,7 +1359,7 @@ impl ForgeRoomApp {
                                 .collect();
                             self.palette.open_branches(tags, purpose);
                         }
-                        Err(error) => self.status = format!("Git: {error}"),
+                        Err(error) => self.status = format!("Git: {}", git::explain(&error)),
                     }
                 }
             }
@@ -1382,6 +1408,31 @@ impl ForgeRoomApp {
                     self.status = "Open a folder first".into();
                 }
             }
+            Command::UntrustFolder => match self.repo_root() {
+                Some(root) if self.trusted => {
+                    let shown = root.display().to_string();
+                    let mut removed = Vec::new();
+                    let saved = settings::update(|settings| {
+                        removed = settings::untrust(&mut settings.trusted_folders, &shown);
+                    });
+                    self.set_trust(false);
+                    let parent = removed
+                        .iter()
+                        .find(|entry| !settings::trust_matches(entry, &shown));
+                    self.status = match (&saved, parent, removed.is_empty()) {
+                        (Err(error), ..) => {
+                            format!("Could not save the trusted folders ({error}): trust returns at the next start")
+                        }
+                        (_, Some(parent), _) => format!(
+                            "Stopped trusting {parent}, which held this folder: other folders inside it are no longer trusted either"
+                        ),
+                        (_, None, true) => "This folder was only trusted for this session: Git and project tools are off now".into(),
+                        (_, None, false) => "Stopped trusting this folder: Git and project tools are off".into(),
+                    };
+                }
+                Some(_) => self.status = "This folder is not trusted".into(),
+                None => self.status = "Open a folder first".into(),
+            },
             Command::CheckProject => {
                 self.show_terminal = true;
                 self.bottom_tab = BottomTab::Problems;
@@ -1962,7 +2013,7 @@ impl ForgeRoomApp {
                             ui.close();
                         }
                     });
-                    if icons::icon_button(ui, "Kill terminal", icons::trash).clicked() {
+                    if icons::icon_button(ui, "End terminal", icons::trash).clicked() {
                         close_terminal = true;
                     }
                     let split_tip = if self.split_pair.is_some() {
@@ -1999,7 +2050,9 @@ impl ForgeRoomApp {
                         add_terminal = true;
                     }
                 }
-                if (exited || self.terminals.is_empty()) && ui.small_button("Restart").clicked() {
+                if (exited || self.terminals.is_empty())
+                    && crate::icons::small_button(ui, "Restart").clicked()
+                {
                     restart = true;
                 }
             });
@@ -2319,9 +2372,9 @@ impl ForgeRoomApp {
                         .map(|root| file_ops::relative_display(root, &problem.file))
                         .unwrap_or_else(|| problem.file.display().to_string());
                     let color = if problem.error {
-                        egui::Color32::from_rgb(235, 100, 100)
+                        theme::danger()
                     } else {
-                        egui::Color32::from_rgb(220, 180, 80)
+                        theme::warn()
                     };
                     let line = format!(
                         "{}  {shown}:{}:{}  {}",
@@ -2500,12 +2553,24 @@ impl ForgeRoomApp {
                 self.run_command(Command::ToggleTerminal, false);
             } else if shortcut(ui, command_shift, Key::P) {
                 self.run_command(Command::GoToLine, true);
+            } else if shortcut(ui, command_shift, Key::ArrowUp) {
+                // The way out of the terminal for a keyboard-only user: it keeps Tab and Escape.
+                self.focus_editor = true;
+                self.status = if self.tabs.tabs.is_empty() {
+                    "No editor tab is open".into()
+                } else {
+                    "Back in the editor".into()
+                };
+            } else if shortcut(ui, command_shift, Key::E) {
+                self.switch_view(SidebarView::Explorer);
             }
             return;
         }
         // Most specific first: every Ctrl+Shift chord is tested before its plain Ctrl twin,
         // otherwise Ctrl+G would swallow Ctrl+Shift+G.
-        if shortcut(ui, command_shift, Key::P) {
+        if shortcut(ui, command_shift, Key::Tab) {
+            self.run_command(Command::PreviousTab, false);
+        } else if shortcut(ui, command_shift, Key::P) {
             self.run_command(Command::GoToLine, true);
         } else if shortcut(ui, command_shift, Key::F) {
             self.run_command(Command::ShowSearch, false);
@@ -2617,6 +2682,7 @@ impl ForgeRoomApp {
                 for (kind, tip) in [(0, "Close"), (1, "Maximize"), (2, "Minimize")] {
                     let (rect, response) = ui
                         .allocate_exact_size(egui::vec2(40.0, TITLE_HEIGHT), egui::Sense::click());
+                    icons::mark_button(ui, &response, rect, tip);
                     let hovered = response.hovered();
                     if hovered {
                         let fill = if kind == 0 {
@@ -2669,6 +2735,7 @@ impl ForgeRoomApp {
                 ] {
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::click());
+                    icons::mark_button(ui, &response, rect, tip);
                     if response.hovered() {
                         ui.painter().rect_filled(rect, 8.0, theme::overlay(14));
                     }
@@ -2684,6 +2751,7 @@ impl ForgeRoomApp {
                 if bar.width() > 1140.0 {
                     let (pill, response) =
                         ui.allocate_exact_size(egui::vec2(300.0, 28.0), egui::Sense::click());
+                    icons::mark_button(ui, &response, pill, "Search, run, or ask Forge");
                     let painter = ui.painter();
                     painter.rect_filled(
                         pill,
@@ -2970,6 +3038,13 @@ impl ForgeRoomApp {
                 }
             });
         }
+    }
+
+    /// Show `tab` in the right dock; unlike `show_dock` it never closes a dock that is already on
+    /// that tab (a button that means "go there" must not hide the place).
+    fn reveal_dock(&mut self, tab: RightTab) {
+        self.show_right = true;
+        self.right_tab = tab;
     }
 
     fn show_dock(&mut self, tab: RightTab) {
@@ -3429,7 +3504,7 @@ impl ForgeRoomApp {
         };
         self.status = match result {
             Ok(message) => message.to_string(),
-            Err(error) => format!("Git: {error}"),
+            Err(error) => format!("Git: {}", git::explain(&error)),
         };
         self.refresh_git();
         if !stage {
@@ -3508,6 +3583,7 @@ impl ForgeRoomApp {
             return;
         }
         let Some(root) = self.git_root() else {
+            self.git_off();
             return;
         };
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -3531,7 +3607,7 @@ impl ForgeRoomApp {
                 self.git_job = None;
                 self.status = match result {
                     Ok(message) => message,
-                    Err(error) => format!("Git: {error}"),
+                    Err(error) => format!("Git: {}", git::explain(&error)),
                 };
                 self.refresh_git();
             }
@@ -3549,6 +3625,7 @@ impl ForgeRoomApp {
     fn git_action(&mut self, action: source_control::Action) {
         use source_control::Action;
         let Some(root) = self.git_root() else {
+            self.git_off();
             return;
         };
         let action = match action {
@@ -3782,7 +3859,7 @@ impl ForgeRoomApp {
         match outcome {
             Ok(message) if !message.is_empty() => self.status = message,
             Ok(_) => {}
-            Err(error) => self.status = format!("Git: {error}"),
+            Err(error) => self.status = format!("Git: {}", git::explain(&error)),
         }
         self.refresh_git();
     }
@@ -3823,31 +3900,19 @@ impl ForgeRoomApp {
         let note =
             (untracked > 0).then(|| format!("{untracked} untracked file(s) will be deleted."));
         let mut choice: Option<bool> = None;
-        let modal = egui::Modal::new(egui::Id::unique("discard-dialog")).show(context, |ui| {
-            ui.set_width(380.0);
-            ui.heading("Discard changes");
-            ui.add_space(6.0);
+        if dialog_shell(context, "discard-dialog", "Discard changes", 380.0, |ui| {
             ui.label(message);
             if let Some(note) = note {
                 ui.label(egui::RichText::new(note).color(theme::text_dim()));
             }
-            ui.add_space(14.0);
-            ui.horizontal(|ui| {
-                let discard = egui::Button::new(
-                    egui::RichText::new("Discard")
-                        .strong()
-                        .color(egui::Color32::WHITE),
-                )
-                .fill(egui::Color32::from_rgb(190, 70, 70));
-                if ui.add(discard).clicked() {
-                    choice = Some(true);
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(false);
-                }
-            });
-        });
-        if modal.should_close() && choice.is_none() {
+            let (yes, no) = dialog_buttons(ui, "Discard", true, true, None);
+            if yes {
+                choice = Some(true);
+            } else if no {
+                choice = Some(false);
+            }
+        }) && choice.is_none()
+        {
             choice = Some(false);
         }
         let Some(confirmed) = choice else {
@@ -3863,7 +3928,7 @@ impl ForgeRoomApp {
                 }
             }
             self.status = match failed {
-                Some(error) => format!("Git: {error}"),
+                Some(error) => format!("Git: {}", git::explain(&error)),
                 None => "Discarded changes".into(),
             };
             self.refresh_git();
@@ -4387,6 +4452,65 @@ impl ForgeRoomApp {
         }
     }
 
+    /// Say why a Git action did nothing.
+    fn git_off(&mut self) {
+        self.status = if self.repo_root().is_none() {
+            "Open a folder first".into()
+        } else {
+            "Git is off in this folder: trust it first (Folder: Trust This Folder)".into()
+        };
+    }
+
+    /// Ask before a palette Git action that changes the working tree or removes a branch or tag.
+    fn ask_git(&mut self, op: GitOp, name: String) {
+        if self.git_root().is_none() {
+            self.status =
+                "Git is off in this folder: trust it first (Folder: Trust This Folder)".into();
+            return;
+        }
+        self.git_confirm = Some((op, name));
+    }
+
+    fn run_git_op(&mut self, op: GitOp, name: String) {
+        let Some(root) = self.git_root() else {
+            return;
+        };
+        match op {
+            GitOp::Merge => {
+                self.status = match git::merge(&root, &name) {
+                    Ok(git::MergeOutcome::Merged(text)) => format!("Merged {name}: {text}"),
+                    Ok(git::MergeOutcome::UpToDate) => format!("Already up to date with {name}"),
+                    Ok(git::MergeOutcome::Conflicts) => format!(
+                        "Merging {name} has conflicts. Resolve them in Source Control, then commit, or run Git: Abort Merge"
+                    ),
+                    Err(error) => format!("Git: {}", git::explain(&error)),
+                };
+                self.refresh_git();
+                self.reload_clean_tabs();
+            }
+            GitOp::DeleteBranch => {
+                self.status = match git::delete_branch(&root, &name, false) {
+                    Ok(()) => format!("Deleted branch {name}"),
+                    Err(error) => format!("Git: {}", git::explain(&error)),
+                };
+                self.refresh_git();
+            }
+            GitOp::DeleteTag => {
+                self.status = match git::delete_tag(&root, &name) {
+                    Ok(text) => match text.split("(was ").nth(1) {
+                        Some(rest) => format!(
+                            "{text}. To make it again: git tag {name} {}",
+                            rest.trim_end_matches(')')
+                        ),
+                        None => text,
+                    },
+                    Err(error) => format!("Git: {}", git::explain(&error)),
+                };
+                self.refresh_git();
+            }
+        }
+    }
+
     /// The questions that wait for an answer (trust, confirmations, delete, rename, new folder).
     /// They are drawn on every frame whatever the sidebar shows: a prompt hidden behind another view
     /// would leave the window refusing to close with no explanation.
@@ -4394,29 +4518,33 @@ impl ForgeRoomApp {
         if let Some(folder) = self.trust_prompt.take() {
             let (mut trust, mut restricted) = (false, false);
             let focus_safe_choice = std::mem::take(&mut self.trust_focus_pending);
-            egui::Window::new("Trust this folder?")
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
-                    ui.set_max_width(440.0);
+            // Escape (or a click outside) is the safe answer: browse without Git and tools.
+            restricted = dialog_shell(
+                &self.egui_ctx,
+                "trust-dialog",
+                "Trust this folder?",
+                440.0,
+                |ui| {
                     ui.label(format!("{}", folder.display()));
                     ui.add_space(4.0);
                     ui.label(
-                        "Forge Room runs Git, your project's tools and the AI agent in this folder. \
-                         A folder from someone you do not trust can carry settings that make them \
-                         start programs. Trust it only if you know where it came from. Trusting a \
-                         folder also trusts the folders inside it.",
-                    );
-                    ui.add_space(6.0);
+                    "Forge Room runs Git, your project's tools and the AI agent in this folder. \
+                     A folder from someone you do not trust can carry settings that make them \
+                     start programs. Trust it only if you know where it came from. Trusting a \
+                     folder also trusts the folders inside it. You can stop trusting it later \
+                     with Folder: Stop Trusting This Folder.",
+                );
+                    ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         trust = ui.button("Trust this folder").clicked();
                         let safe = ui.button("Browse without Git and tools");
                         if focus_safe_choice {
                             safe.request_focus();
                         }
-                        restricted = safe.clicked();
+                        restricted |= safe.clicked();
                     });
-                });
+                },
+            ) || restricted;
             if trust {
                 let shown = folder.display().to_string();
                 let _ = settings::update(|settings| {
@@ -4428,6 +4556,44 @@ impl ForgeRoomApp {
                 self.status = "Restricted mode: Git and cargo check are off (Folder: Trust This Folder turns them on)".into();
             } else {
                 self.trust_prompt = Some(folder);
+            }
+        }
+        if let Some((op, name)) = self.git_confirm.take() {
+            let (title, text, button, destructive) = match op {
+                GitOp::Merge => (
+                    "Merge branch",
+                    format!(
+                        "Merge {name} into the current branch? Files in the folder and open tabs change. If it conflicts you resolve the conflicts or abort the merge."
+                    ),
+                    "Merge",
+                    true,
+                ),
+                GitOp::DeleteBranch => (
+                    "Delete branch",
+                    format!(
+                        "Delete the branch {name}? Git refuses a branch that is not merged yet."
+                    ),
+                    "Delete branch",
+                    true,
+                ),
+                GitOp::DeleteTag => (
+                    "Delete tag",
+                    format!("Delete the tag {name}? The status line shows how to make it again."),
+                    "Delete tag",
+                    true,
+                ),
+            };
+            let (mut yes, mut no) = (false, false);
+            if dialog_shell(&self.egui_ctx, "git-confirm-dialog", title, 380.0, |ui| {
+                ui.label(text);
+                (yes, no) = dialog_buttons(ui, button, destructive, true, None);
+            }) {
+                no = true;
+            }
+            if yes {
+                self.run_git_op(op, name);
+            } else if !no {
+                self.git_confirm = Some((op, name));
             }
         }
         if let Some(question) = self.confirm.take() {
@@ -4523,18 +4689,12 @@ impl ForgeRoomApp {
                     "End terminal",
                 ),
             };
-            egui::Window::new(title)
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
-                    ui.set_max_width(380.0);
-                    ui.label(text);
-                    ui.horizontal(|ui| {
-                        yes = ui.button(button).clicked();
-                        no = ui.button("Cancel").clicked();
-                    });
-                });
-            if ui_escape(&self.egui_ctx) {
+            // Only a cargo check is not destructive: the rest end a program, drop or rewrite work.
+            let destructive = !matches!(question, Confirm::RunCheck);
+            if dialog_shell(&self.egui_ctx, "confirm-dialog", title, 380.0, |ui| {
+                ui.label(text);
+                (yes, no) = dialog_buttons(ui, button, destructive, true, None);
+            }) {
                 no = true;
             }
             if yes {
@@ -4545,7 +4705,7 @@ impl ForgeRoomApp {
                                 Ok(text) => format!(
                                     "{text}. To bring it back: git stash store <that commit>"
                                 ),
-                                Err(error) => format!("Git: {error}"),
+                                Err(error) => format!("Git: {}", git::explain(&error)),
                             };
                             self.refresh_git();
                         }
@@ -4558,7 +4718,7 @@ impl ForgeRoomApp {
                                     self.sc.message.clear();
                                     format!("Amended commit {hash}")
                                 }
-                                Err(error) => format!("Git: {error}"),
+                                Err(error) => format!("Git: {}", git::explain(&error)),
                             };
                             self.refresh_git();
                         }
@@ -4572,7 +4732,7 @@ impl ForgeRoomApp {
                         if let Some(root) = self.git_root() {
                             self.status = match git::abort_operation(&root) {
                                 Ok(operation) => format!("{} aborted", operation.label()),
-                                Err(error) => format!("Git: {error}"),
+                                Err(error) => format!("Git: {}", git::explain(&error)),
                             };
                             self.refresh_git();
                             self.reload_clean_tabs();
@@ -4600,28 +4760,21 @@ impl ForgeRoomApp {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            egui::Window::new("Delete")
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
-                    ui.label(format!(
-                        "Move {} {name:?} to the Recycle Bin?",
-                        if path.is_dir() {
-                            "the folder"
-                        } else {
-                            "the file"
-                        }
-                    ));
-                    ui.label(
-                        egui::RichText::new("You can restore it from the Recycle Bin.")
-                            .color(theme::text_dim()),
-                    );
-                    ui.horizontal(|ui| {
-                        confirm = ui.button("Move to Recycle Bin").clicked();
-                        cancel = ui.button("Cancel").clicked();
-                    });
-                });
-            if ui_escape(&self.egui_ctx) {
+            if dialog_shell(&self.egui_ctx, "delete-dialog", "Delete", 380.0, |ui| {
+                ui.label(format!(
+                    "Move {} {name:?} to the Recycle Bin?",
+                    if path.is_dir() {
+                        "the folder"
+                    } else {
+                        "the file"
+                    }
+                ));
+                ui.label(
+                    egui::RichText::new("You can restore it from the Recycle Bin.")
+                        .color(theme::text_dim()),
+                );
+                (confirm, cancel) = dialog_buttons(ui, "Move to Recycle Bin", false, true, None);
+            }) {
                 cancel = true;
             }
             // The open folder itself, or a folder that holds it, is not something to delete from here.
@@ -4655,27 +4808,20 @@ impl ForgeRoomApp {
         if let Some((path, mut name)) = self.rename.take() {
             let (mut confirm, mut cancel) = (false, false);
             let error = file_ops::valid_name(&name).err();
-            egui::Window::new("Rename")
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
-                    ui.label(format!("{}", path.display()));
-                    let field = ui.text_edit_singleline(&mut name);
-                    field.request_focus();
-                    if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
-                        confirm = true;
-                    }
-                    if let Some(error) = &error {
-                        ui.colored_label(egui::Color32::from_rgb(240, 113, 120), error);
-                    }
-                    ui.horizontal(|ui| {
-                        confirm |= ui
-                            .add_enabled(error.is_none(), egui::Button::new("Rename"))
-                            .clicked();
-                        cancel = ui.button("Cancel").clicked();
-                    });
-                });
-            if ui_escape(&self.egui_ctx) {
+            if dialog_shell(&self.egui_ctx, "rename-dialog", "Rename", 420.0, |ui| {
+                ui.label(format!("{}", path.display()));
+                let field = ui.text_edit_singleline(&mut name);
+                if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+                    confirm = true;
+                }
+                if let Some(error) = &error {
+                    ui.colored_label(theme::danger(), error);
+                }
+                let (yes, no) =
+                    dialog_buttons(ui, "Rename", false, error.is_none(), Some(field.id));
+                confirm |= yes;
+                cancel = no;
+            }) {
                 cancel = true;
             }
             if confirm && error.is_none() {
@@ -4703,32 +4849,39 @@ impl ForgeRoomApp {
         if let Some(parent) = self.new_folder_parent.clone() {
             let mut create = false;
             let mut cancel = false;
-            egui::Window::new("New folder")
-                .collapsible(false)
-                .resizable(false)
-                .show(&self.egui_ctx, |ui| {
+            let typed = self.new_folder_name.trim().to_string();
+            let error = file_ops::valid_name(&typed).err();
+            if dialog_shell(
+                &self.egui_ctx,
+                "new-folder-dialog",
+                "New folder",
+                420.0,
+                |ui| {
                     ui.label(format!("In {}", parent.display()));
                     let field = ui.text_edit_singleline(&mut self.new_folder_name);
+                    if ui.memory(|memory| memory.focused().is_none()) {
+                        field.request_focus();
+                    }
                     if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
                         create = true;
                     }
-                    ui.horizontal(|ui| {
-                        create |= ui.button("Create").clicked();
-                        cancel = ui.button("Cancel").clicked();
-                    });
-                });
+                    if let (Some(error), false) = (&error, typed.is_empty()) {
+                        ui.colored_label(theme::danger(), error);
+                    }
+                    let (yes, no) =
+                        dialog_buttons(ui, "Create", false, error.is_none(), Some(field.id));
+                    create |= yes;
+                    cancel = no;
+                },
+            ) {
+                cancel = true;
+            }
             if cancel {
                 self.new_folder_parent = None;
-            }
-            if create {
+            } else if create {
                 let name = self.new_folder_name.trim();
-                if name.is_empty()
-                    || name == "."
-                    || name == ".."
-                    || name.contains('/')
-                    || name.contains('\\')
-                {
-                    self.status = "Enter one valid folder name".into();
+                if let Err(message) = file_ops::valid_name(name) {
+                    self.status = message;
                 } else {
                     match fs::create_dir(parent.join(name)) {
                         Ok(()) => {
@@ -4782,12 +4935,19 @@ impl ForgeRoomApp {
                         );
                         let close_rect = egui::Rect::from_center_size(
                             egui::pos2(rect.right() - 18.0, rect.center().y),
-                            egui::vec2(18.0, 18.0),
+                            egui::vec2(24.0, 24.0),
                         );
                         let close_response = ui.interact(
                             close_rect,
                             ui.scope_id().with(("tab-close", tab.id)),
                             egui::Sense::click(),
+                        );
+                        icons::mark_button(ui, &response, rect, &full_title);
+                        icons::mark_button(
+                            ui,
+                            &close_response,
+                            close_rect,
+                            &format!("Close {full_title}"),
                         );
                         let hovered = response.hovered() || close_response.hovered();
                         response.clone().on_hover_text(full_title);
@@ -5222,21 +5382,21 @@ impl ForgeRoomApp {
                             let x = gutter.right() - 7.0;
                             let (color, bar) = match hunk.kind {
                                 git::HunkKind::Added => (
-                                    egui::Color32::from_rgb(87, 166, 74),
+                                    theme::ok(),
                                     egui::Rect::from_min_max(
                                         egui::pos2(x, top),
                                         egui::pos2(x + 3.0, top + height),
                                     ),
                                 ),
                                 git::HunkKind::Modified => (
-                                    egui::Color32::from_rgb(79, 152, 214),
+                                    theme::info(),
                                     egui::Rect::from_min_max(
                                         egui::pos2(x, top),
                                         egui::pos2(x + 3.0, top + height),
                                     ),
                                 ),
                                 git::HunkKind::Deleted => (
-                                    egui::Color32::from_rgb(229, 83, 75),
+                                    theme::danger(),
                                     egui::Rect::from_min_max(
                                         egui::pos2(x - 2.0, top - 1.5),
                                         egui::pos2(x + 6.0, top + 1.5),
@@ -5535,7 +5695,7 @@ impl ForgeRoomApp {
                                 )
                             };
                             let color = if conflicts > 0 {
-                                egui::Color32::from_rgb(240, 113, 120)
+                                theme::danger()
                             } else {
                                 theme::text_dim()
                             };
@@ -5701,11 +5861,8 @@ impl ForgeRoomApp {
             }
             if let Some((name, _, _)) = self.room.summary() {
                 let (dot, _) = ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
-                ui.painter().circle_filled(
-                    dot.center(),
-                    4.0,
-                    egui::Color32::from_rgb(240, 113, 120),
-                );
+                ui.painter()
+                    .circle_filled(dot.center(), 4.0, theme::danger());
                 ui.label(egui::RichText::new(name).color(theme::status_text()));
                 let pill = ui.add(
                     egui::Button::new(
@@ -5725,7 +5882,13 @@ impl ForgeRoomApp {
                 }
                 ui.add_space(10.0);
             }
-            ui.label(egui::RichText::new(&self.status).color(theme::status_dim()));
+            let color = if is_error_status(&self.status) {
+                theme::status_error()
+            } else {
+                theme::status_dim()
+            };
+            ui.label(egui::RichText::new(&self.status).color(color))
+                .on_hover_text(&self.status);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let dim = |text: String| egui::RichText::new(text).color(theme::status_dim());
                 ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()));
@@ -5745,11 +5908,7 @@ impl ForgeRoomApp {
                     ui.label(dim(format!("{people} members • {agents} agents")));
                     let (dot, _) =
                         ui.allocate_exact_size(egui::vec2(12.0, 16.0), egui::Sense::hover());
-                    ui.painter().circle_filled(
-                        dot.center(),
-                        3.5,
-                        egui::Color32::from_rgb(110, 200, 120),
-                    );
+                    ui.painter().circle_filled(dot.center(), 3.5, theme::ok());
                     ui.label(
                         egui::RichText::new(format!("Room: {name}")).color(theme::status_text()),
                     );
@@ -6089,17 +6248,48 @@ impl ForgeRoomApp {
             }
             Some(lobby::Action::OpenActivity) => {
                 self.show_lobby = false;
-                self.show_dock(RightTab::Activity);
+                self.reveal_dock(RightTab::Activity);
             }
             Some(lobby::Action::CreateRoom) => {
                 if !self.room.create_room() {
-                    self.show_dock(RightTab::Room);
+                    self.reveal_dock(RightTab::Room);
                 }
             }
             Some(lobby::Action::AddMember | lobby::Action::AddAgent) => {
-                self.show_dock(RightTab::Room)
+                self.reveal_dock(RightTab::Room);
+                self.room.open_add_person();
             }
             None => {}
+        }
+    }
+
+    /// A failure stays on the status line for ten seconds: a routine message (an auto-save, say)
+    /// that arrives meanwhile waits its turn instead of wiping it.
+    fn settle_status(&mut self, context: &egui::Context) {
+        let now = std::time::Instant::now();
+        if self.status != self.status_shown {
+            let new = self.status.clone();
+            let holding = self.status_hold_until.is_some_and(|until| now < until);
+            if holding && is_background_status(&new) {
+                self.status_queued = Some(new);
+                self.status = self.status_shown.clone();
+            } else {
+                self.status_hold_until =
+                    is_error_status(&new).then(|| now + std::time::Duration::from_secs(10));
+                self.status_queued = None;
+                self.status_shown = new;
+            }
+        }
+        if let Some(until) = self.status_hold_until {
+            if now >= until {
+                self.status_hold_until = None;
+                if let Some(queued) = self.status_queued.take() {
+                    self.status_shown = queued.clone();
+                    self.status = queued;
+                }
+            } else {
+                context.request_repaint_after(until - now);
+            }
         }
     }
 
@@ -6143,6 +6333,7 @@ impl eframe::App for ForgeRoomApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.settle_status(ui.ctx());
         let context = ui.ctx().clone();
         self.lobby.flush_pending();
         // A terminal that is not on screen cannot have the keyboard; a stale flag would swallow every
@@ -6661,7 +6852,7 @@ impl eframe::App for ForgeRoomApp {
                 if let Some(root) = self.git_root() {
                     self.status = match git::checkout(&root, &name, remote) {
                         Ok(()) => format!("Switched to {name}"),
-                        Err(error) => format!("Git: {error}"),
+                        Err(error) => format!("Git: {}", git::explain(&error)),
                     };
                     self.refresh_git();
                     self.reload_clean_tabs();
@@ -6671,60 +6862,28 @@ impl eframe::App for ForgeRoomApp {
                 if let Some(root) = self.git_root() {
                     self.status = match git::create_branch(&root, &name) {
                         Ok(()) => format!("Created and switched to {name}"),
-                        Err(error) => format!("Git: {error}"),
+                        Err(error) => format!("Git: {}", git::explain(&error)),
                     };
                     self.refresh_git();
                 }
             }
             Some(palette::Outcome::Merge(name)) => {
-                if let Some(root) = self.git_root() {
-                    self.status = match git::merge(&root, &name) {
-                        Ok(git::MergeOutcome::Merged(text)) => format!("Merged {name}: {text}"),
-                        Ok(git::MergeOutcome::UpToDate) => {
-                            format!("Already up to date with {name}")
-                        }
-                        Ok(git::MergeOutcome::Conflicts) => format!(
-                            "Merging {name} has conflicts. Resolve them in Source Control, \
-                             then commit, or run Git: Abort Merge"
-                        ),
-                        Err(error) => format!("Git: {error}"),
-                    };
-                    self.refresh_git();
-                    self.reload_clean_tabs();
-                }
+                self.ask_git(GitOp::Merge, name);
             }
             Some(palette::Outcome::DeleteBranch(name)) => {
-                if let Some(root) = self.git_root() {
-                    self.status = match git::delete_branch(&root, &name, false) {
-                        Ok(()) => format!("Deleted branch {name}"),
-                        Err(error) => format!("Git: {error}"),
-                    };
-                    self.refresh_git();
-                }
+                self.ask_git(GitOp::DeleteBranch, name);
             }
             Some(palette::Outcome::CreateTag(name)) => {
                 if let Some(root) = self.git_root() {
                     self.status = match git::create_tag(&root, &name) {
                         Ok(()) => format!("Tagged the current commit {name}"),
-                        Err(error) => format!("Git: {error}"),
+                        Err(error) => format!("Git: {}", git::explain(&error)),
                     };
                     self.refresh_git();
                 }
             }
             Some(palette::Outcome::DeleteTag(name)) => {
-                if let Some(root) = self.git_root() {
-                    self.status = match git::delete_tag(&root, &name) {
-                        Ok(text) => match text.split("(was ").nth(1) {
-                            Some(rest) => format!(
-                                "{text}. To make it again: git tag {name} {}",
-                                rest.trim_end_matches(')')
-                            ),
-                            None => text,
-                        },
-                        Err(error) => format!("Git: {error}"),
-                    };
-                    self.refresh_git();
-                }
+                self.ask_git(GitOp::DeleteTag, name);
             }
             Some(palette::Outcome::Run(command)) => self.run_command(command, false),
             Some(palette::Outcome::Open(path)) => self.open_path(path),
@@ -6863,6 +7022,14 @@ impl FileGit {
     }
 }
 
+/// A Git action chosen from the palette that changes or removes something and so asks first.
+#[derive(Clone, Copy)]
+enum GitOp {
+    Merge,
+    DeleteBranch,
+    DeleteTag,
+}
+
 /// A question the user must answer before something that cannot be undone happens.
 #[derive(Clone, Copy)]
 enum Confirm {
@@ -6918,8 +7085,76 @@ struct Recycled {
 }
 
 /// Whether Escape was pressed this frame (and takes it, so nothing else reacts).
-fn ui_escape(context: &egui::Context) -> bool {
-    context.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape))
+/// The one look for a question: a modal box (the page behind cannot be used meanwhile) with a
+/// heading, centred. Returns true when it was dismissed with Escape or a click outside.
+fn dialog_shell(
+    context: &egui::Context,
+    id: &'static str,
+    title: &str,
+    width: f32,
+    body: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    egui::Modal::new(egui::Id::unique(id))
+        .show(context, |ui| {
+            ui.set_max_width(width);
+            ui.heading(title);
+            ui.add_space(6.0);
+            body(ui);
+        })
+        .should_close()
+}
+
+/// The confirm and Cancel buttons of a question: `(confirmed, cancelled)`. A destructive confirm is
+/// red and Cancel takes the keyboard focus first, so a stray Enter does the safe thing; otherwise
+/// the confirm button does. `enabled` greys the confirm button out. A question with a text field
+/// passes its id as `field`: the field gets the focus first. Focus is only placed while it is not
+/// already on one of the question's own widgets, so Tab can move between them.
+fn dialog_buttons(
+    ui: &mut egui::Ui,
+    confirm: &str,
+    destructive: bool,
+    enabled: bool,
+    field: Option<egui::Id>,
+) -> (bool, bool) {
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let (fill, text) = if destructive {
+            (theme::danger(), theme::readable_on(theme::danger()))
+        } else {
+            (theme::button(), theme::readable_on(theme::button()))
+        };
+        let yes_button =
+            egui::Button::new(egui::RichText::new(confirm).strong().color(text)).fill(fill);
+        let yes = ui.add_enabled(enabled, yes_button);
+        let no = ui.button("Cancel");
+        let inside = ui.memory(|memory| {
+            memory.has_focus(yes.id)
+                || memory.has_focus(no.id)
+                || field.is_some_and(|id| memory.has_focus(id))
+        });
+        if !inside {
+            match field {
+                Some(id) => ui.memory_mut(|memory| memory.request_focus(id)),
+                None if destructive || !enabled => no.request_focus(),
+                None => yes.request_focus(),
+            }
+        }
+        (yes.clicked(), no.clicked())
+    })
+    .inner
+}
+
+/// Whether a status message reports a failure (it is then shown in red and held for a while).
+fn is_error_status(text: &str) -> bool {
+    ["Git:", "Cannot ", "Could not ", "Failed", "Unable", "Error"]
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
+}
+
+/// A message nobody asked for (an auto-save, an agent finishing): it waits behind a held error,
+/// while the result of something the user just did always replaces it.
+fn is_background_status(text: &str) -> bool {
+    text.starts_with("Auto-saved") || text.starts_with("The agent")
 }
 
 fn language_name(name: &str) -> Option<&'static str> {
@@ -7007,4 +7242,38 @@ fn underline_tab_padded(
         );
     }
     response
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::{is_background_status, is_error_status};
+
+    #[test]
+    fn failures_are_recognised_by_how_they_start_not_by_file_names() {
+        for text in [
+            "Git: The remote has newer commits. Pull first, then push",
+            "Cannot open a.txt: denied",
+            "Could not save the lobby settings",
+            "Failed to start",
+            "Error reading file",
+        ] {
+            assert!(is_error_status(text), "{text}");
+        }
+        for text in [
+            "Saved build failed.txt",
+            "Opened folder D:/work",
+            "Ready",
+            "Pushed",
+        ] {
+            assert!(!is_error_status(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn only_messages_nobody_asked_for_wait_behind_an_error() {
+        assert!(is_background_status("Auto-saved a.rs"));
+        assert!(is_background_status("The agent finished"));
+        assert!(!is_background_status("Pushed"));
+        assert!(!is_background_status("Switched to main"));
+    }
 }

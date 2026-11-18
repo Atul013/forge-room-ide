@@ -27,6 +27,7 @@ pub enum Command {
     JoinLines,
     CloseSavedTabs,
     NextTab,
+    PreviousTab,
     ToggleSidebar,
     ShowExplorer,
     ShowSourceControl,
@@ -67,6 +68,7 @@ pub enum Command {
     LspReferences,
     LspRename,
     TrustFolder,
+    UntrustFolder,
     OpenAgent,
     ResetLayout,
     NewTerminal,
@@ -155,6 +157,7 @@ pub const ALL: &[(Command, &str, &str)] = &[
     ),
     (Command::JoinLines, "Edit: Join Lines", ""),
     (Command::NextTab, "View: Next Tab", "Ctrl+Tab"),
+    (Command::PreviousTab, "View: Previous Tab", "Ctrl+Shift+Tab"),
     (Command::QuickOpen, "Go to File…", "Ctrl+P"),
     (Command::GoToLine, "Go to Line…", "Ctrl+G"),
     (Command::Find, "Edit: Find", "Ctrl+F"),
@@ -171,12 +174,18 @@ pub const ALL: &[(Command, &str, &str)] = &[
     (Command::TogglePreview, "View: Toggle Preview", ""),
     (Command::ToggleSidebar, "View: Toggle Sidebar", "Ctrl+B"),
     (Command::ToggleTerminal, "View: Toggle Terminal", "Ctrl+`"),
+    // Ctrl+Shift+Up (leave the terminal for the editor) works only while the terminal has focus.
     (
         Command::CheckProject,
         "Rust: Check Project (cargo check)",
         "",
     ),
     (Command::TrustFolder, "Folder: Trust This Folder", ""),
+    (
+        Command::UntrustFolder,
+        "Folder: Stop Trusting This Folder",
+        "",
+    ),
     (
         Command::OpenAgent,
         "AI: Open Agent Panel (Claude Code / Codex)",

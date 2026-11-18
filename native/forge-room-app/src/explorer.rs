@@ -175,7 +175,7 @@ pub fn show(
             if icons::icon_button(ui, "New file (Ctrl+N)", icons::new_file).clicked() {
                 action = Action::NewFile;
             }
-            if workspace.is_some() && ui.small_button("+ Folder").clicked() {
+            if workspace.is_some() && crate::icons::small_button(ui, "+ Folder").clicked() {
                 action = Action::NewFolder(workspace.as_ref().unwrap().root.clone());
             }
             if workspace.is_some() && ui.small_button("Add Root").clicked() {
