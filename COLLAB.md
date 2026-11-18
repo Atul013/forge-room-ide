@@ -28,7 +28,7 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
-- **2026-11-18 Codex:** PR #81 bundles native multi-root Explorer, Quick Open, Find/Replace and session restore; Git, tasks, AI context and Network Room remain primary-root scoped. Local suite 359 passed/9 ignored; Windows verify [44250616922](https://github.com/ZayedBH/forge-room-ide/actions/runs/44250616922) and package/install/headless launch [44251311429](https://github.com/ZayedBH/forge-room-ide/actions/runs/44251311429) passed. Visible desktop interaction remains unverified. #79 was already merged, so #81 is the single follow-up PR.
+- **2026-11-18 Codex:** Extended PR #81 with bounded, asynchronous Quick Open discovery and cancellation of superseded workspace scans. Local suite 359 passed/9 ignored; format/check/strict Clippy pass. Fresh Windows verification and package runs are pending for source `c3f998d`; previous source passed Windows verify and package/install/headless launch. Visible desktop interaction remains unverified. #79 was already merged, so #81 remains the single follow-up PR.
 
 - **2026-11-18 Codex:** PR #80 adds Git text-conflict review by hunk with current/incoming/both choices, diff3 base inspection, exact-source stale guard, safe-path/file checks and write-and-stage behavior. Local app 355/9 ignored, format/check/Clippy pass; Windows verify [44245261242](https://github.com/ZayedBH/forge-room-ide/actions/runs/44245261242) and release package/install/uninstall/headless launch [44245278536](https://github.com/ZayedBH/forge-room-ide/actions/runs/44245278536) passed on source `34c70ca`. Visible desktop review remains unverified because the computer-use pipe was unavailable. #79 is already merged and cannot be amended.
 
