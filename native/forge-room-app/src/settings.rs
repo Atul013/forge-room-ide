@@ -19,6 +19,9 @@ pub struct Settings {
     /// Save file tabs automatically once their text stops changing.
     #[serde(default)]
     pub auto_save: Option<bool>,
+    /// Preferred profile for newly opened integrated terminals.
+    #[serde(default)]
+    pub terminal_shell: Option<String>,
     /// Folders the user trusts: Git and project tools only run in these (or below them).
     #[serde(default)]
     pub trusted_folders: Vec<String>,
@@ -157,12 +160,15 @@ mod tests {
         assert_eq!(parsed.theme.as_deref(), Some("moss-shrine"));
         let empty: Settings = serde_json::from_str("{}").unwrap();
         assert!(empty.theme.is_none());
+        assert!(empty.terminal_shell.is_none());
         let text = serde_json::to_string(&Settings {
             theme: Some("ink-ember".into()),
             ..Default::default()
         })
         .unwrap();
         assert!(text.contains("ink-ember"));
+        let with_shell: Settings = serde_json::from_str(r#"{"terminal_shell":"cmd"}"#).unwrap();
+        assert_eq!(with_shell.terminal_shell.as_deref(), Some("cmd"));
         // Settings written before recent folders existed still load.
         assert!(empty.recent_folders.is_empty());
     }

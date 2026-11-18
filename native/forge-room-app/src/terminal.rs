@@ -7,7 +7,7 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct Terminal {
     pub initial_root: Option<PathBuf>,
@@ -25,6 +25,7 @@ pub struct Terminal {
     snapshot: Option<String>,
     wheel_rows: f32,
     pub shell: String,
+    pub shell_profile: String,
     /// Whether this terminal was drawn this frame. A terminal nobody looks at does not need the
     /// window redrawn for every chunk of its output.
     visible: Arc<AtomicBool>,
@@ -32,26 +33,179 @@ pub struct Terminal {
     link: Option<crate::path_links::PathRef>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShellProfile {
+    pub id: String,
+    pub label: String,
+    pub program: PathBuf,
+    pub arguments: Vec<String>,
+}
+static SHELL_PROFILES: OnceLock<Vec<ShellProfile>> = OnceLock::new();
+
 /// Rows scrolled per mouse-wheel notch, and the wheel distance egui reports per notch.
 const WHEEL_ROWS: f32 = 3.0;
 const WHEEL_UNIT: f32 = 50.0;
 
-fn default_shell() -> (String, Vec<String>) {
+fn profile(id: &str, label: &str, program: PathBuf, arguments: &[&str]) -> ShellProfile {
+    ShellProfile {
+        id: id.to_owned(),
+        label: label.to_owned(),
+        program,
+        arguments: arguments
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect(),
+    }
+}
+
+fn find_in_path(program: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .map(|directory| directory.join(program))
+        .find(|candidate| candidate.is_file())
+}
+
+fn discover_shell_profiles() -> Vec<ShellProfile> {
+    let mut profiles = Vec::new();
     #[cfg(windows)]
     {
-        ("powershell.exe".into(), vec!["-NoLogo".into()])
+        let system_root = std::env::var_os("SystemRoot").map(PathBuf::from);
+        let powershell = system_root
+            .as_ref()
+            .map(|root| root.join("System32/WindowsPowerShell/v1.0/powershell.exe"))
+            .filter(|path| path.is_file())
+            .or_else(|| find_in_path("powershell.exe"));
+        if let Some(program) = powershell {
+            profiles.push(profile(
+                "windows-powershell",
+                "Windows PowerShell",
+                program,
+                &["-NoLogo"],
+            ));
+        }
+        if let Some(program) = find_in_path("pwsh.exe") {
+            profiles.push(profile("powershell", "PowerShell 7", program, &["-NoLogo"]));
+        }
+        let command_prompt = system_root
+            .as_ref()
+            .map(|root| root.join("System32/cmd.exe"))
+            .filter(|path| path.is_file())
+            .or_else(|| find_in_path("cmd.exe"));
+        if let Some(program) = command_prompt {
+            profiles.push(profile("cmd", "Command Prompt", program, &[]));
+        }
+        if let Some(program) = find_in_path("bash.exe") {
+            profiles.push(profile("bash", "Bash", program, &["--login", "-i"]));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let configured = std::env::var_os("SHELL")
+            .map(PathBuf::from)
+            .filter(|path| path.is_file());
+        if let Some(program) = configured {
+            let label = program
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            profiles.push(profile("configured", &label, program, &[]));
+        }
+        for (id, label, program) in [
+            ("bash", "Bash", "bash"),
+            ("zsh", "Zsh", "zsh"),
+            ("fish", "Fish", "fish"),
+            ("sh", "POSIX shell", "sh"),
+        ] {
+            if let Some(program) = find_in_path(program)
+                && !profiles.iter().any(|known| known.program == program)
+            {
+                profiles.push(profile(id, label, program, &[]));
+            }
+        }
+    }
+    profiles
+}
+
+/// Profiles are discovered once per app process so PATH probing never runs in the UI frame loop.
+pub fn shell_profiles() -> &'static [ShellProfile] {
+    SHELL_PROFILES.get_or_init(discover_shell_profiles)
+}
+
+pub fn shell_profile(id: &str) -> Option<ShellProfile> {
+    shell_profiles()
+        .iter()
+        .find(|profile| profile.id == id)
+        .cloned()
+}
+
+pub fn default_shell_profile() -> Option<ShellProfile> {
+    let profiles = shell_profiles();
+    #[cfg(windows)]
+    let preferred = "windows-powershell";
+    #[cfg(not(windows))]
+    let preferred = "configured";
+    profiles
+        .iter()
+        .find(|profile| profile.id == preferred)
+        .cloned()
+        .or_else(|| profiles.first().cloned())
+}
+
+fn default_shell() -> (String, Vec<String>, String) {
+    if let Some(profile) = default_shell_profile() {
+        return (
+            profile.program.to_string_lossy().into_owned(),
+            profile.arguments,
+            profile.id,
+        );
+    }
+    #[cfg(windows)]
+    {
+        (
+            "powershell.exe".into(),
+            vec!["-NoLogo".into()],
+            "windows-powershell".into(),
+        )
     }
     #[cfg(not(windows))]
     {
         (
             std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
             Vec::new(),
+            "configured".into(),
         )
     }
 }
 
 impl Terminal {
     pub fn spawn(context: &egui::Context, cwd: Option<&Path>) -> Result<Self, String> {
+        let (program, arguments, shell_profile) = default_shell();
+        Self::spawn_configured(context, cwd, &program, &arguments, &shell_profile)
+    }
+
+    pub fn spawn_profile(
+        context: &egui::Context,
+        cwd: Option<&Path>,
+        profile: &ShellProfile,
+    ) -> Result<Self, String> {
+        Self::spawn_configured(
+            context,
+            cwd,
+            &profile.program.to_string_lossy(),
+            &profile.arguments,
+            &profile.id,
+        )
+    }
+
+    fn spawn_configured(
+        context: &egui::Context,
+        cwd: Option<&Path>,
+        program: &str,
+        arguments: &[String],
+        shell_profile: &str,
+    ) -> Result<Self, String> {
         let size = PtySize {
             rows: 24,
             cols: 100,
@@ -61,9 +215,8 @@ impl Terminal {
         let pair = native_pty_system()
             .openpty(size)
             .map_err(|error| format!("could not open a terminal: {error}"))?;
-        let (program, arguments) = default_shell();
-        let mut command = CommandBuilder::new(&program);
-        command.args(&arguments);
+        let mut command = CommandBuilder::new(program);
+        command.args(arguments);
         if let Some(cwd) = cwd {
             command.cwd(cwd);
         }
@@ -147,7 +300,8 @@ impl Terminal {
             selection: None,
             snapshot: None,
             wheel_rows: 0.0,
-            shell: program,
+            shell: program.to_owned(),
+            shell_profile: shell_profile.to_owned(),
             link: None,
         })
     }
@@ -837,6 +991,39 @@ fn convert(color: vt100::Color, default: Color32, bold: bool) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn available_shell_profiles_are_unique_and_point_to_files() {
+        let profiles = shell_profiles();
+        let mut ids = std::collections::HashSet::new();
+        for profile in profiles {
+            assert!(!profile.id.is_empty());
+            assert!(
+                ids.insert(profile.id.clone()),
+                "duplicate shell id {}",
+                profile.id
+            );
+            assert!(
+                profile.program.is_file(),
+                "missing shell {}",
+                profile.program.display()
+            );
+        }
+        let default = default_shell_profile().expect("the platform default shell exists");
+        assert!(profiles.contains(&default));
+    }
+
+    #[test]
+    fn shell_profiles_preserve_reviewed_argument_lists() {
+        let profile = profile(
+            "cmd",
+            "Command Prompt",
+            PathBuf::from("cmd.exe"),
+            &["/Q", "/D"],
+        );
+        assert_eq!(profile.arguments, ["/Q", "/D"]);
+        assert_eq!(profile.label, "Command Prompt");
+    }
 
     fn link_at(parser: &vt100::Parser, row: u16, column: u16) -> Option<(String, Option<usize>)> {
         let (_, cols) = parser.screen().size();

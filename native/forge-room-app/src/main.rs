@@ -1328,12 +1328,36 @@ impl ForgeRoomApp {
 
     /// Start a shell in the project folder: as one more terminal, or in place of the active one.
     fn spawn_terminal(&mut self, add: bool) -> bool {
+        self.spawn_terminal_profile(add, None)
+    }
+
+    fn spawn_terminal_profile(&mut self, add: bool, requested: Option<&str>) -> bool {
         let root = self.repo_root().or_else(|| {
             std::env::var_os("USERPROFILE")
                 .or_else(|| std::env::var_os("HOME"))
                 .map(PathBuf::from)
         });
-        match terminal::Terminal::spawn(&self.egui_ctx, root.as_deref()) {
+        let session_profile = (!add)
+            .then(|| {
+                self.terminals
+                    .get(self.active_terminal)
+                    .map(|terminal| terminal.shell_profile.clone())
+            })
+            .flatten();
+        let configured_shell = settings::load().terminal_shell;
+        let preferred = requested
+            .or(session_profile.as_deref())
+            .or(configured_shell.as_deref());
+        let profile = preferred
+            .and_then(terminal::shell_profile)
+            .or_else(terminal::default_shell_profile);
+        let spawned = profile
+            .as_ref()
+            .map(|profile| {
+                terminal::Terminal::spawn_profile(&self.egui_ctx, root.as_deref(), profile)
+            })
+            .unwrap_or_else(|| terminal::Terminal::spawn(&self.egui_ctx, root.as_deref()));
+        match spawned {
             Ok(terminal) => {
                 self.terminal_error = None;
                 if add || self.terminals.is_empty() {
@@ -1719,6 +1743,20 @@ impl ForgeRoomApp {
         let mut toggle_split = false;
         let mut toggle_maximize = false;
         let mut copy_all = false;
+        let mut selected_shell = None;
+        let shell_profiles = terminal::shell_profiles();
+        let configured_shell = settings::load().terminal_shell;
+        let preferred_shell = configured_shell
+            .as_deref()
+            .and_then(|id| shell_profiles.iter().find(|profile| profile.id == id))
+            .map(|profile| profile.id.clone())
+            .or_else(|| terminal::default_shell_profile().map(|profile| profile.id));
+        let active_shell_label = self.terminals.get(self.active_terminal).map(|terminal| {
+            shell_profiles
+                .iter()
+                .find(|profile| profile.id == terminal.shell_profile)
+                .map_or_else(|| terminal.shell.clone(), |profile| profile.label.clone())
+        });
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(12.0);
@@ -1772,9 +1810,13 @@ impl ForgeRoomApp {
             {
                 ui.add_space(10.0);
                 ui.label(
-                    egui::RichText::new(&terminal.shell)
-                        .size(12.0)
-                        .color(theme::text_dim()),
+                    egui::RichText::new(
+                        active_shell_label
+                            .as_deref()
+                            .unwrap_or(terminal.shell.as_str()),
+                    )
+                    .size(12.0)
+                    .color(theme::text_dim()),
                 );
             }
             if exited {
@@ -1833,17 +1875,23 @@ impl ForgeRoomApp {
                     }
                     let menu = icons::icon_button(ui, "Terminal types", icons::chevron_small);
                     egui::Popup::menu(&menu).show(|ui| {
-                        if ui
-                            .button(format!(
-                                "New {}",
-                                self.terminals
-                                    .first()
-                                    .map_or("terminal", |t| t.shell.as_str())
-                            ))
-                            .clicked()
-                        {
-                            add_terminal = true;
-                            ui.close();
+                        if shell_profiles.is_empty() {
+                            ui.label("No supported shell executable was found.");
+                        } else {
+                            ui.label("New terminal with");
+                            for profile in shell_profiles {
+                                let is_default =
+                                    preferred_shell.as_deref() == Some(profile.id.as_str());
+                                let label = if is_default {
+                                    format!("{} · default", profile.label)
+                                } else {
+                                    profile.label.clone()
+                                };
+                                if ui.selectable_label(is_default, label).clicked() {
+                                    selected_shell = Some(profile.clone());
+                                    ui.close();
+                                }
+                            }
                         }
                     });
                     if icons::icon_button(ui, "New terminal (Ctrl+Shift+`)", icons::plus).clicked()
@@ -1904,7 +1952,11 @@ impl ForgeRoomApp {
                 self.spawn_terminal(false);
             }
         }
-        if add_terminal {
+        if let Some(profile) = selected_shell {
+            let id = profile.id.clone();
+            let _ = settings::update(|settings| settings.terminal_shell = Some(id.clone()));
+            self.spawn_terminal_profile(true, Some(&id));
+        } else if add_terminal {
             self.spawn_terminal(true);
         }
         if close_terminal {
