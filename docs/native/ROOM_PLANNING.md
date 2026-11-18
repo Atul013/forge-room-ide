@@ -43,7 +43,9 @@ or rejection. Applying an unchanged plan is refused as a no-op.
 
 ## Files and reuse
 
-Import loads a draft only, with no server action. Versioned JSON is bounded to 128 KiB,
+Import appends draft rows only, with no server action. If the combined draft would
+exceed 100 rows, import is rejected and the existing draft is preserved. Duplicate
+keys must be resolved during review. Versioned JSON is bounded to 128 KiB,
 rejects unknown fields, and requires 1–100 rows. Plan saves are create-only and flushed,
 so existing files remain untouched. A saved plan retains explicit edit references.
 
