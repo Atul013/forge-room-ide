@@ -5,6 +5,8 @@ use crate::commands::{self, Command};
 use crate::{fuzzy, git, search, theme};
 use eframe::egui::{self, Align2, Key, Modifiers, RichText, Sense};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 
 #[derive(Default)]
 pub struct Palette {
@@ -13,6 +15,9 @@ pub struct Palette {
     selected: usize,
     files: Vec<(String, PathBuf)>,
     roots: Vec<PathBuf>,
+    files_receiver: Option<mpsc::Receiver<Vec<(String, PathBuf)>>>,
+    files_cancel: Option<Arc<AtomicBool>>,
+    files_loading: bool,
     focus: bool,
     /// When set, the box lists branches instead of files and commands.
     branches: Option<Vec<git::Branch>>,
@@ -61,43 +66,77 @@ impl Palette {
         self.open = true;
         self.focus = true;
         if roots != self.roots.as_slice() || self.files.is_empty() {
-            self.files = roots
-                .iter()
-                .flat_map(|root| {
-                    let name = root
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| root.display().to_string());
-                    let label = if roots
-                        .iter()
-                        .filter(|candidate| candidate.file_name() == root.file_name())
-                        .count()
-                        > 1
-                    {
-                        format!(
-                            "{} — {}",
-                            name,
-                            root.parent()
-                                .map(|parent| parent.display().to_string())
-                                .unwrap_or_default()
-                        )
-                    } else {
-                        name
-                    };
-                    search::list_files(root)
-                        .into_iter()
-                        .filter_map(move |path| {
-                            let relative = path
-                                .strip_prefix(root)
-                                .ok()?
-                                .to_string_lossy()
-                                .replace('\\', "/");
-                            Some((format!("{label}/{relative}"), path))
-                        })
-                })
-                .take(search::MAX_LISTED)
-                .collect();
+            if let Some(cancel) = &self.files_cancel {
+                cancel.store(true, Ordering::Relaxed);
+            }
             self.roots = roots.to_vec();
+            self.files.clear();
+            let roots = roots.to_vec();
+            let cancel = Arc::new(AtomicBool::new(false));
+            self.files_cancel = Some(cancel.clone());
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let files = roots
+                    .iter()
+                    .take_while(|_| !cancel.load(Ordering::Relaxed))
+                    .flat_map(|root| {
+                        let name = root
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| root.display().to_string());
+                        let label = if roots
+                            .iter()
+                            .filter(|candidate| candidate.file_name() == root.file_name())
+                            .count()
+                            > 1
+                        {
+                            format!(
+                                "{} — {}",
+                                name,
+                                root.parent()
+                                    .map(|parent| parent.display().to_string())
+                                    .unwrap_or_default()
+                            )
+                        } else {
+                            name
+                        };
+                        search::list_files_cancellable(root, &cancel)
+                            .into_iter()
+                            .filter_map(move |path| {
+                                let relative = path
+                                    .strip_prefix(root)
+                                    .ok()?
+                                    .to_string_lossy()
+                                    .replace('\\', "/");
+                                Some((format!("{label}/{relative}"), path))
+                            })
+                    })
+                    .take(search::MAX_LISTED)
+                    .collect();
+                let _ = sender.send(files);
+            });
+            self.files_receiver = Some(receiver);
+            self.files_loading = true;
+        }
+    }
+
+    fn poll_files(&mut self) {
+        let Some(receiver) = &self.files_receiver else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(files) => {
+                self.files = files;
+                self.files_receiver = None;
+                self.files_cancel = None;
+                self.files_loading = false;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.files_receiver = None;
+                self.files_cancel = None;
+                self.files_loading = false;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
         }
     }
 
@@ -158,6 +197,10 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
     if !palette.open {
         return None;
     }
+    palette.poll_files();
+    if palette.files_loading {
+        context.request_repaint_after(std::time::Duration::from_millis(100));
+    }
     let mut outcome = None;
     let mut close = false;
 
@@ -199,7 +242,11 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
             }
             Kind::Files(text) => {
                 if palette.files.is_empty() {
-                    vec![Row::Hint("Open a folder to search its files")]
+                    vec![Row::Hint(if palette.files_loading {
+                        "Indexing workspace files…"
+                    } else {
+                        "Open a folder to search its files"
+                    })]
                 } else {
                     let names: Vec<&str> = palette
                         .files
