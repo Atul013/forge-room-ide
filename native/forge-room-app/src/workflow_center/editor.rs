@@ -265,7 +265,7 @@ pub fn show(ui: &mut egui::Ui, workflow: &mut Workflow, contexts: &[String]) {
                 // Keep dangling prerequisites visible after key edits/removals; validation never silently removes them.
                 for need in step.needs.iter().filter(|need| !ids.contains(need)) {
                     ui.colored_label(
-                        egui::Color32::LIGHT_RED,
+                        crate::theme::danger(),
                         format!("Missing prerequisite: {need}; fix in JSON or restore its key"),
                     );
                 }
@@ -354,12 +354,12 @@ pub fn show(ui: &mut egui::Ui, workflow: &mut Workflow, contexts: &[String]) {
     match workflow.validate() {
         Ok(order) => {
             ui.colored_label(
-                egui::Color32::LIGHT_GREEN,
+                crate::theme::ok(),
                 format!("Valid graph · topological order: {}", order.join(" → ")),
             );
         }
         Err(error) => {
-            ui.colored_label(egui::Color32::LIGHT_RED, error);
+            ui.colored_label(crate::theme::danger(), error);
         }
     }
 }

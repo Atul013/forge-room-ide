@@ -349,10 +349,10 @@ impl State {
                     ui.label(&self.notice);
                 }
                 if let Some(fault) = self.engine.as_ref().and_then(|engine| engine.fault.as_ref()) {
-                    ui.colored_label(egui::Color32::LIGHT_RED, format!("Execution stopped: {fault}"));
+                    ui.colored_label(crate::theme::danger(), format!("Execution stopped: {fault}"));
                 }
                 if !trusted {
-                    ui.colored_label(egui::Color32::LIGHT_YELLOW, "Trust the active project before executable review or launch.");
+                    ui.colored_label(crate::theme::warn(), "Trust the active project before executable review or launch.");
                 }
                 if !dirty.is_empty() {
                     ui.label("Save or close dirty buffers before reviewing/running workflows.");
@@ -600,7 +600,7 @@ cancel=ui.button("Cancel this run").clicked();
         let contexts = match self.contexts(records, true) {
             Ok(contexts) => contexts,
             Err(error) => {
-                ui.colored_label(egui::Color32::LIGHT_RED, error);
+                ui.colored_label(crate::theme::danger(), error);
                 BTreeMap::new()
             }
         };
@@ -710,7 +710,7 @@ cancel=ui.button("Cancel this run").clicked();
                 ));
             }
             Err(error) => {
-                ui.colored_label(egui::Color32::LIGHT_RED, error);
+                ui.colored_label(crate::theme::danger(), error);
             }
         }
         if ui

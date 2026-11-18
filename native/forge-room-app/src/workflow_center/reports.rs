@@ -162,7 +162,7 @@ Ok(())=>{
 ui.label("Export saved");
 }
 ,Err(error)=>{
-ui.colored_label(egui::Color32::LIGHT_RED,error);
+ui.colored_label(crate::theme::danger(),error);
 }
 }
 }
@@ -346,7 +346,7 @@ ui.colored_label(egui::Color32::LIGHT_RED,error);
                 format!("Attempt {} receipt and local output", reference.attempt),
                 |ui| match store.detail(&run.id, reference) {
                     Err(error) => {
-                        ui.colored_label(egui::Color32::LIGHT_RED, error);
+                        ui.colored_label(crate::theme::danger(), error);
                     }
                     Ok(detail) => {
                         ui.label(&detail.note);
@@ -408,7 +408,7 @@ ui.colored_label(egui::Color32::LIGHT_RED,error);
                                         ui.label("Artifact exported");
                                     }
                                     Err(error) => {
-                                        ui.colored_label(egui::Color32::LIGHT_RED, error);
+                                        ui.colored_label(crate::theme::danger(), error);
                                     }
                                 }
                             }
