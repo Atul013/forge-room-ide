@@ -106,10 +106,12 @@ fn visible_rows(workspace: &mut Workspace) -> Vec<(PathBuf, bool)> {
             }
         }
     }
-    let root = workspace.root.clone();
-    let mut rows = vec![(root.clone(), true)];
-    if workspace.is_expanded(&root) {
-        add(workspace, &root, &mut rows);
+    let mut rows = Vec::new();
+    for root in workspace.roots().to_vec() {
+        rows.push((root.clone(), true));
+        if workspace.is_expanded(&root) {
+            add(workspace, &root, &mut rows);
+        }
     }
     rows
 }
@@ -120,6 +122,7 @@ pub enum Action {
     OpenFolder,
     AddFolder,
     RemoveRoot(PathBuf),
+    ActivateRoot(PathBuf),
     Refresh,
     NewFile,
     NewFileIn(PathBuf),
@@ -209,7 +212,7 @@ pub fn show(
             let roots = workspace.roots().to_vec();
             for (index, root) in roots.iter().enumerate() {
                 let open = workspace.is_expanded(root);
-                let title = workspace.label(root);
+                let title = if index == 0 { format!("{} (active project)", workspace.label(root)) } else { workspace.label(root) };
                 let marked = Marked::of(state, root);
                 let response = row(ui, 0, &title, Kind::Dir { open }, marked, true);
                 if response.clicked() {
@@ -224,6 +227,10 @@ pub fn show(
                     }
                     if ui.button("New folder here").clicked() {
                         action = Action::NewFolder(root.clone());
+                        ui.close();
+                    }
+                    if index > 0 && ui.button("Use as active project").on_hover_text("Switch Git, tasks, AI and debugging to this folder; folder trust is checked separately.").clicked() {
+                        action = Action::ActivateRoot(root.clone());
                         ui.close();
                     }
                     if index > 0 && ui.button("Remove folder from workspace").clicked() {
@@ -537,6 +544,37 @@ mod tests {
             next.map(|path| path.display().to_string().replace('\\', "/")),
             toggle,
         )
+    }
+
+    #[test]
+    fn keyboard_rows_include_secondary_roots_and_their_files() {
+        let base = std::env::temp_dir().join(format!(
+            "forge-tree-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let first = base.join("first");
+        let second = base.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(second.join("file.txt"), "text").unwrap();
+        let mut workspace = Workspace::new(first.clone());
+        assert!(workspace.add_root(second.clone()));
+        let rows = visible_rows(&mut workspace);
+        assert_eq!(
+            rows.iter().map(|row| row.0.clone()).collect::<Vec<_>>(),
+            vec![first, second.clone(), second.join("file.txt")]
+        );
+        assert_eq!(
+            workspace.containing_root(&second.join("file.txt")),
+            Some(second.as_path())
+        );
+        workspace.toggle(&second);
+        assert_eq!(visible_rows(&mut workspace).len(), 2);
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

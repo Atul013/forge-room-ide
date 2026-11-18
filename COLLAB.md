@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- **2026-11-18 Codex:** Extending #81 with portable workspace documents, explicit active-project switching through existing trust/session boundaries, and root-aware navigation. Source and desktop acceptance pending.
+
 - **2026-11-18 Codex:** Completed PR #81's native multi-root workspace and Quick Open responsiveness bundle on code source `a3c1d69`. Secondary roots now cap at 15 consistently with session restore; cancellation coverage is deterministic. Focused local tests and strict Clippy pass. Windows verification [44257343480](https://github.com/ZayedBH/forge-room-ide/actions/runs/44257343480) passed (app 360 passed/9 ignored); package/install/uninstall/headless launch [44257396914](https://github.com/ZayedBH/forge-room-ide/actions/runs/44257396914) passed. Downloaded archive checksums matched and all five entries opened. Visible desktop/interactive installer acceptance remain open because the computer-use bridge was unavailable. PR #79 was already merged; #81 is the single bundled follow-up.
 - **2026-11-18 Codex:** Extended PR #81 with bounded, asynchronous Quick Open discovery and cancellation of superseded workspace scans. Local suite 359 passed/9 ignored; format/check/strict Clippy pass. Fresh Windows verification and package runs are pending for source `c3f998d`; previous source passed Windows verify and package/install/headless launch. Visible desktop interaction remains unverified. #79 was already merged, so #81 remains the single follow-up PR.
 

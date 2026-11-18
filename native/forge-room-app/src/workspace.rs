@@ -92,6 +92,29 @@ impl Workspace {
         )
     }
 
+    /// Validate an explicit project choice and return its persisted root order.
+    pub fn activation_roots(&self, root: &Path) -> Option<Vec<PathBuf>> {
+        let selected = self.roots.iter().find(|known| same_path(known, root))?;
+        if !selected.is_dir() {
+            return None;
+        }
+        let mut roots = vec![selected.clone()];
+        roots.extend(
+            self.roots
+                .iter()
+                .filter(|known| *known != selected)
+                .cloned(),
+        );
+        Some(roots)
+    }
+
+    pub fn containing_root(&self, path: &Path) -> Option<&Path> {
+        self.roots
+            .iter()
+            .find(|root| path.starts_with(root))
+            .map(PathBuf::as_path)
+    }
+
     pub fn name(&self) -> String {
         self.root
             .file_name()
@@ -244,6 +267,26 @@ mod tests {
         assert!(!workspace.add_root(overflow));
         assert_eq!(workspace.roots().len(), MAX_ADDITIONAL_ROOTS + 1);
         fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn activating_a_root_retains_all_roots_and_rejects_unavailable_choices() {
+        let base = temp_dir();
+        let first = base.join("one");
+        let second = base.join("two");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+        let mut workspace = Workspace::new(first.clone());
+        assert!(workspace.add_root(second.clone()));
+        assert_eq!(
+            workspace.activation_roots(&second),
+            Some(vec![second.clone(), first.clone()])
+        );
+        assert_eq!(workspace.roots(), &[first, second.clone()]);
+        assert!(workspace.activation_roots(&base).is_none());
+        fs::remove_dir(&second).unwrap();
+        assert!(workspace.activation_roots(&second).is_none());
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

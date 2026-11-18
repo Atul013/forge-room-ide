@@ -6,7 +6,11 @@ Explorer, Quick Open, Find in Files and Replace All operate across every configu
 
 The folder list is saved with the native window session. Older session files remain compatible because the new `folders` field is optional. Missing secondary folders are discarded on restore, and the primary folder remains the existing `folder` field.
 
-The first root remains the primary project scope for Git, task pipelines, language servers, AI context/provider requests and Network Room. Secondary roots are not silently sent to an AI provider or shared with a Room. This release does not claim cross-root Git or project-tool routing.
+The first root is the active project scope for Git, task pipelines, language servers, AI context/provider requests and Network Room. Use **Use as active project** in a secondary root's context menu to switch. The active project is labelled in Explorer and persisted first in the session. All roots and open documents (including dirty buffers) remain available. Switching uses the existing folder trust checks, resets language/debugger sessions, selects the new project AI conversation and reloads its local Room; the previous Network Room connection ends. Existing terminals retain their original cwd; any new terminal follows the active project. Secondary roots are not implicitly included in provider context.
+
+**File > Save Workspace As** creates a versioned `.forge-workspace` JSON file containing only the ordered folder list. Paths below the document's directory are relative, so a project group can move together; outside paths stay absolute. Save is create-only: choose a new filename to preserve an existing document. No trust grants, provider credentials, editor buffers, terminal commands or Room identities are exported. **File > Open Workspace** (also available in the command palette) validates the complete document before changing the workspace. Unknown schema fields/versions, oversized documents, duplicate/nested roots and missing folders are rejected. The first root goes through the normal trust flow.
+
+Explorer keyboard navigation traverses every configured root. Copy Relative Path resolves against the containing root, including secondary projects.
 
 ## Acceptance evidence
 
