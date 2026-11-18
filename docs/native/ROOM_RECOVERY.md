@@ -1,5 +1,7 @@
 # Public Room recovery checkpoints
 
+For opt-in automatic saving between manual checkpoints, see [Room journals](ROOM_JOURNAL.md).
+
 The host can explicitly save a new public recovery checkpoint and later recover it
 from Network Room controls. This is recovery to the last saved checkpoint, not an
 automatic journal: later changes, pending requests and in-flight actions are lost.

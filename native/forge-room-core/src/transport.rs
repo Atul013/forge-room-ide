@@ -288,6 +288,9 @@ struct Authority {
     reactions: Vec<MessageReaction>,
     patch_sequence: u64,
     recovered: HashMap<String, Member>,
+    journal: Option<recovery::Journal>,
+    journal_required: bool,
+    storage_error: Option<String>,
 }
 impl Authority {
     fn snapshot(&self, cursor: u64, viewer: Option<&str>) -> Snapshot {
@@ -355,6 +358,7 @@ impl Authority {
         }
     }
     fn handle(&mut self, request: Request) -> Result<Response> {
+        self.check_storage()?;
         let now = Instant::now();
         self.sessions.retain(|_, s| s.expires > now);
         self.sync_members();
@@ -853,6 +857,9 @@ impl Host {
             shared: workflow::SharedRoom::new()?,
             patches: Vec::new(),
             reactions: Vec::new(),
+            journal: None,
+            journal_required: false,
+            storage_error: None,
             recovered: HashMap::new(),
             patch_sequence: 0,
         }));
@@ -902,6 +909,7 @@ impl Host {
             return Err("Invite lifetime must be 1 second to 1 hour".into());
         }
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        state.check_storage()?;
         match state.lifecycle {
             RoomLifecycle::Active => {}
             RoomLifecycle::Paused => {
@@ -945,6 +953,7 @@ impl Host {
     /// Revocation also ejects sessions created with this invite, including offline clients.
     pub fn revoke(&self, invite: &Invite) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        state.check_storage()?;
         if let Some(grant) = state.grants.get_mut(&invite.token) {
             grant.revoked = true;
         }
@@ -954,7 +963,7 @@ impl Host {
         state
             .shared
             .audit(&host, "revoked an invite and its joined session");
-        Ok(())
+        state.persist()
     }
     pub fn lifecycle(&self) -> Result<RoomLifecycle> {
         Ok(self
@@ -965,26 +974,32 @@ impl Host {
     }
     pub fn pause(&self) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        state.check_storage()?;
         if state.lifecycle != RoomLifecycle::Active {
             return Err("Only an active Room can be paused".into());
         }
         state.lifecycle = RoomLifecycle::Paused;
         let host = state.shared.state.host_id.clone();
         state.shared.audit(&host, "paused the network Room");
-        Ok(())
+        state.persist()
     }
     pub fn resume(&self) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        state.check_storage()?;
+        if state.journal_required && state.journal.is_none() {
+            return Err("Start a fresh public journal before resuming a recovered journal".into());
+        }
         if state.lifecycle != RoomLifecycle::Paused {
             return Err("Only a paused Room can be resumed".into());
         }
         state.lifecycle = RoomLifecycle::Active;
         let host = state.shared.state.host_id.clone();
         state.shared.audit(&host, "resumed the network Room");
-        Ok(())
+        state.persist()
     }
     pub fn archive(&self) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        state.check_storage()?;
         if state.lifecycle == RoomLifecycle::Archived {
             return Err("Room is already archived".into());
         }
@@ -993,11 +1008,12 @@ impl Host {
         state
             .shared
             .audit(&host, "archived the network Room as read-only");
-        Ok(())
+        state.persist()
     }
     /// Host-local authority only. No serialized request can select the host actor.
     pub fn control(&self, action: Action) -> Result<()> {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        state.check_storage()?;
         let now = Instant::now();
         state.sessions.retain(|_, s| s.expires > now);
         state.sync_members();
@@ -1011,14 +1027,13 @@ impl Host {
         if let Action::ReviewPatch { id, decision } = action {
             return state.review_patch(&actor, id, decision);
         }
-        state.shared.apply(&actor, action)
+        state.shared.apply(&actor, action)?;
+        state.persist()
     }
     pub fn snapshot(&self) -> Result<Snapshot> {
-        Ok(self
-            .authority
-            .lock()
-            .map_err(|_| "Room unavailable")?
-            .snapshot(0, None))
+        let state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        state.check_storage()?;
+        Ok(state.snapshot(0, None))
     }
 }
 impl Drop for Host {
@@ -1259,18 +1274,23 @@ fn serve(socket: TcpStream, config: Arc<ServerConfig>, state: Arc<Mutex<Authorit
     timeouts(&socket)?;
     let connection = rustls::ServerConnection::new(config).map_err(|e| e.to_string())?;
     let mut stream = rustls::StreamOwned::new(connection, socket);
-    let request = read_frame(&mut stream)?;
-    let response = state
-        .lock()
-        .map_err(|_| "Room unavailable")?
-        .handle(request)
-        .unwrap_or_else(|error| Response {
-            rejection: None,
-            error: Some(error),
-            session: None,
-            identity: None,
-            snapshot: None,
-        });
+    let request: Request = read_frame(&mut stream)?;
+    let mutating = !matches!(&request, Request::Poll { .. });
+    let response = (|| {
+        let mut authority = state.lock().map_err(|_| "Room unavailable")?;
+        let response = authority.handle(request)?;
+        if mutating {
+            authority.persist()?;
+        }
+        Ok::<_, String>(response)
+    })()
+    .unwrap_or_else(|error| Response {
+        rejection: None,
+        error: Some(error),
+        session: None,
+        identity: None,
+        snapshot: None,
+    });
     write_frame(&mut stream, &response)
 }
 fn write_frame(stream: &mut impl Write, value: &impl Serialize) -> Result<()> {
@@ -1432,6 +1452,9 @@ mod tests {
                     emoji: REACTION_EMOJI[index % REACTION_EMOJI.len()].into(),
                 })
                 .collect(),
+            journal: None,
+            journal_required: false,
+            storage_error: None,
             recovered: HashMap::new(),
             patch_sequence: 0,
         };

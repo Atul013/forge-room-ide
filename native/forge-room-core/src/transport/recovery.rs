@@ -1,5 +1,7 @@
 //! Explicit immutable public checkpoints. No session token, invite, TLS key, DM or patch is saved.
 use super::*;
+mod journal;
+pub(super) use journal::Journal;
 use std::{fs::OpenOptions, path::Path};
 
 #[derive(Serialize, Deserialize)]
@@ -14,19 +16,8 @@ impl Host {
     /// Saves a new checkpoint without replacing any existing file. Later changes require a new save.
     pub fn save_checkpoint(&self, path: &Path) -> Result<()> {
         let state = self.authority.lock().map_err(|_| "Room unavailable")?;
-        let mut snapshot = state.snapshot(0, None);
-        snapshot.reactions.clear();
-        snapshot.shared.task_focus.clear();
-        snapshot.shared.code_locations.clear();
-        snapshot.shared.countdown.running = false;
-        for member in &mut snapshot.members {
-            member.online = false;
-        }
-        let checkpoint = Checkpoint {
-            version: 1,
-            host: state.shared.state.host_id.clone(),
-            snapshot,
-        };
+        state.check_storage()?;
+        let checkpoint = Checkpoint::capture(&state);
         checkpoint.validate()?;
         let bytes = serde_json::to_vec_pretty(&checkpoint).map_err(|e| e.to_string())?;
         if bytes.len() > MAX_FRAME {
@@ -55,8 +46,12 @@ impl Host {
         if bytes.len() > MAX_FRAME {
             return Err("Checkpoint is too large".into());
         }
+        Self::recover_bytes(bind, &bytes)
+    }
+
+    fn recover_bytes(bind: SocketAddr, bytes: &[u8]) -> Result<Self> {
         let checkpoint: Checkpoint =
-            serde_json::from_slice(&bytes).map_err(|e| format!("Invalid checkpoint: {e}"))?;
+            serde_json::from_slice(bytes).map_err(|e| format!("Invalid checkpoint: {e}"))?;
         checkpoint.validate()?;
         let host = Self::start(bind, &checkpoint.snapshot.room)?;
         {
@@ -121,6 +116,22 @@ impl Host {
 }
 
 impl Checkpoint {
+    fn capture(state: &Authority) -> Self {
+        let mut snapshot = state.snapshot(0, None);
+        snapshot.reactions.clear();
+        snapshot.shared.task_focus.clear();
+        snapshot.shared.code_locations.clear();
+        snapshot.shared.countdown.running = false;
+        for member in &mut snapshot.members {
+            member.online = false;
+        }
+        Checkpoint {
+            version: 1,
+            host: state.shared.state.host_id.clone(),
+            snapshot,
+        }
+    }
+
     fn validate(&self) -> Result<()> {
         let snapshot = &self.snapshot;
         let identity = |id: &str| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit());

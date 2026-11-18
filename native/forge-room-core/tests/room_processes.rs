@@ -14,6 +14,63 @@ struct Peer {
 }
 
 #[test]
+fn killed_host_recovers_acknowledged_public_work_from_disk() {
+    let path = std::env::temp_dir().join(format!(
+        "forge-killed-journal-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut server = Peer::start();
+    let hosted = server.request(json!({"command":"host_journal","path":path}));
+    let mut owner = Peer::start();
+    let joined = owner.request(json!({"command":"join","invite":hosted["invite"],"name":"Ada"}));
+    let identity = joined["identity"].as_str().unwrap().to_owned();
+    let ack = owner.request(json!({"command":"post","text":"saved before process kill"}));
+    assert!(ack["error"].is_null());
+    server.child.kill().unwrap();
+    server.child.wait().unwrap();
+    let host = Host::recover_journal("127.0.0.1:0".parse().unwrap(), &path).unwrap();
+    assert!(host
+        .snapshot()
+        .unwrap()
+        .events
+        .iter()
+        .any(|event| event.text == "saved before process kill"));
+    assert!(host
+        .recovered_members()
+        .unwrap()
+        .iter()
+        .any(|member| member.id == identity));
+    assert!(
+        host.resume().is_err(),
+        "fresh journal required after recovery"
+    );
+    let next = path.with_extension("next");
+    host.enable_journal(&next).unwrap();
+    host.resume().unwrap();
+    let mut returning = Peer::start();
+    let joined = returning.request(json!({"command":"join","invite":host.reclaim_invite(&identity,Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    assert_eq!(joined["identity"], identity);
+    assert!(
+        returning.request(json!({"command":"post","text":"saved after recovery"}))["error"]
+            .is_null()
+    );
+    drop(host);
+    let host = Host::recover_journal("127.0.0.1:0".parse().unwrap(), &next).unwrap();
+    assert!(host
+        .snapshot()
+        .unwrap()
+        .events
+        .iter()
+        .any(|event| event.text == "saved after recovery"));
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_file(next).unwrap();
+}
+
+#[test]
 fn checkpoint_restart_requires_fresh_claims_and_preserves_owner_work() {
     use forge_room_core::{
         transport::{Action, RoomLifecycle},
