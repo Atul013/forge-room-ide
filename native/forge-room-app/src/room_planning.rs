@@ -53,6 +53,26 @@ pub struct Panel {
     counter: u64,
     bulk_owner: String,
 }
+fn owner_label(snapshot: &Snapshot, id: &str) -> String {
+    if id.is_empty() {
+        return "Choose owner".into();
+    }
+    let name = snapshot
+        .members
+        .iter()
+        .find(|member| member.id == id)
+        .map(|member| member.name.as_str())
+        .or_else(|| {
+            snapshot
+                .shared
+                .tasks
+                .iter()
+                .find(|task| task.owner_id == id)
+                .map(|task| task.owner_name.as_str())
+        })
+        .unwrap_or("Unavailable owner");
+    format!("{} ({})", name, id.chars().take(8).collect::<String>())
+}
 fn blocked(snapshot: &Snapshot, task: &Task) -> Vec<String> {
     task.dependencies
         .iter()
@@ -194,8 +214,7 @@ impl Panel {
                 .selected_text(
                     self.owner_filter
                         .as_deref()
-                        .and_then(|id| snapshot.members.iter().find(|m| m.id == id))
-                        .map_or("All owners", |m| m.name.as_str()),
+                        .map_or_else(|| "All owners".to_owned(), |id| owner_label(snapshot, id)),
                 )
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.owner_filter, None, "All owners");
@@ -203,7 +222,7 @@ impl Panel {
                         ui.selectable_value(
                             &mut self.owner_filter,
                             Some(member.id.clone()),
-                            &member.name,
+                            owner_label(snapshot, &member.id),
                         );
                     }
                 });
@@ -296,16 +315,14 @@ impl Panel {
         });
         ui.horizontal_wrapped(|ui| {
             egui::ComboBox::from_id_salt("plan-bulk-owner")
-                .selected_text(
-                    snapshot
-                        .members
-                        .iter()
-                        .find(|m| m.id == self.bulk_owner)
-                        .map_or("Choose draft owner", |m| m.name.as_str()),
-                )
+                .selected_text(owner_label(snapshot, &self.bulk_owner))
                 .show_ui(ui, |ui| {
                     for member in &snapshot.members {
-                        ui.selectable_value(&mut self.bulk_owner, member.id.clone(), &member.name);
+                        ui.selectable_value(
+                            &mut self.bulk_owner,
+                            member.id.clone(),
+                            owner_label(snapshot, &member.id),
+                        );
                     }
                 });
             if ui
@@ -350,19 +367,13 @@ impl Panel {
                     ui.add(egui::TextEdit::singleline(&mut row.task.title).char_limit(200));
                     if row.task.existing.is_none() {
                         egui::ComboBox::from_id_salt("draft-owner")
-                            .selected_text(
-                                snapshot
-                                    .members
-                                    .iter()
-                                    .find(|m| m.id == row.task.owner)
-                                    .map_or("Choose joined owner", |m| m.name.as_str()),
-                            )
+                            .selected_text(owner_label(snapshot, &row.task.owner))
                             .show_ui(ui, |ui| {
                                 for member in &snapshot.members {
                                     ui.selectable_value(
                                         &mut row.task.owner,
                                         member.id.clone(),
-                                        &member.name,
+                                        owner_label(snapshot, &member.id),
                                     );
                                 }
                             });
