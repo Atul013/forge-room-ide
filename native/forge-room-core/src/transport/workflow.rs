@@ -5,9 +5,15 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+mod planning;
+pub use planning::{preview_plan, PlannedTask, TaskPlan};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
+    ApplyTaskPlan {
+        expected_tasks: Vec<Task>,
+        plan: TaskPlan,
+    },
     SetShipPlan {
         expected_revision: u64,
         plan: super::ShipPlan,
@@ -185,6 +191,8 @@ pub struct CodeLocation {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SharedSnapshot {
     #[serde(default)]
+    pub planning_supported: bool,
+    #[serde(default)]
     pub shipping: super::ShipState,
     #[serde(default)]
     pub readiness: super::ReadinessState,
@@ -282,6 +290,7 @@ impl SharedRoom {
     }
     pub(super) fn snapshot(&self) -> SharedSnapshot {
         SharedSnapshot {
+            planning_supported: true,
             shipping: self.shipping.clone(),
             readiness: self.readiness.view.clone(),
             milestones: self.milestones.clone(),
@@ -353,6 +362,12 @@ impl SharedRoom {
         }
         let before = self.state.activity.len();
         match action {
+            Action::ApplyTaskPlan {
+                expected_tasks,
+                plan,
+            } => {
+                return self.apply_plan(actor, expected_tasks, plan);
+            }
             Action::SetShipPlan { .. } | Action::ReportShipCheck { .. } => {
                 unreachable!("shipping authority handled action")
             }

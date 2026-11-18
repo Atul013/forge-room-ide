@@ -14,6 +14,78 @@ struct Peer {
 }
 
 #[test]
+fn independent_clients_review_plans_and_journal_recovery_preserves_the_batch() {
+    use forge_room_core::transport::{Action, PlannedTask, TaskPlan};
+    let path = std::env::temp_dir().join(format!(
+        "forge-plan-journal-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "large plan").unwrap();
+    host.enable_journal(&path).unwrap();
+    let (mut a, mut b) = (Peer::start(), Peer::start());
+    let joined=a.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    let owner = joined["identity"].as_str().unwrap().to_owned();
+    b.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Grace"}));
+    let entry = |key: &str, dependencies: Vec<String>| PlannedTask {
+        key: key.into(),
+        existing: None,
+        title: key.into(),
+        owner: owner.clone(),
+        criteria: vec!["reviewed check".into()],
+        dependencies,
+        priority: forge_room_core::TaskPriority::High,
+        due_hours: Some(24),
+        clear_due: false,
+    };
+    let plan = TaskPlan {
+        version: 1,
+        tasks: vec![
+            entry("verify", vec!["build".into()]),
+            entry("build", vec!["design".into()]),
+            entry("design", vec![]),
+        ],
+    };
+    let action = Action::ApplyTaskPlan {
+        expected_tasks: vec![],
+        plan: plan.clone(),
+    };
+    assert!(a.execute(action.clone())["rejection"].is_string());
+    host.control(action.clone()).unwrap();
+    let shared = b.request(json!({"command":"poll"}));
+    assert_eq!(
+        shared["snapshot"]["shared"]["tasks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        shared["snapshot"]["shared"]["tasks"][0]["dependencies"],
+        json!(["T2"])
+    );
+    assert!(host.control(action).is_err());
+    let before = host.snapshot().unwrap().shared.tasks;
+    let mut bad = plan;
+    bad.tasks[0].dependencies = vec!["missing".into()];
+    assert!(host
+        .control(Action::ApplyTaskPlan {
+            expected_tasks: before.clone(),
+            plan: bad
+        })
+        .is_err());
+    assert_eq!(host.snapshot().unwrap().shared.tasks, before);
+    drop(host);
+    let recovered = Host::recover_journal("127.0.0.1:0".parse().unwrap(), &path).unwrap();
+    assert_eq!(recovered.snapshot().unwrap().shared.tasks, before);
+    assert!(recovered.snapshot().unwrap().shared.planning_supported);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn killed_host_recovers_acknowledged_public_work_from_disk() {
     let path = std::env::temp_dir().join(format!(
         "forge-killed-journal-{}-{}",

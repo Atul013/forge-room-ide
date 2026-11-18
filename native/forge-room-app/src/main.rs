@@ -46,6 +46,7 @@ mod room_code_navigation;
 mod room_impact_scan;
 mod room_network;
 mod room_network_workflow;
+mod room_planning;
 mod room_preflight;
 mod room_readiness;
 mod room_shipping;
