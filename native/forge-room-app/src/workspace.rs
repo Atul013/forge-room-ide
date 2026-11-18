@@ -43,9 +43,7 @@ impl Workspace {
     pub fn add_root(&mut self, root: PathBuf) -> bool {
         if self.roots.len() > MAX_ADDITIONAL_ROOTS
             || !root.is_dir()
-            || self.roots.iter().any(|known| {
-                same_path(known, &root) || root.starts_with(known) || known.starts_with(&root)
-            })
+            || self.roots.iter().any(|known| roots_overlap(known, &root))
         {
             return false;
         }
@@ -143,6 +141,18 @@ impl Workspace {
     pub fn refresh(&mut self) {
         self.cache.clear();
     }
+}
+
+fn roots_overlap(left: &Path, right: &Path) -> bool {
+    let key = |path: &Path| {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        #[cfg(windows)]
+        let canonical = PathBuf::from(canonical.to_string_lossy().to_lowercase());
+        canonical
+    };
+    let left = key(left);
+    let right = key(right);
+    left.starts_with(&right) || right.starts_with(&left)
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
@@ -267,6 +277,22 @@ mod tests {
         assert!(!workspace.add_root(overflow));
         assert_eq!(workspace.roots().len(), MAX_ADDITIONAL_ROOTS + 1);
         fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn resolved_aliases_cannot_duplicate_or_nest_roots() {
+        let base = temp_dir();
+        let project = base.join("project");
+        fs::create_dir_all(project.join("child")).unwrap();
+        let mut workspace = Workspace::new(project.clone());
+        assert!(!workspace.add_root(project.join("child").join("..")));
+        assert!(!workspace.add_root(project.join("child")));
+        assert!(!workspace.add_root(base.clone()));
+        #[cfg(windows)]
+        assert!(!workspace.add_root(PathBuf::from(
+            project.join("child").to_string_lossy().to_uppercase()
+        )));
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
