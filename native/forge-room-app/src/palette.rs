@@ -4,15 +4,15 @@
 use crate::commands::{self, Command};
 use crate::{fuzzy, git, search, theme};
 use eframe::egui::{self, Align2, Key, Modifiers, RichText, Sense};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Default)]
 pub struct Palette {
     pub open: bool,
     query: String,
     selected: usize,
-    files: Vec<String>,
-    root: Option<PathBuf>,
+    files: Vec<(String, PathBuf)>,
+    roots: Vec<PathBuf>,
     focus: bool,
     /// When set, the box lists branches instead of files and commands.
     branches: Option<Vec<git::Branch>>,
@@ -54,23 +54,49 @@ impl Palette {
         self.focus = true;
     }
 
-    pub fn open_files(&mut self, root: Option<&Path>) {
+    pub fn open_files(&mut self, roots: &[PathBuf]) {
         self.symbols.clear();
         self.query.clear();
         self.selected = 0;
         self.open = true;
         self.focus = true;
-        if root != self.root.as_deref() || self.files.is_empty() {
-            self.files = root
-                .map(|root| {
-                    search::list_files(root)
+        if roots != self.roots.as_slice() || self.files.is_empty() {
+            self.files = roots
+                .iter()
+                .flat_map(|root| {
+                    let name = root
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| root.display().to_string());
+                    let label = if roots
                         .iter()
-                        .filter_map(|path| path.strip_prefix(root).ok())
-                        .map(|path| path.to_string_lossy().replace('\\', "/"))
-                        .collect()
+                        .filter(|candidate| candidate.file_name() == root.file_name())
+                        .count()
+                        > 1
+                    {
+                        format!(
+                            "{} — {}",
+                            name,
+                            root.parent()
+                                .map(|parent| parent.display().to_string())
+                                .unwrap_or_default()
+                        )
+                    } else {
+                        name
+                    };
+                    search::list_files(root)
+                        .into_iter()
+                        .filter_map(move |path| {
+                            let relative = path
+                                .strip_prefix(root)
+                                .ok()?
+                                .to_string_lossy()
+                                .replace('\\', "/");
+                            Some((format!("{label}/{relative}"), path))
+                        })
                 })
-                .unwrap_or_default();
-            self.root = root.map(Path::to_path_buf);
+                .collect();
+            self.roots = roots.to_vec();
         }
     }
 
@@ -174,7 +200,12 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                 if palette.files.is_empty() {
                     vec![Row::Hint("Open a folder to search its files")]
                 } else {
-                    fuzzy::rank(text, &palette.files, 14)
+                    let names: Vec<&str> = palette
+                        .files
+                        .iter()
+                        .map(|(name, _)| name.as_str())
+                        .collect();
+                    fuzzy::rank(text, &names, 14)
                         .into_iter()
                         .map(Row::File)
                         .collect()
@@ -320,7 +351,7 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
                                 );
                             }
                             Row::File(file_index) => {
-                                let path = &palette.files[*file_index];
+                                let path = &palette.files[*file_index].0;
                                 let (directory, name) = match path.rsplit_once('/') {
                                     Some((directory, name)) => (directory, name),
                                     None => ("", path.as_str()),
@@ -422,9 +453,7 @@ pub fn show(context: &egui::Context, palette: &mut Palette) -> Option<Outcome> {
             }
             Some(Row::Command(command, _, _)) => outcome = Some(Outcome::Run(*command)),
             Some(Row::File(file_index)) => {
-                if let Some(root) = &palette.root {
-                    outcome = Some(Outcome::Open(root.join(&palette.files[*file_index])));
-                }
+                outcome = Some(Outcome::Open(palette.files[*file_index].1.clone()));
             }
             Some(Row::Line(line)) => outcome = Some(Outcome::GoToLine(*line)),
             Some(Row::Symbol(index)) => {

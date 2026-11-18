@@ -118,6 +118,8 @@ pub enum Action {
     None,
     OpenFile(PathBuf),
     OpenFolder,
+    AddFolder,
+    RemoveRoot(PathBuf),
     Refresh,
     NewFile,
     NewFileIn(PathBuf),
@@ -173,6 +175,9 @@ pub fn show(
             if workspace.is_some() && ui.small_button("+ Folder").clicked() {
                 action = Action::NewFolder(workspace.as_ref().unwrap().root.clone());
             }
+            if workspace.is_some() && ui.small_button("Add Root").clicked() {
+                action = Action::AddFolder;
+            }
         });
     });
     ui.add_space(6.0);
@@ -201,34 +206,38 @@ pub fn show(
     egui::ScrollArea::vertical()
         .auto_shrink(false)
         .show(ui, |ui| {
-            let root = workspace.root.clone();
-            let open = workspace.is_expanded(&root);
-            let title = workspace.name();
-            let marked = Marked::of(state, &root);
-            let response = row(ui, 0, &title, Kind::Dir { open }, marked, true);
-            if response.clicked() {
-                state.selected = Some(root.clone());
-                state.focused = true;
-            }
-            response.context_menu(|ui| {
-                if ui.button("New file here").clicked() {
-                    action = Action::NewFileIn(root.clone());
-                    ui.close();
+            let roots = workspace.roots().to_vec();
+            for (index, root) in roots.iter().enumerate() {
+                let open = workspace.is_expanded(root);
+                let title = workspace.label(root);
+                let marked = Marked::of(state, root);
+                let response = row(ui, 0, &title, Kind::Dir { open }, marked, true);
+                if response.clicked() {
+                    state.selected = Some(root.clone());
+                    state.focused = true;
+                    workspace.toggle(root);
                 }
-                if ui.button("New folder here").clicked() {
-                    action = Action::NewFolder(root.clone());
-                    ui.close();
+                response.context_menu(|ui| {
+                    if ui.button("New file here").clicked() {
+                        action = Action::NewFileIn(root.clone());
+                        ui.close();
+                    }
+                    if ui.button("New folder here").clicked() {
+                        action = Action::NewFolder(root.clone());
+                        ui.close();
+                    }
+                    if index > 0 && ui.button("Remove folder from workspace").clicked() {
+                        action = Action::RemoveRoot(root.clone());
+                        ui.close();
+                    }
+                    if ui.button("Copy path").clicked() {
+                        ui.ctx().copy_text(root.display().to_string());
+                        ui.close();
+                    }
+                });
+                if open {
+                    tree(ui, workspace, root, 1, active, state, &mut action);
                 }
-                if ui.button("Copy path").clicked() {
-                    ui.ctx().copy_text(root.display().to_string());
-                    ui.close();
-                }
-            });
-            if response.clicked() {
-                workspace.toggle(&root);
-            }
-            if open {
-                tree(ui, workspace, &root, 1, active, state, &mut action);
             }
         });
     state.scroll_to_selected = false;

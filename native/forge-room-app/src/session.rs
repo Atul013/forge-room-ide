@@ -14,6 +14,9 @@ const MAX_FILES: usize = 40;
 pub struct Session {
     #[serde(default)]
     pub folder: Option<String>,
+    /// Secondary Explorer/search roots; `folder` remains the primary project root.
+    #[serde(default)]
+    pub folders: Vec<String>,
     #[serde(default)]
     pub files: Vec<String>,
     /// Index into `files` of the tab that was in front.
@@ -80,8 +83,16 @@ impl Session {
             }
         }
         let active = active_file.and_then(|file| files.iter().position(|known| *known == file));
+        let folders = self
+            .folders
+            .into_iter()
+            .filter(|item| Path::new(item).is_dir())
+            .filter(|item| folder.as_deref() != Some(item.as_str()))
+            .take(15)
+            .collect();
         Session {
             folder,
+            folders,
             files,
             active,
             terminals: self.terminals.min(MAX_TERMINALS),
@@ -141,6 +152,7 @@ mod tests {
         let gone = dir.join("gone.txt").display().to_string();
         let session = Session {
             folder: Some(dir.display().to_string()),
+            folders: vec![],
             files: vec![gone.clone(), a.clone(), b.clone(), a.clone()],
             active: Some(2),
             terminals: 99,
@@ -170,6 +182,7 @@ mod tests {
         // An active file that is gone leaves nothing active; a gone folder is dropped.
         let cleaned = Session {
             folder: Some(dir.join("nope").display().to_string()),
+            folders: vec![],
             files: vec![gone, a],
             active: Some(0),
             terminals: 0,
@@ -222,9 +235,39 @@ mod tests {
                 kept.display().to_string(),
                 kept.display().to_string().to_uppercase(),
             ],
+            folders: vec![],
             ..Session::default()
         };
         assert_eq!(twice.clean().files.len(), 1);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn secondary_workspace_folders_round_trip_and_missing_folders_are_dropped() {
+        let base = std::env::temp_dir().join(format!("forge-session-roots-{}", std::process::id()));
+        let primary = base.join("primary");
+        let secondary = base.join("secondary");
+        fs::create_dir_all(&primary).unwrap();
+        fs::create_dir_all(&secondary).unwrap();
+        let session = Session {
+            folder: Some(primary.display().to_string()),
+            folders: vec![
+                secondary.display().to_string(),
+                base.join("gone").display().to_string(),
+                primary.display().to_string(),
+            ],
+            ..Session::default()
+        };
+        assert_eq!(
+            session.clone().clean().folders,
+            vec![secondary.display().to_string()]
+        );
+        let file = base.join("session.json");
+        save_to(&file, &session).unwrap();
+        assert_eq!(
+            load_from(&file).clean().folders,
+            vec![secondary.display().to_string()]
+        );
+        fs::remove_dir_all(base).unwrap();
     }
 }

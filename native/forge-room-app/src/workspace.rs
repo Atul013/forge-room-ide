@@ -14,7 +14,9 @@ pub struct Entry {
 
 /// An opened folder with lazily-read, cached directory listings.
 pub struct Workspace {
+    /// Primary project root. Git, tasks, AI and Room remain scoped here.
     pub root: PathBuf,
+    roots: Vec<PathBuf>,
     expanded: HashSet<PathBuf>,
     cache: HashMap<PathBuf, Vec<Entry>>,
 }
@@ -24,10 +26,67 @@ impl Workspace {
         let mut expanded = HashSet::new();
         expanded.insert(root.clone());
         Self {
+            roots: vec![root.clone()],
             root,
             expanded,
             cache: HashMap::new(),
         }
+    }
+
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    /// Add a browse/search root, ignoring duplicate paths (including Windows case/slash aliases).
+    pub fn add_root(&mut self, root: PathBuf) -> bool {
+        if !root.is_dir()
+            || self.roots.iter().any(|known| {
+                same_path(known, &root) || root.starts_with(known) || known.starts_with(&root)
+            })
+        {
+            return false;
+        }
+        self.expanded.insert(root.clone());
+        self.roots.push(root);
+        self.cache.clear();
+        true
+    }
+
+    /// Remove a secondary root. The primary project root cannot be removed independently.
+    pub fn remove_root(&mut self, root: &Path) -> bool {
+        let Some(index) = self.roots.iter().position(|known| same_path(known, root)) else {
+            return false;
+        };
+        if index == 0 {
+            return false;
+        }
+        let removed = self.roots.remove(index);
+        self.expanded.retain(|path| !path.starts_with(&removed));
+        self.cache.retain(|path, _| !path.starts_with(&removed));
+        true
+    }
+
+    pub fn label(&self, root: &Path) -> String {
+        let name = root
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.display().to_string());
+        if self
+            .roots
+            .iter()
+            .filter(|candidate| candidate.file_name() == root.file_name())
+            .count()
+            < 2
+        {
+            return name;
+        }
+        format!(
+            "{} — {}",
+            name,
+            root.parent()
+                .map(|parent| parent.display().to_string())
+                .unwrap_or_default()
+        )
     }
 
     pub fn name(&self) -> String {
@@ -58,6 +117,13 @@ impl Workspace {
     pub fn refresh(&mut self) {
         self.cache.clear();
     }
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    let left = left.to_string_lossy().replace('/', "\\");
+    let right = right.to_string_lossy().replace('/', "\\");
+    left.trim_end_matches('\\')
+        .eq_ignore_ascii_case(right.trim_end_matches('\\'))
 }
 
 /// Directories first, then files, each alphabetically (case-insensitive).
@@ -135,6 +201,38 @@ mod tests {
         workspace.refresh();
         assert_eq!(workspace.entries(&dir).len(), 1);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn secondary_roots_are_deduplicated_removable_and_primary_is_retained() {
+        let primary = temp_dir();
+        let extra = temp_dir();
+        let mut workspace = Workspace::new(primary.clone());
+        assert!(workspace.add_root(extra.clone()));
+        assert!(!workspace.add_root(extra.clone()));
+        assert_eq!(workspace.roots(), &[primary.clone(), extra.clone()]);
+        assert!(!workspace.remove_root(&primary));
+        assert!(workspace.remove_root(&extra));
+        assert_eq!(workspace.roots(), &[primary.clone()]);
+        assert!(!workspace.add_root(primary.clone()));
+        assert!(!workspace.add_root(primary.join("missing")));
+        fs::create_dir(primary.join("nested")).unwrap();
+        assert!(!workspace.add_root(primary.join("nested")));
+        fs::remove_dir_all(primary).unwrap();
+        fs::remove_dir_all(extra).unwrap();
+    }
+
+    #[test]
+    fn duplicate_folder_names_get_disambiguated_explorer_labels() {
+        let base = temp_dir();
+        let left = base.join("left").join("src");
+        let right = base.join("right").join("src");
+        fs::create_dir_all(&left).unwrap();
+        fs::create_dir_all(&right).unwrap();
+        let mut workspace = Workspace::new(left.clone());
+        assert!(workspace.add_root(right.clone()));
+        assert_ne!(workspace.label(&left), workspace.label(&right));
+        fs::remove_dir_all(base).unwrap();
     }
 }
 

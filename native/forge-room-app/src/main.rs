@@ -529,6 +529,11 @@ impl ForgeRoomApp {
         if let Some(folder) = &session.folder {
             self.open_path(PathBuf::from(folder));
         }
+        if let Some(workspace) = self.workspace.as_mut() {
+            for folder in &session.folders {
+                workspace.add_root(PathBuf::from(folder));
+            }
+        }
         for file in &session.files {
             self.open_path(PathBuf::from(file));
         }
@@ -611,6 +616,18 @@ impl ForgeRoomApp {
                 .workspace
                 .as_ref()
                 .map(|workspace| workspace.root.display().to_string()),
+            folders: self
+                .workspace
+                .as_ref()
+                .map(|workspace| {
+                    workspace
+                        .roots()
+                        .iter()
+                        .skip(1)
+                        .map(|root| root.display().to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
             files,
             active,
         }
@@ -1252,8 +1269,12 @@ impl ForgeRoomApp {
             Command::Find => self.find.show_bar(false),
             Command::Replace => self.find.show_bar(true),
             Command::QuickOpen => {
-                let root = self.repo_root();
-                self.palette.open_files(root.as_deref());
+                let roots = self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.roots().to_vec())
+                    .unwrap_or_default();
+                self.palette.open_files(&roots);
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
@@ -3778,15 +3799,17 @@ impl ForgeRoomApp {
                 self.explorer_view(ui);
             }
             SidebarView::Search => {
-                let root = self.repo_root();
+                let roots = self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.roots().to_vec())
+                    .unwrap_or_default();
                 if let search_view::Action::Open {
                     path,
                     line,
                     column,
                     length,
-                } = self
-                    .search
-                    .show(ui, root.as_deref(), &self.tabs.dirty_paths())
+                } = self.search.show(ui, &roots, &self.tabs.dirty_paths())
                 {
                     self.open_path(path);
                     if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
@@ -4206,6 +4229,28 @@ impl ForgeRoomApp {
             explorer::Action::None => {}
             explorer::Action::OpenFile(path) => self.open_path(path),
             explorer::Action::OpenFolder => self.open_folder_dialog(),
+            explorer::Action::AddFolder => {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    let added = self
+                        .workspace
+                        .as_mut()
+                        .is_some_and(|workspace| workspace.add_root(path.clone()));
+                    self.status = if added {
+                        format!("Added {} to Explorer and search", path.display())
+                    } else {
+                        "Folder is invalid or already in this workspace".into()
+                    };
+                }
+            }
+            explorer::Action::RemoveRoot(path) => {
+                if self
+                    .workspace
+                    .as_mut()
+                    .is_some_and(|workspace| workspace.remove_root(&path))
+                {
+                    self.status = format!("Removed {} from this workspace", path.display());
+                }
+            }
             explorer::Action::NewFile => self.new_file(),
             explorer::Action::NewFileIn(directory) => self.new_file_in(&directory),
             explorer::Action::NewFolder(parent) => {
