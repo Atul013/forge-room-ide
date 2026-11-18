@@ -5,6 +5,8 @@ pub enum Command {
     NewFile,
     OpenFile,
     OpenFolder,
+    OpenWorkspace,
+    SaveWorkspace,
     Save,
     SaveAs,
     CloseTab,
@@ -73,6 +75,8 @@ pub enum Command {
 
 /// (command, title shown in the palette, shortcut hint)
 pub const ALL: &[(Command, &str, &str)] = &[
+    (Command::OpenWorkspace, "Workspace: Open Workspace File", ""),
+    (Command::SaveWorkspace, "Workspace: Save Workspace As", ""),
     (
         Command::LspStart,
         "Language: Start Session for Active File",

@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 /// Names never shown in the explorer (VS Code hides `.git` by default too).
 const HIDDEN: &[&str] = &[".git"];
+/// Session restore keeps at most this many secondary roots.
+pub const MAX_ADDITIONAL_ROOTS: usize = 15;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {
@@ -14,7 +16,9 @@ pub struct Entry {
 
 /// An opened folder with lazily-read, cached directory listings.
 pub struct Workspace {
+    /// Primary project root. Git, tasks, AI and Room remain scoped here.
     pub root: PathBuf,
+    roots: Vec<PathBuf>,
     expanded: HashSet<PathBuf>,
     cache: HashMap<PathBuf, Vec<Entry>>,
 }
@@ -24,10 +28,89 @@ impl Workspace {
         let mut expanded = HashSet::new();
         expanded.insert(root.clone());
         Self {
+            roots: vec![root.clone()],
             root,
             expanded,
             cache: HashMap::new(),
         }
+    }
+
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    /// Add a browse/search root, ignoring duplicate paths (including Windows case/slash aliases).
+    pub fn add_root(&mut self, root: PathBuf) -> bool {
+        if self.roots.len() > MAX_ADDITIONAL_ROOTS
+            || !root.is_dir()
+            || self.roots.iter().any(|known| roots_overlap(known, &root))
+        {
+            return false;
+        }
+        self.expanded.insert(root.clone());
+        self.roots.push(root);
+        self.cache.clear();
+        true
+    }
+
+    /// Remove a secondary root. The primary project root cannot be removed independently.
+    pub fn remove_root(&mut self, root: &Path) -> bool {
+        let Some(index) = self.roots.iter().position(|known| same_path(known, root)) else {
+            return false;
+        };
+        if index == 0 {
+            return false;
+        }
+        let removed = self.roots.remove(index);
+        self.expanded.retain(|path| !path.starts_with(&removed));
+        self.cache.retain(|path, _| !path.starts_with(&removed));
+        true
+    }
+
+    pub fn label(&self, root: &Path) -> String {
+        let name = root
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.display().to_string());
+        if self
+            .roots
+            .iter()
+            .filter(|candidate| candidate.file_name() == root.file_name())
+            .count()
+            < 2
+        {
+            return name;
+        }
+        format!(
+            "{} — {}",
+            name,
+            root.parent()
+                .map(|parent| parent.display().to_string())
+                .unwrap_or_default()
+        )
+    }
+
+    /// Validate an explicit project choice and return its persisted root order.
+    pub fn activation_roots(&self, root: &Path) -> Option<Vec<PathBuf>> {
+        let selected = self.roots.iter().find(|known| same_path(known, root))?;
+        if !selected.is_dir() {
+            return None;
+        }
+        let mut roots = vec![selected.clone()];
+        roots.extend(
+            self.roots
+                .iter()
+                .filter(|known| *known != selected)
+                .cloned(),
+        );
+        Some(roots)
+    }
+
+    pub fn containing_root(&self, path: &Path) -> Option<&Path> {
+        self.roots
+            .iter()
+            .find(|root| path.starts_with(root))
+            .map(PathBuf::as_path)
     }
 
     pub fn name(&self) -> String {
@@ -58,6 +141,25 @@ impl Workspace {
     pub fn refresh(&mut self) {
         self.cache.clear();
     }
+}
+
+fn roots_overlap(left: &Path, right: &Path) -> bool {
+    let key = |path: &Path| {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        #[cfg(windows)]
+        let canonical = PathBuf::from(canonical.to_string_lossy().to_lowercase());
+        canonical
+    };
+    let left = key(left);
+    let right = key(right);
+    left.starts_with(&right) || right.starts_with(&left)
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    let left = left.to_string_lossy().replace('/', "\\");
+    let right = right.to_string_lossy().replace('/', "\\");
+    left.trim_end_matches('\\')
+        .eq_ignore_ascii_case(right.trim_end_matches('\\'))
 }
 
 /// Directories first, then files, each alphabetically (case-insensitive).
@@ -135,6 +237,95 @@ mod tests {
         workspace.refresh();
         assert_eq!(workspace.entries(&dir).len(), 1);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn secondary_roots_are_deduplicated_removable_and_primary_is_retained() {
+        let primary = temp_dir();
+        let extra = temp_dir();
+        let mut workspace = Workspace::new(primary.clone());
+        assert!(workspace.add_root(extra.clone()));
+        assert!(!workspace.add_root(extra.clone()));
+        assert_eq!(workspace.roots(), &[primary.clone(), extra.clone()]);
+        assert!(!workspace.remove_root(&primary));
+        assert!(workspace.remove_root(&extra));
+        assert_eq!(workspace.roots().len(), 1);
+        assert_eq!(workspace.roots()[0], primary);
+        assert!(!workspace.add_root(primary.clone()));
+        assert!(!workspace.add_root(primary.join("missing")));
+        fs::create_dir(primary.join("nested")).unwrap();
+        assert!(!workspace.add_root(primary.join("nested")));
+        fs::remove_dir_all(primary).unwrap();
+        fs::remove_dir_all(extra).unwrap();
+    }
+
+    #[test]
+    fn secondary_roots_match_the_session_restore_limit() {
+        let parent = temp_dir();
+        let primary = parent.join("primary");
+        fs::create_dir(&primary).unwrap();
+        let mut workspace = Workspace::new(primary);
+
+        for index in 0..MAX_ADDITIONAL_ROOTS {
+            let root = parent.join(format!("extra-{index}"));
+            fs::create_dir(&root).unwrap();
+            assert!(workspace.add_root(root));
+        }
+
+        let overflow = parent.join("overflow");
+        fs::create_dir(&overflow).unwrap();
+        assert!(!workspace.add_root(overflow));
+        assert_eq!(workspace.roots().len(), MAX_ADDITIONAL_ROOTS + 1);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn resolved_aliases_cannot_duplicate_or_nest_roots() {
+        let base = temp_dir();
+        let project = base.join("project");
+        fs::create_dir_all(project.join("child")).unwrap();
+        let mut workspace = Workspace::new(project.clone());
+        assert!(!workspace.add_root(project.join("child").join("..")));
+        assert!(!workspace.add_root(project.join("child")));
+        assert!(!workspace.add_root(base.clone()));
+        #[cfg(windows)]
+        assert!(!workspace.add_root(PathBuf::from(
+            project.join("child").to_string_lossy().to_uppercase()
+        )));
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn activating_a_root_retains_all_roots_and_rejects_unavailable_choices() {
+        let base = temp_dir();
+        let first = base.join("one");
+        let second = base.join("two");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+        let mut workspace = Workspace::new(first.clone());
+        assert!(workspace.add_root(second.clone()));
+        assert_eq!(
+            workspace.activation_roots(&second),
+            Some(vec![second.clone(), first.clone()])
+        );
+        assert_eq!(workspace.roots(), &[first, second.clone()]);
+        assert!(workspace.activation_roots(&base).is_none());
+        fs::remove_dir(&second).unwrap();
+        assert!(workspace.activation_roots(&second).is_none());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn duplicate_folder_names_get_disambiguated_explorer_labels() {
+        let base = temp_dir();
+        let left = base.join("left").join("src");
+        let right = base.join("right").join("src");
+        fs::create_dir_all(&left).unwrap();
+        fs::create_dir_all(&right).unwrap();
+        let mut workspace = Workspace::new(left.clone());
+        assert!(workspace.add_root(right.clone()));
+        assert_ne!(workspace.label(&left), workspace.label(&right));
+        fs::remove_dir_all(base).unwrap();
     }
 }
 

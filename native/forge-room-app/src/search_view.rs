@@ -77,7 +77,7 @@ impl SearchView {
         self.receiver = None;
     }
 
-    fn start(&mut self, root: &Path) {
+    fn start(&mut self, roots: &[PathBuf]) {
         self.cancel.store(true, Ordering::Relaxed);
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancel = cancel.clone();
@@ -92,9 +92,9 @@ impl SearchView {
             return;
         }
         let (sender, receiver) = mpsc::channel();
-        let (root, query, mode) = (root.to_path_buf(), self.query.clone(), self.mode);
+        let (roots, query, mode) = (roots.to_vec(), self.query.clone(), self.mode);
         std::thread::spawn(move || {
-            let _ = sender.send(search::search(&root, &query, mode, &cancel));
+            let _ = sender.send(search::search_roots(&roots, &query, mode, &cancel));
         });
         self.receiver = Some(receiver);
         self.running = true;
@@ -102,9 +102,9 @@ impl SearchView {
 
     /// Replace every match of the query that was searched in every file, except the `protected`
     /// ones (open with unsaved changes). It runs on a worker thread; `take_replaced` reports.
-    fn start_replace(&mut self, root: &Path, protected: Vec<PathBuf>) {
-        let (root, query, mode, replacement) = (
-            root.to_path_buf(),
+    fn start_replace(&mut self, roots: &[PathBuf], protected: Vec<PathBuf>) {
+        let (roots, query, mode, replacement) = (
+            roots.to_vec(),
             self.searched_query.clone(),
             self.searched_mode,
             self.replacement.clone(),
@@ -112,14 +112,18 @@ impl SearchView {
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let never = AtomicBool::new(false);
-            let _ = sender.send(search::replace_in_files(
-                &root,
-                &query,
-                mode,
-                &replacement,
-                &protected,
-                &never,
-            ));
+            let mut total = search::Replaced::default();
+            for root in roots {
+                let next =
+                    search::replace_in_files(&root, &query, mode, &replacement, &protected, &never);
+                total.files += next.files;
+                total.replacements += next.replacements;
+                total.skipped.extend(next.skipped);
+                if total.error.is_none() {
+                    total.error = next.error;
+                }
+            }
+            let _ = sender.send(total);
         });
         self.replacing = Some(receiver);
         self.confirming = false;
@@ -175,12 +179,7 @@ impl SearchView {
         self.running || self.replacing.is_some() || self.dirty_since.is_some()
     }
 
-    pub fn show(
-        &mut self,
-        ui: &mut egui::Ui,
-        root: Option<&Path>,
-        protected: &[PathBuf],
-    ) -> Action {
+    pub fn show(&mut self, ui: &mut egui::Ui, roots: &[PathBuf], protected: &[PathBuf]) -> Action {
         let mut action = Action::None;
         ui.add_space(10.0);
         ui.horizontal(|ui| {
@@ -193,7 +192,7 @@ impl SearchView {
             );
         });
         ui.add_space(8.0);
-        let Some(root) = root else {
+        if roots.is_empty() {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
                 ui.label(
@@ -201,7 +200,7 @@ impl SearchView {
                 );
             });
             return action;
-        };
+        }
 
         // Text typed while the sidebar was away (or a search that never started) is searched now.
         if self.dirty_since.is_none()
@@ -212,7 +211,7 @@ impl SearchView {
             self.dirty_since = Some(Instant::now() - DEBOUNCE);
         }
         if std::mem::take(&mut self.replace_requested) {
-            self.start_replace(root, protected.to_vec());
+            self.start_replace(roots, protected.to_vec());
         }
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(12, 0))
@@ -233,7 +232,7 @@ impl SearchView {
                     }
                     if input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         self.dirty_since = None;
-                        self.start(root);
+                        self.start(roots);
                     }
                     for (flag, label, hint) in [
                         (&mut self.mode.case_sensitive, "Aa", "Match case"),
@@ -273,7 +272,7 @@ impl SearchView {
             && since.elapsed() >= DEBOUNCE
         {
             self.dirty_since = None;
-            self.start(root);
+            self.start(roots);
         }
         ui.add_space(8.0);
 
@@ -382,6 +381,10 @@ impl SearchView {
                 for hit in &results.hits {
                     if last != Some(&hit.path) {
                         last = Some(&hit.path);
+                        let root = roots
+                            .iter()
+                            .find(|root| hit.path.starts_with(root))
+                            .unwrap_or(&roots[0]);
                         file_header(ui, root, &hit.path);
                     }
                     if hit_row(ui, hit) {

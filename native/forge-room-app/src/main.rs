@@ -65,6 +65,7 @@ mod theme;
 mod theme_gallery;
 mod transforms;
 mod workspace;
+mod workspace_file;
 
 use commands::Command;
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
@@ -529,6 +530,11 @@ impl ForgeRoomApp {
         if let Some(folder) = &session.folder {
             self.open_path(PathBuf::from(folder));
         }
+        if let Some(workspace) = self.workspace.as_mut() {
+            for folder in &session.folders {
+                workspace.add_root(PathBuf::from(folder));
+            }
+        }
         for file in &session.files {
             self.open_path(PathBuf::from(file));
         }
@@ -611,6 +617,18 @@ impl ForgeRoomApp {
                 .workspace
                 .as_ref()
                 .map(|workspace| workspace.root.display().to_string()),
+            folders: self
+                .workspace
+                .as_ref()
+                .map(|workspace| {
+                    workspace
+                        .roots()
+                        .iter()
+                        .skip(1)
+                        .map(|root| root.display().to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
             files,
             active,
         }
@@ -863,6 +881,7 @@ impl ForgeRoomApp {
             }
             // Git and the project's tools only run where the user said so: a folder can carry
             // settings that make them start programs.
+            self.trust_prompt = None;
             let known = settings::load().trusted_folders;
             if settings::is_trusted(&known, &folder.display().to_string()) {
                 self.set_trust(true);
@@ -903,6 +922,75 @@ impl ForgeRoomApp {
     fn open_folder_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new().pick_folder() {
             self.open_path(path);
+        }
+    }
+
+    fn open_workspace_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Forge workspace", &["forge-workspace"])
+            .pick_file()
+        else {
+            return;
+        };
+        match workspace_file::load(&path) {
+            Ok(roots) => {
+                let roots: Vec<_> = roots.iter().map(|root| normalize(root)).collect();
+                self.open_path(roots[0].clone());
+                if self.repo_root().as_ref() == Some(&roots[0]) {
+                    if let Some(workspace) = &mut self.workspace {
+                        for root in roots.into_iter().skip(1) {
+                            workspace.add_root(root);
+                        }
+                    }
+                    self.status = format!("Opened workspace {}", path.display());
+                }
+            }
+            Err(error) => self.status = format!("Workspace not opened: {error}"),
+        }
+    }
+
+    fn save_workspace_dialog(&mut self) {
+        let Some(workspace) = &self.workspace else {
+            self.status = "Open a folder first".into();
+            return;
+        };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Forge workspace", &["forge-workspace"])
+            .set_file_name("project.forge-workspace")
+            .save_file()
+        else {
+            return;
+        };
+        self.status = match workspace_file::save(&path, workspace.roots()) {
+            Ok(()) => format!("Saved workspace {}", path.display()),
+            Err(error) => format!("Workspace not saved: {error}"),
+        };
+    }
+
+    fn activate_workspace_root(&mut self, root: PathBuf) {
+        let Some(workspace) = &self.workspace else {
+            return;
+        };
+        if !workspace.roots().contains(&root) || workspace.root == root {
+            return;
+        }
+        let Some(roots) = workspace.activation_roots(&root) else {
+            self.status = "Active project was not changed: folder is unavailable".into();
+            return;
+        };
+        let tabs = std::mem::take(&mut self.tabs);
+        self.open_path(root.clone());
+        self.tabs = tabs;
+        if self.repo_root().as_ref() == Some(&root) {
+            if let Some(workspace) = &mut self.workspace {
+                for previous in roots {
+                    workspace.add_root(previous);
+                }
+            }
+            self.status = format!(
+                "Active project: {}. Existing terminals retain their original folders.",
+                root.display()
+            );
         }
     }
 
@@ -1039,6 +1127,8 @@ impl ForgeRoomApp {
             Command::NewFile => self.new_file(),
             Command::OpenFile => self.open_file_dialog(),
             Command::OpenFolder => self.open_folder_dialog(),
+            Command::OpenWorkspace => self.open_workspace_dialog(),
+            Command::SaveWorkspace => self.save_workspace_dialog(),
             Command::Save => self.save_active(false),
             Command::SaveAs => self.save_active(true),
             Command::LspHover => self.start_lsp_query(lsp::QueryKind::Hover),
@@ -1173,8 +1263,12 @@ impl ForgeRoomApp {
                         self.status = "Copied the path".into();
                     }
                     (Some(path), Command::CopyRelativePath) => {
-                        let text = match self.repo_root() {
-                            Some(root) => file_ops::relative_display(&root, &path),
+                        let text = match self
+                            .workspace
+                            .as_ref()
+                            .and_then(|workspace| workspace.containing_root(&path))
+                        {
+                            Some(root) => file_ops::relative_display(root, &path),
                             None => path.display().to_string(),
                         };
                         self.egui_ctx.copy_text(text);
@@ -1252,8 +1346,12 @@ impl ForgeRoomApp {
             Command::Find => self.find.show_bar(false),
             Command::Replace => self.find.show_bar(true),
             Command::QuickOpen => {
-                let root = self.repo_root();
-                self.palette.open_files(root.as_deref());
+                let roots = self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.roots().to_vec())
+                    .unwrap_or_default();
+                self.palette.open_files(&roots);
             }
             Command::GoToLine if palette_mode => self.palette.open_commands(),
             Command::GoToLine => self.palette.open_goto(),
@@ -2746,6 +2844,20 @@ impl ForgeRoomApp {
                     }
                     ui.close();
                 }
+                if ui.button("Open Workspace...").clicked() {
+                    self.open_workspace_dialog();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.workspace.is_some(),
+                        egui::Button::new("Save Workspace As..."),
+                    )
+                    .clicked()
+                {
+                    self.save_workspace_dialog();
+                    ui.close();
+                }
                 self.recent_menu(ui);
                 ui.separator();
                 if ui
@@ -3778,15 +3890,17 @@ impl ForgeRoomApp {
                 self.explorer_view(ui);
             }
             SidebarView::Search => {
-                let root = self.repo_root();
+                let roots = self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.roots().to_vec())
+                    .unwrap_or_default();
                 if let search_view::Action::Open {
                     path,
                     line,
                     column,
                     length,
-                } = self
-                    .search
-                    .show(ui, root.as_deref(), &self.tabs.dirty_paths())
+                } = self.search.show(ui, &roots, &self.tabs.dirty_paths())
                 {
                     self.open_path(path);
                     if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
@@ -4206,6 +4320,32 @@ impl ForgeRoomApp {
             explorer::Action::None => {}
             explorer::Action::OpenFile(path) => self.open_path(path),
             explorer::Action::OpenFolder => self.open_folder_dialog(),
+            explorer::Action::AddFolder => {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    let added = self
+                        .workspace
+                        .as_mut()
+                        .is_some_and(|workspace| workspace.add_root(path.clone()));
+                    self.status = if added {
+                        format!("Added {} to Explorer and search", path.display())
+                    } else {
+                        format!(
+                            "Folder is invalid, already included, or the {}-root limit was reached",
+                            workspace::MAX_ADDITIONAL_ROOTS
+                        )
+                    };
+                }
+            }
+            explorer::Action::ActivateRoot(path) => self.activate_workspace_root(path),
+            explorer::Action::RemoveRoot(path) => {
+                if self
+                    .workspace
+                    .as_mut()
+                    .is_some_and(|workspace| workspace.remove_root(&path))
+                {
+                    self.status = format!("Removed {} from this workspace", path.display());
+                }
+            }
             explorer::Action::NewFile => self.new_file(),
             explorer::Action::NewFileIn(directory) => self.new_file_in(&directory),
             explorer::Action::NewFolder(parent) => {
@@ -4221,8 +4361,12 @@ impl ForgeRoomApp {
             }
             explorer::Action::Delete(path) => self.delete = Some(path),
             explorer::Action::CopyRelative(path) => {
-                let text = match self.repo_root() {
-                    Some(root) => file_ops::relative_display(&root, &path),
+                let text = match self
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.containing_root(&path))
+                {
+                    Some(root) => file_ops::relative_display(root, &path),
                     None => path.display().to_string(),
                 };
                 self.egui_ctx.copy_text(text);
