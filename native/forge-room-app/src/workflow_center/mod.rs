@@ -409,7 +409,7 @@ cancel=ui.button("Cancel this run").clicked();
             egui::Window::new("Review Room status receipt")
                 .id(egui::Id::unique("workflow-room-stage"))
                 .show(ctx, |ui| {
-                    ui.label(format!("Room {room} ? task {task}"));
+                    ui.label(format!("Room {room} / task {task}"));
                     ui.label(&text);
                     ui.weak("Staging fills a local evidence draft. Attach in Room is a separate action.");
                     if ui.button("Stage this status-only receipt").clicked() {

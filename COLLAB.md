@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- **2026-11-19 Codex:** Force-termination acceptance reproduced an owned validation child continuing after its runner died (new regression failed before fix). Adding private Windows kill-on-close jobs to the shared runner and rerunning validation/entire bundle checks within #86. 587fd48 Windows verification 44371054571 passed, but its package run 44371037533 was canceled because this lifecycle defect needs a new final head. No final runtime/package acceptance claim for superseded source. Assignment is lifecycle cleanup, not an OS sandbox.
+
 - **2026-11-19 Codex:** Final workflow UI source review found fixed pastel feedback colors on light themes; replaced them with existing theme-aware semantic colors. Same PR #86, no separate feature PR. Completion-ordering regression and all eleven center tests pass; strict Clippy passed. Superseded 84d7ffe runs will be canceled and full verification/package rerun for the final runtime head.
 
 - **2026-11-19 Codex:** PR #86 opened as the single combined workflow center bundle (initial source f94f49e). Review caught completion ordering after delayed polling; now invalidate expired budgets/removed contexts before accepting worker results, with regression. Also bind model prompt reads to frozen digests and reject unsupported model timeouts. Eleven workflow-center tests and Room guard regression cover this review pass; final checks pending. Canceled superseded runs 44369777526 / 44369776208 before requesting final head verification/package. Refreshed the cumulative product inventory to distinguish integrated recovery/planning/Ship/AI from still-open network agents, co-edit, hosted and desktop gates.

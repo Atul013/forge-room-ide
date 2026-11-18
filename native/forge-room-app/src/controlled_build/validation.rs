@@ -1,5 +1,7 @@
 //! Closed validation recipes, explicit argv, owned-process cancellation and bounded capture.
 pub use forge_room_core::workflows::CheckRecipe as Recipe;
+#[cfg(windows)]
+mod job;
 use serde::{Deserialize, Serialize};
 use std::{
     io::Read,
@@ -319,6 +321,8 @@ impl Run {
                 if canceled.load(Ordering::Acquire) {
                     return Err("Validation canceled before spawning".into());
                 }
+                #[cfg(windows)]
+                let job = job::Guard::new()?;
                 let mut command = Command::new(&plan.program);
                 command
                     .args(&plan.args)
@@ -334,6 +338,12 @@ impl Run {
                 let mut process = command
                     .spawn()
                     .map_err(|e| format!("Validation could not start: {e}"))?;
+                #[cfg(windows)]
+                if let Err(error) = job.assign(&process) {
+                    kill(&mut process);
+                    let _ = process.wait();
+                    return Err(error);
+                }
                 let stdout = reader(process.stdout.take().unwrap());
                 let stderr = reader(process.stderr.take().unwrap());
                 let start = Instant::now();
@@ -429,6 +439,88 @@ impl Drop for Run {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    #[test]
+    fn owned_child_cannot_outlive_runner_process() {
+        const ROLE: &str = "FORGE_VALIDATION_CRASH_FIXTURE";
+        const TEST: &str =
+            "controlled_build::validation::tests::owned_child_cannot_outlive_runner_process";
+        if let Some(root) = std::env::var_os(ROLE) {
+            let root = PathBuf::from(root).canonicalize().unwrap();
+            let temp = std::env::temp_dir().canonicalize().unwrap();
+            assert!(
+                root.starts_with(temp)
+                    && root
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("forge-owned-crash-")
+            );
+            let plan=Plan{program:PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/WindowsPowerShell/v1.0/powershell.exe"),args:vec!["-NoProfile".into(),"-NonInteractive".into(),"-Command".into(),"[IO.File]::WriteAllText([IO.Path]::Combine($env:FORGE_VALIDATION_CRASH_FIXTURE,'child-started'),'owned'); Start-Sleep -Milliseconds 1000; [IO.File]::WriteAllText([IO.Path]::Combine($env:FORGE_VALIDATION_CRASH_FIXTURE,'child-finished'),'orphan')".into()],root:root.clone(),recipe:Recipe::CargoCheck};
+            let mut run = Run::start(plan, 30, || {});
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !root.join("child-started").exists() {
+                assert!(run.poll().is_none(), "Owned child ended before startup");
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::fs::write(root.join("helper-ready"), "ready").unwrap();
+            loop {
+                assert!(
+                    run.poll().is_none(),
+                    "Helper was not terminated before child completion"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        let root = temp.join(format!(
+            "forge-owned-crash-{}",
+            forge_room_core::workflows::new_id().unwrap()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", TEST, "--test-threads=1"])
+            .env(ROLE, crate::tabs::normalize(&root))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        let mut helper = command.spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !root.join("helper-ready").exists() {
+            assert!(
+                helper.try_wait().unwrap().is_none(),
+                "Runner helper exited before readiness"
+            );
+            if Instant::now() >= deadline {
+                let _ = helper.kill();
+                let _ = helper.wait();
+                panic!("Runner helper did not become ready");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        helper.kill().unwrap();
+        helper.wait().unwrap();
+        std::thread::sleep(Duration::from_millis(1800));
+        let orphan = root.join("child-finished").exists();
+        assert!(
+            root.starts_with(&temp)
+                && root
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("forge-owned-crash-")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            !orphan,
+            "Owned validation child kept running after its runner process was force-terminated"
+        );
+    }
     fn run(script: &str, seconds: u64, cancel: bool) -> Evidence {
         let plan = Plan {
             program: PathBuf::from(std::env::var_os("SystemRoot").unwrap())
