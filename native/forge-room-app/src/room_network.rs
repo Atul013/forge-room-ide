@@ -104,6 +104,9 @@ impl NetworkRoom {
                 }
             }
         }
+        if self.host.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
+        }
         if self.connection.is_none()
             && let Some(host) = &self.host
         {
@@ -248,10 +251,14 @@ impl NetworkRoom {
                 for action in actions {
                     if !matches!(action,Action::Message {..}|Action::ContextMessage {..}|Action::MentionMessage {..}|Action::React {..}|Action::RequestHandoff {..}|Action::SharePatch {..}|Action::ShareFocus {..}|Action::ShareLocation {..}) && let Some(host)=&self.host {
                         if let Err(error)=host.control(action.clone()) {self.workflow.restore(action);self.notice=Some(error);}
-                    } else if let Some(connection)=&self.connection
-                        && let Err(error)=connection.commands.try_send(Command::Action(action)) {
+                    } else if let Some(connection)=&self.connection {
+                        if let Err(error)=connection.commands.try_send(Command::Action(action)) {
                             if let Command::Action(action)=match error {mpsc::TrySendError::Full(command)|mpsc::TrySendError::Disconnected(command)=>command} {self.workflow.restore(action);}
                             self.notice=Some("Action queue busy or disconnected; try again".into());
+                        }
+                    } else {
+                        self.workflow.restore(action);
+                        self.notice=Some("Join the recovered Room before sending member actions".into());
                     }
                 }
                 ui.label("Presence expires after 10 seconds offline. Active sessions renew; reconnect retains identity for one idle hour while the host runs. Local Room tasks and files are not imported.");
