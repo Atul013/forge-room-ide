@@ -28,7 +28,8 @@ pub use readiness::{
     TaskReadiness,
 };
 pub use workflow::{
-    Action, CodeLocation, CodeReference, Countdown, Milestone, SharedSnapshot, TaskFocus,
+    preview_plan, Action, CodeLocation, CodeReference, Countdown, Milestone, PlannedTask,
+    SharedSnapshot, TaskFocus, TaskPlan,
 };
 
 const VERSION: u32 = 3;

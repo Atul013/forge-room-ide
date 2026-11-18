@@ -28,6 +28,10 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- **2026-11-18 Codex:** Planning workspace source builds as one combined bundle: board/filter/navigation, reviewed atomic plans and editing, capture-all, templates/import/export, starter chains, stale guards and readiness/Ship invalidation. Core 41 + 13 process and strict Clippy pass; separate clients/journal restart prove atomic public batches. Full app/Windows gates pending. Templates clear owners and force external-dependency remapping; drafts and prior files are preserved.
+
+- **2026-11-18 Codex:** Starting one large Room planning workspace PR: reviewed atomic multi-task plans, task criteria/dependency edits, reusable plan import/export, dependency-aware board and plan staleness/invalidation. Shared core/app ownership claimed. Preserve owner handoffs, completed work, journals and public/private boundaries; desktop/provider/physical gates remain separate.
+
 - **2026-11-18 Codex:** Merged public durable journal #84 at d73f380 after final source e5bfb07 passed Windows verify 44303976962: core 39 + 12 process, app 377/9 ignored, format/strict Clippy. Forced host kill/reclaim and fail-closed storage tests pass; all recovered mutations require a fresh journal. Full verify/package/install/uninstall/headless launch 44303967279 passed; downloaded ZIP/installer SHA-256 matched, all five ZIP entries/license notices verified, data/projects preserved. Receipts: artifacts/acceptance/room-journal-44303967279/. Final documentation-only receipt leaves tested runtime/package inputs unchanged. Desktop pipe missing; no native model server or second physical device available; no manual acceptance claim.
 
 - **2026-11-18 Codex:** Starting cohesive automatic public Room journal/restart bundle; shared core/app ownership claimed. Persist mutations before acknowledgement, fail closed on storage errors, recover complete records after interrupted writes, retain private-data exclusion and fresh reclaim credentials. Desktop/native HTTP/physical gates remain open.
