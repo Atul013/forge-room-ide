@@ -1,0 +1,67 @@
+# Workflow execution center
+
+Native Rust/egui project workflows combine closed process recipes, dependency graphs, explicit human acceptance and optional text-only native model review. Open **Workflows → Open Workflow execution center**. The existing terminal task runner remains available below that entry point.
+
+## Definition and review
+
+The project library is `.forge-room/workflows.json`, version 1, at most 32 workflows / 1 MiB. New projects start with nine editable templates: Rust quality, Python/pytest, Python/unittest, Node, Go, .NET, manual release, regression loop, and tests/AI/human review. Templates are definitions, not completed checks.
+
+The structured editor supports identities/titles, ordered presentation, duplicate/add/remove steps, dependency selection, success/failure/always branches, optional steps, manual instructions, approval questions, checkpoints, recipe selection, execution contexts, cwd, explicit inputs, artifact files, named resources, timeouts and reviewed retry counts. Advanced JSON exposes the complete schema and must validate before Apply. An open JSON draft locks definition selection/import so unfinished text is preserved.
+
+Typed parameters support text, declared choices, booleans and relative paths, defaults and required values. `${key}` substitution is literal; no environment or shell interpolation occurs. Select targets to run their transitive prerequisite closure; no target selection means the whole graph. Unknown dependencies, repeated keys, self edges, cycles, invalid parameters, unsafe paths and oversized policies fail before execution.
+
+Library import appends and remaps colliding workflow identities. VS Code JSON/JSONC task import recognizes exact supported **process** recipes. Shell/custom arguments/background tasks, options/environment/cwd overrides and platform overrides become visibly manual gates containing their original definition. Imported commands are never passed to a shell. Dependencies are retained and validated; missing or ambiguous task labels fail the import.
+
+Saving the project library requires the previously loaded file digest. A changed/deleted external file is preserved and a stale save fails. Existing bytes receive a create-only private backup before atomic replacement; there is no in-place fallback. At most 32 definition backups are retained; archive obsolete backups explicitly when that limit is reached. Exports are create-only. Private editor snapshots preserve structured and unfinished JSON drafts, including invalid drafts that still need correction. They are periodically saved, flushed on window/project close and normal exit, restored locally, and still require explicit guarded project-file save. A crash can lose the most recent two seconds of editing. A failed private save is reported and the current process retains the draft in memory.
+
+**Resolve tools and freeze review draft** requires a trusted active project with no dirty buffers. Resolution runs in a worker, never starts a command, and creates an immutable saved review. Inspect exact executable/argv/cwd, executable SHA-256, explicit and inferred manifest input hashes, targets, parameters, captured-artifact selectors and expanded JSON before **Approve frozen plan and queue**. An unsaved definition can be reviewed directly; this freezes the displayed definition, not a promise to follow subsequent project-library edits.
+
+## Closed process catalog
+
+| Family | Recipes |
+|---|---|
+| Rust | Cargo check/all-targets, test, build, fmt/check, Clippy with warnings denied, doc/no-deps |
+| Python | Selected-file `py_compile`, pytest/quiet, unittest/discover/verbose |
+| Node | Built-in `node --test`, optionally selected JS/CJS/MJS files |
+| Go | Module-root test and vet over `./...` |
+| .NET | Build or test one selected solution/project; otherwise require an unambiguous local solution/project |
+
+These are fourteen argv recipes, not arbitrary commands. Python uses a project interpreter when present, otherwise an executable found on an absolute PATH. Missing tools/SDKs are explicit failures. Cargo manifest and .NET target selection must stay inside the reviewed context. Project build scripts, test code and tool configuration can execute project code: folder trust and exact review remain meaningful requirements.
+
+Before launch the executor resolves the closed recipe again and checks command/tool/input seals, context registration and path containment. Linked/reparse, traversal, repository metadata and common credential paths are rejected. Optional tracked-file sealing uses bounded Git listing, at most 512 inputs per step / 2,048 sealed entries and 32 MiB total input bytes; metadata is capped at 2 MiB. A tool binary is capped at 256 MiB, each sealed input at 8 MiB. Without tracked sealing, a receipt covers the explicitly sealed inputs and discovered manifests, not every source file a project tool could read. Completion detects changed sealed inputs and records failure/stale evidence.
+
+## Execution, decisions and controls
+
+The private local queue allows eight active/draft runs, four owned attempts globally, and one to four attempts per run. Overlapping canonical execution roots serialize even under different aliases or different runs. Explicit resource names lock across runs too. Contexts consist of the active project and registered, validated Git worktrees. The Contexts tab can create/register a new isolated branch/worktree; it never merges, deletes or silently selects it as the AI panel's execution target. Registration, branch and paths are checked again before context execution.
+
+Every executable attempt receives a unique token and is durably saved **before** an owned process or model request starts. Results must match the exact running token; duplicate and foreign results are rejected. Process launches use explicit argv, null stdin, bounded stdout/stderr capture, timeout and owned-process cancellation. On Windows the existing validation runner stops its owned process tree. No unrelated terminal/server process is selected for termination.
+
+Prerequisites and branch conditions determine readiness. Required failure can stop independent success branches or allow them according to policy; failure/always branches remain available. Optional failures/skips remain visible and never become fabricated passes. Human manual/approval decisions need their own explanation and keep `ManualReport`/`Approval` provenance. A checkpoint records local run progression, not a test. Approving a graph does not answer its manual gates.
+
+Pause prevents new launches; running owned attempts may finish. Resume continues the same reviewed run. Cancel stops pending work and cancels owned processes/requests. Active-root, trust, context or dirty-buffer changes invalidate executable work. Retry resets the selected step and its descendants, retains all previous receipts and consumed budgets, and requires a fresh full-plan approval plus individual repeat-attempt approval. Fork creates a new editable definition/run for changed inputs or exhausted budgets.
+
+Policies bound attempts (512), wall time (one day), output (32 MiB), captured artifacts (64 MiB), per-step timeout (one hour), retries (four), model request reservations (eight) and reserved model output tokens (262,144). An exhausted attempt limit prevents the **next** attempt; it does not kill the last allowed running attempt. Wall time also has an in-process monotonic guard. Process capture is bounded at 64 KiB per stream and native model text at 512 KiB; concurrent attempts can finish with bounded output beyond the remaining run output budget, which is recorded as failure and prevents subsequent work. Token reservations bound requested output and local scheduling, not provider billing or a server that ignores limits. Retry/recovery do not refund uncertain reservations.
+
+## Native model steps
+
+Configure/enable the existing native HTTP provider in the AI panel. A workflow model step uses that provider with empty history and its declared output/time limits. It optionally includes status-only step summaries and explicitly reviewed input contents. Input contents pass existing path/size checks and a best-effort credential filter; inspect the entire prompt regardless. No raw command logs are attached automatically.
+
+Each model step requires both an attempt approval and a separate **Send this exact native request** review displaying endpoint, model, requested token reservation and JSON body. Before sending, input seals are checked again and a private digest receipt is durably written. No key value is persisted; the provider still reads its configured environment variable. A declined/preparation-failed/uncertain attempt can retain its conservative reservation. Requests are text-only: no tool definitions, filesystem edits, shell commands or automatic Room completion. Model responses are `NativeModel` suggestions, never native-test or desktop acceptance evidence. Incomplete/failed responses remain failures and partial local text can be retained for inspection.
+
+## Durable private history and projections
+
+Storage is scoped by the canonical source path under `%LOCALAPPDATA%/Forge Room Early Preview/workflow-center/<source-hash>`. A file lock permits one writer per project. History is capped at 32 runs / 512 MiB. Create-only records contain checksums and completion markers and are synced before acknowledgement. Each run keeps its immutable review, latest three state snapshots, complete attempt details, request digests and explicitly captured artifacts. Redundant state/editor snapshots are compacted; attempt evidence is not silently pruned. A torn newest state snapshot can fall back to an earlier complete snapshot; a corrupt **complete** record fails closed. Corrupt/missing immutable review records require explicit local investigation; they are not silently discarded to unblock execution.
+
+On reopening, nonterminal runs become Interrupted, live attempt ownership and approvals are cleared, and former running attempts receive interrupted receipts. Nothing automatically reattaches to an old PID or starts a request. Review/retry or fork explicitly. Recovered elapsed wall time and reservations remain conservative. Any durable write failure stops new execution and cancels owned work; fix the storage problem and reopen before continuing.
+
+History shows step states/dependencies, provenance, attempts, immutable review, timeline, local stdout/stderr, native model text, capture completeness/truncation and artifact integrity. Explicit regular artifact files are copied locally with SHA-256, at most 8 MiB each within the run budget. Changed/missing/unsafe artifacts fail capture; checksum verification detects later storage changes. Artifact export verifies again and creates a new destination file. Delete requires explicit confirmation and an inactive run, validates containment and regular files, and deletes only that run's private history. Comparisons show plan/input equality, state and elapsed-time differences without pretending different inputs are a controlled performance comparison.
+
+Status report copy/JSON export and AI-context staging project only run/step status, counts, seals and provenance. They exclude absolute paths, source bodies, output logs, private notes, model response text and artifact bodies. AI capture and Include/send remain separate, and capture requires an idle trusted workspace outside a controlled session.
+
+Network Room task import creates a **manual acceptance skeleton**, preserving task dependencies and public Room/task identity. New hosts expose a random noncredential Room identity in an additive snapshot field; older peers/legacy recovered Rooms without a unique identity cannot stage these receipts. The status-only Room preview is at most 500 bytes and must match the currently connected Room and current task owner. It preserves an existing evidence draft and requires a later explicit Attach action. No task ownership/status/criteria or shared evidence changes automatically. A workflow receipt never completes a Room task.
+
+## Evidence and acceptance
+
+Source tests exercise schema/graph/approval/provenance/counter validation; conditional branches; resource locks; pause/retry/cancel; target closure; model reservations; unique Room scopes; project save conflicts/backups; exact task-import conversion; stale input and arbitrary saved-command rejection; single-writer storage; torn-tail/corrupt record handling; private drafts and interrupted leases; owned-process trust revocation; real disposable Python/Node/Cargo recipes; local artifact integrity; status projection privacy; native-model mock transport and explicit send gating; and offscreen egui frame construction. Tool-dependent smoke tests explicitly skip unavailable tools; the Windows hosted suite separately establishes its own available-tool coverage.
+
+CI format/check/tests/strict Clippy, full Windows packaging/license notices, installer/uninstaller preservation and headless launch are distinct automated gates. Offscreen egui frames do not establish visible desktop usability. Mock HTTP does not establish native live-model inference. Independent same-host peer tests do not establish physical two-client LAN acceptance. Those three hands-on gates remain open until separately observed and recorded in `progress.md`.

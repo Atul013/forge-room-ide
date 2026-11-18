@@ -1,4 +1,5 @@
 //! Closed validation recipes, explicit argv, owned-process cancellation and bounded capture.
+pub use forge_room_core::workflows::CheckRecipe as Recipe;
 use serde::{Deserialize, Serialize};
 use std::{
     io::Read,
@@ -11,38 +12,14 @@ use std::{
     },
     time::{Duration, Instant},
 };
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Recipe {
-    CargoCheck,
-    CargoTest,
-    PythonCompile,
-    Pytest,
-}
-impl Recipe {
-    pub const ALL: [Self; 4] = [
-        Self::CargoCheck,
-        Self::CargoTest,
-        Self::PythonCompile,
-        Self::Pytest,
-    ];
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::CargoCheck => "cargo check --all-targets",
-            Self::CargoTest => "cargo test",
-            Self::PythonCompile => "Python compile selected .py files",
-            Self::Pytest => "python -m pytest -q",
-        }
-    }
-}
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Plan {
     pub program: PathBuf,
     pub args: Vec<String>,
     pub root: PathBuf,
     pub recipe: Recipe,
 }
-fn find(program: &str) -> Option<PathBuf> {
+pub(crate) fn find(program: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     for dir in std::env::split_paths(&path).filter(|p| p.is_absolute()) {
         let file = dir.join(if cfg!(windows) {
@@ -60,7 +37,12 @@ impl Plan {
     pub fn resolve(root: &Path, recipe: Recipe, files: &[PathBuf]) -> Result<Self, String> {
         let root = root.canonicalize().map_err(|e| e.to_string())?;
         let (program, args) = match recipe {
-            Recipe::CargoCheck | Recipe::CargoTest => {
+            Recipe::CargoCheck
+            | Recipe::CargoTest
+            | Recipe::CargoBuild
+            | Recipe::CargoFmtCheck
+            | Recipe::CargoClippy
+            | Recipe::CargoDoc => {
                 let manifest = crate::diagnostics::find_manifest(&root)
                     .ok_or("No Cargo.toml was found")?
                     .canonicalize()
@@ -69,10 +51,14 @@ impl Plan {
                     return Err("Cargo manifest resolves outside this workspace".into());
                 }
                 let mut args = vec![
-                    if recipe == Recipe::CargoCheck {
-                        "check"
-                    } else {
-                        "test"
+                    match recipe {
+                        Recipe::CargoCheck => "check",
+                        Recipe::CargoTest => "test",
+                        Recipe::CargoBuild => "build",
+                        Recipe::CargoFmtCheck => "fmt",
+                        Recipe::CargoClippy => "clippy",
+                        Recipe::CargoDoc => "doc",
+                        _ => unreachable!(),
                     }
                     .into(),
                     "--manifest-path".into(),
@@ -80,15 +66,26 @@ impl Plan {
                         .to_string_lossy()
                         .into_owned(),
                 ];
-                if recipe == Recipe::CargoCheck {
-                    args.push("--all-targets".into());
+                match recipe {
+                    Recipe::CargoCheck => args.push("--all-targets".into()),
+                    Recipe::CargoFmtCheck => {
+                        args.extend(["--all".into(), "--".into(), "--check".into()])
+                    }
+                    Recipe::CargoClippy => args.extend([
+                        "--all-targets".into(),
+                        "--".into(),
+                        "-D".into(),
+                        "warnings".into(),
+                    ]),
+                    Recipe::CargoDoc => args.push("--no-deps".into()),
+                    _ => (),
                 }
                 (
                     find("cargo").ok_or("Cargo is unavailable on an absolute PATH")?,
                     args,
                 )
             }
-            Recipe::PythonCompile | Recipe::Pytest => {
+            Recipe::PythonCompile | Recipe::Pytest | Recipe::PythonUnittest => {
                 let venv = if cfg!(windows) {
                     "Scripts/python.exe"
                 } else {
@@ -102,15 +99,18 @@ impl Plan {
                     .ok_or("Python is unavailable")?;
                 let mut args = vec![
                     "-m".into(),
-                    if recipe == Recipe::PythonCompile {
-                        "py_compile"
-                    } else {
-                        "pytest"
+                    match recipe {
+                        Recipe::PythonCompile => "py_compile",
+                        Recipe::Pytest => "pytest",
+                        Recipe::PythonUnittest => "unittest",
+                        _ => unreachable!(),
                     }
                     .into(),
                 ];
                 if recipe == Recipe::Pytest {
                     args.push("-q".into());
+                } else if recipe == Recipe::PythonUnittest {
+                    args.extend(["discover".into(), "-v".into()]);
                 } else {
                     for file in files
                         .iter()
@@ -127,6 +127,102 @@ impl Plan {
                     }
                 }
                 (program, args)
+            }
+            Recipe::NodeTest => {
+                let mut args = vec!["--test".into()];
+                for file in files.iter().filter(|path| {
+                    path.extension().is_some_and(|extension| {
+                        ["js", "cjs", "mjs"]
+                            .iter()
+                            .any(|allowed| extension == *allowed)
+                    })
+                }) {
+                    let path = file.canonicalize().map_err(|e| e.to_string())?;
+                    if !path.starts_with(&root) {
+                        return Err("Node test input is outside the workspace".into());
+                    }
+                    args.push(crate::tabs::normalize(&path).to_string_lossy().into_owned());
+                }
+                (find("node").ok_or("Node is unavailable")?, args)
+            }
+            Recipe::GoTest | Recipe::GoVet => {
+                let manifest = root
+                    .join("go.mod")
+                    .canonicalize()
+                    .map_err(|_| "Choose the Go module folder containing go.mod")?;
+                if !manifest.starts_with(&root) {
+                    return Err("Go manifest is outside this root".into());
+                }
+                (
+                    find("go").ok_or("Go is unavailable")?,
+                    vec![
+                        if recipe == Recipe::GoTest {
+                            "test".into()
+                        } else {
+                            "vet".into()
+                        },
+                        "./...".into(),
+                    ],
+                )
+            }
+            Recipe::DotnetBuild | Recipe::DotnetTest => {
+                let mut candidates = files
+                    .iter()
+                    .filter(|path| {
+                        path.extension().is_some_and(|extension| {
+                            ["sln", "slnx", "csproj", "fsproj", "vbproj"]
+                                .iter()
+                                .any(|allowed| extension == *allowed)
+                        })
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if candidates.is_empty() {
+                    candidates = std::fs::read_dir(&root)
+                        .map_err(|e| e.to_string())?
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|path| {
+                            path.extension().is_some_and(|extension| {
+                                ["sln", "slnx"].iter().any(|allowed| extension == *allowed)
+                            })
+                        })
+                        .collect();
+                }
+                if candidates.is_empty() {
+                    candidates = std::fs::read_dir(&root)
+                        .map_err(|e| e.to_string())?
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|path| {
+                            path.extension().is_some_and(|extension| {
+                                ["csproj", "fsproj", "vbproj"]
+                                    .iter()
+                                    .any(|allowed| extension == *allowed)
+                            })
+                        })
+                        .collect();
+                }
+                if candidates.len() != 1 {
+                    return Err("Select exactly one .NET solution/project, or use a folder with one unambiguous project".into());
+                }
+                let target = candidates[0].canonicalize().map_err(|e| e.to_string())?;
+                if !target.starts_with(&root) {
+                    return Err(".NET target is outside this root".into());
+                }
+                (
+                    find("dotnet").ok_or(".NET SDK is unavailable")?,
+                    vec![
+                        if recipe == Recipe::DotnetBuild {
+                            "build".into()
+                        } else {
+                            "test".into()
+                        },
+                        crate::tabs::normalize(&target)
+                            .to_string_lossy()
+                            .into_owned(),
+                    ],
+                )
             }
         };
         Ok(Self {
@@ -145,7 +241,7 @@ impl Plan {
         )
     }
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Evidence {
     pub recipe: Recipe,
     pub exit_code: Option<i32>,
@@ -220,6 +316,9 @@ impl Run {
         let canceled = stop.clone();
         std::thread::spawn(move || {
             let result = (|| -> Result<Evidence, String> {
+                if canceled.load(Ordering::Acquire) {
+                    return Err("Validation canceled before spawning".into());
+                }
                 let mut command = Command::new(&plan.program);
                 command
                     .args(&plan.args)

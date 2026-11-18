@@ -165,6 +165,20 @@ impl Default for RoomView {
 }
 
 impl RoomView {
+    pub fn workflow_tasks(&self) -> Vec<forge_room_core::Task> {
+        self.network.workflow_tasks()
+    }
+    pub fn workflow_room_id(&self) -> String {
+        self.network.workflow_room_id()
+    }
+    pub fn stage_workflow_receipt(
+        &mut self,
+        room: &str,
+        task: &str,
+        text: String,
+    ) -> Result<(), String> {
+        self.network.stage_workflow_receipt(room, task, text)
+    }
     pub fn cancel_local_checks(&mut self) {
         self.network.cancel_local_checks();
     }

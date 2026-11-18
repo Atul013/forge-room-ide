@@ -86,6 +86,32 @@ impl Drop for NetworkRoom {
     }
 }
 impl NetworkRoom {
+    pub fn workflow_tasks(&self) -> Vec<forge_room_core::Task> {
+        self.snapshot.shared.tasks.clone()
+    }
+    pub fn workflow_room_id(&self) -> String {
+        let id = &self.snapshot.shared.room_id;
+        if id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            id.clone()
+        } else {
+            String::new()
+        }
+    }
+    pub fn stage_workflow_receipt(
+        &mut self,
+        room: &str,
+        task: &str,
+        text: String,
+    ) -> Result<(), String> {
+        if room.is_empty() || room != self.workflow_room_id() {
+            return Err("Linked Room identity changed; receipt was not staged".into());
+        }
+        if self.connection.is_none() && self.host.is_none() {
+            return Err("Connect to the matching Network Room before staging evidence".into());
+        }
+        self.workflow
+            .stage_workflow_receipt(&self.snapshot, task, text)
+    }
     pub fn cancel_local_checks(&mut self) {
         self.workflow.readiness.preflight.reset();
     }
