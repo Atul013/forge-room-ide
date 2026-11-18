@@ -8,6 +8,16 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
+    SetShipPlan {
+        expected_revision: u64,
+        plan: super::ShipPlan,
+    },
+    ReportShipCheck {
+        expected_revision: u64,
+        check: usize,
+        result: super::ShipResult,
+        note: String,
+    },
     UpdateReadiness {
         task: String,
         expected_revision: u64,
@@ -175,6 +185,8 @@ pub struct CodeLocation {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SharedSnapshot {
     #[serde(default)]
+    pub shipping: super::ShipState,
+    #[serde(default)]
     pub readiness: super::ReadinessState,
     #[serde(default)]
     pub milestones: Vec<Milestone>,
@@ -190,6 +202,7 @@ pub struct SharedSnapshot {
     pub code_locations: Vec<CodeLocation>,
 }
 pub(super) struct SharedRoom {
+    shipping: super::ShipState,
     readiness: super::readiness::Authority,
     milestones: Vec<Milestone>,
     pub(super) state: RoomState,
@@ -202,6 +215,10 @@ pub(super) struct SharedRoom {
 impl SharedRoom {
     pub(super) fn new() -> Result<Self, String> {
         Ok(Self {
+            shipping: super::ShipState {
+                supported: true,
+                ..Default::default()
+            },
             readiness: Default::default(),
             milestones: Vec::new(),
             state: RoomState::new(
@@ -243,6 +260,7 @@ impl SharedRoom {
     }
     pub(super) fn snapshot(&self) -> SharedSnapshot {
         SharedSnapshot {
+            shipping: self.shipping.clone(),
             readiness: self.readiness.view.clone(),
             milestones: self.milestones.clone(),
             tasks: self.state.tasks.clone(),
@@ -307,8 +325,15 @@ impl SharedRoom {
             self.audit(actor, &detail);
             return Ok(());
         }
+        if self.shipping.apply(actor, &action, &self.state)? {
+            self.audit(actor, "updated public release scope or manual check report");
+            return Ok(());
+        }
         let before = self.state.activity.len();
         match action {
+            Action::SetShipPlan { .. } | Action::ReportShipCheck { .. } => {
+                unreachable!("shipping authority handled action")
+            }
             Action::UpdateReadiness { .. }
             | Action::RequestHelp { .. }
             | Action::CloseHelp { .. }
@@ -540,6 +565,7 @@ fn due(hours: Option<u64>) -> Result<Option<u64>, String> {
     Ok(hours.map(|h| now_epoch_seconds().saturating_add(h * 3600)))
 }
 pub(super) fn validate(snapshot: &SharedSnapshot) -> Result<(), String> {
+    snapshot.shipping.validate(&snapshot.tasks)?;
     snapshot.readiness.validate(&snapshot.tasks)?;
     if snapshot.milestones.len() > 20
         || snapshot
