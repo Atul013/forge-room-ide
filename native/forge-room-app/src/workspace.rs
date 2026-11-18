@@ -213,7 +213,8 @@ mod tests {
         assert_eq!(workspace.roots(), &[primary.clone(), extra.clone()]);
         assert!(!workspace.remove_root(&primary));
         assert!(workspace.remove_root(&extra));
-        assert_eq!(workspace.roots(), &[primary.clone()]);
+        assert_eq!(workspace.roots().len(), 1);
+        assert_eq!(workspace.roots()[0], primary);
         assert!(!workspace.add_root(primary.clone()));
         assert!(!workspace.add_root(primary.join("missing")));
         fs::create_dir(primary.join("nested")).unwrap();
