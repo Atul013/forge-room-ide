@@ -175,6 +175,9 @@ impl RoomView {
     pub fn take_ai_brief(&mut self) -> Option<String> {
         self.network.take_ai_brief()
     }
+    pub fn take_open_location(&mut self) -> Option<forge_room_core::transport::CodeReference> {
+        self.network.take_open_location()
+    }
     /// Switch to the room of `root`, reading it from disk when one exists.
     pub fn load_for(&mut self, root: Option<&Path>) {
         *self = Self::default();

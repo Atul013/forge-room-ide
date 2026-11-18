@@ -89,7 +89,7 @@ fn linked(meta: &fs::Metadata) -> bool {
         meta.file_type().is_symlink()
     }
 }
-fn checked(root: &Path, path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn checked(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let relative = path
         .strip_prefix(&root)

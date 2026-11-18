@@ -73,6 +73,9 @@ impl NetworkRoom {
     pub fn take_files_changed(&mut self) -> bool {
         std::mem::take(&mut self.changes.changed)
     }
+    pub fn take_open_location(&mut self) -> Option<forge_room_core::transport::CodeReference> {
+        self.workflow.take_open_location()
+    }
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,

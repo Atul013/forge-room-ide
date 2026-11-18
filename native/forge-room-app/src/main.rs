@@ -41,6 +41,7 @@ mod project_tools;
 mod recovery;
 mod review_checkpoints;
 mod room_changes;
+mod room_code_navigation;
 mod room_impact_scan;
 mod room_network;
 mod room_network_workflow;
@@ -770,6 +771,35 @@ impl ForgeRoomApp {
     }
 
     // ---- File operations ---------------------------------------------------------------
+
+    fn open_room_code_reference(&mut self, reference: forge_room_core::transport::CodeReference) {
+        let Some(root) = self
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone())
+        else {
+            self.status = "Open a workspace before navigating to a Room code reference".into();
+            return;
+        };
+        let (path, line) = match room_code_navigation::resolve(&root, &reference) {
+            Ok(location) => location,
+            Err(error) => {
+                self.status = format!("Room code reference not opened: {error}");
+                return;
+            }
+        };
+        self.open_path(path.clone());
+        if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
+            let start = find::line_start(tab.doc.text(), line);
+            self.pending_select = Some((start, start));
+            self.focus_editor = true;
+            self.status = format!(
+                "Opened shared location {}:{} in your workspace",
+                path.display(),
+                line
+            );
+        }
+    }
 
     fn open_path(&mut self, path: PathBuf) {
         if path.is_dir() {
@@ -3674,6 +3704,9 @@ impl ForgeRoomApp {
                     self.trusted,
                     &self.tabs.dirty_paths(),
                 );
+                if let Some(reference) = self.room.take_open_location() {
+                    self.open_room_code_reference(reference);
+                }
             }
             SidebarView::SourceControl => self.source_control_view(ui, false),
             SidebarView::Project(page) => {
@@ -5298,6 +5331,9 @@ impl ForgeRoomApp {
                     self.trusted,
                     &self.tabs.dirty_paths(),
                 );
+                if let Some(reference) = self.room.take_open_location() {
+                    self.open_room_code_reference(reference);
+                }
                 if let Some(brief) = self.room.take_ai_brief() {
                     if let Some(root) = self
                         .repo_root()

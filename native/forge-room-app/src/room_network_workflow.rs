@@ -55,8 +55,12 @@ pub struct Workflow {
     location_line: String,
     location_initialized: bool,
     following_location: Option<String>,
+    requested_open: Option<forge_room_core::transport::CodeReference>,
 }
 impl Workflow {
+    pub fn take_open_location(&mut self) -> Option<forge_room_core::transport::CodeReference> {
+        self.requested_open.take()
+    }
     pub fn observe_activity(&mut self, snapshot: &Snapshot) -> usize {
         let latest = snapshot
             .shared
@@ -718,7 +722,15 @@ impl Workflow {
             ui.group(|ui| {
                 ui.heading(format!("Following {}", name(snapshot, actor)));
                 ui.monospace(format!("{}:{}", location.path, location.line));
-                ui.label("Read-only location preview. Following does not open files or change your editor selection.");
+                ui.label(
+                    "Read-only location preview. Opening checks this path in your own workspace.",
+                );
+                if ui.button("Open in my workspace").clicked() {
+                    self.requested_open = Some(forge_room_core::transport::CodeReference {
+                        path: location.path.clone(),
+                        line: location.line,
+                    });
+                }
             });
         }
     }
@@ -810,10 +822,15 @@ impl Workflow {
                         event.text
                     ));
                     if let Some(reference) = &event.code_reference {
-                        ui.monospace(format!(
-                            "Code context · {}:{}",
-                            reference.path, reference.line
-                        ));
+                        ui.horizontal_wrapped(|ui| {
+                            ui.monospace(format!(
+                                "Code context · {}:{}",
+                                reference.path, reference.line
+                            ));
+                            if ui.small_button("Open in my workspace").clicked() {
+                                self.requested_open = Some(reference.clone());
+                            }
+                        });
                     }
                     if !event.mentions.is_empty() {
                         ui.small(format!(
