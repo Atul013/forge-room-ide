@@ -41,7 +41,7 @@ impl Workspace {
 
     /// Add a browse/search root, ignoring duplicate paths (including Windows case/slash aliases).
     pub fn add_root(&mut self, root: PathBuf) -> bool {
-        if self.roots.len() >= 1 + MAX_ADDITIONAL_ROOTS
+        if self.roots.len() > MAX_ADDITIONAL_ROOTS
             || !root.is_dir()
             || self.roots.iter().any(|known| {
                 same_path(known, &root) || root.starts_with(known) || known.starts_with(&root)
