@@ -39,7 +39,10 @@ so late requests using the previous revision are denied. Their help requests cle
 affected impact acknowledgements clear. All release check reports reset and the
 configured Ship revision advances. Historical evidence remains historical; plans
 never certify checks, providers or deployment. Drafts remain available after Apply
-or rejection. Applying an unchanged plan is refused as a no-op.
+or rejection. A candidate that would change no tasks is refused as a no-op. Retained new-task
+definitions remain new: explicitly reviewing/applying them again creates another
+batch. Remove those rows or capture existing tasks to edit them instead; retrying
+the old frozen action is denied once its expected task snapshot becomes stale.
 
 ## Files and reuse
 
