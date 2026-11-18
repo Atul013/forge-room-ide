@@ -205,9 +205,6 @@ fn header_fill() -> Color32 {
     theme::mix(theme::bg_editor(), theme::text(), 0.05)
 }
 
-/// Warm amber used for the countdown and in-progress marks, apart from the primary accent.
-const AMBER: Color32 = Color32::from_rgb(244, 157, 120);
-
 fn inner_fill() -> Color32 {
     theme::mix(theme::bg_editor(), theme::text(), 0.06)
 }
@@ -383,13 +380,13 @@ impl Lobby {
                                 RichText::new(format!(
                                     "{error} Your edits are kept and saving will be retried."
                                 ))
-                                .color(Color32::from_rgb(240, 113, 120)),
+                                .color(theme::danger()),
                             );
                         }
                         if context.room_unavailable {
                             egui::Frame::new()
-                                .fill(theme::mix(theme::bg_sidebar(), Color32::from_rgb(240, 113, 120), 0.12))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(240, 113, 120)))
+                                .fill(theme::mix(theme::bg_sidebar(), theme::danger(), 0.12))
+                                .stroke(Stroke::new(1.0, theme::danger()))
                                 .corner_radius(6.0)
                                 .inner_margin(Margin::symmetric(12, 10))
                                 .show(ui, |ui| {
@@ -499,11 +496,9 @@ impl Lobby {
                             );
                             if ui
                                 .add(
-                                    egui::Button::new(
-                                        RichText::new(label).color(Color32::from_rgb(226, 160, 60)),
-                                    )
-                                    .fill(theme::overlay(18))
-                                    .stroke(Stroke::new(1.0, theme::border())),
+                                    egui::Button::new(RichText::new(label).color(theme::warn()))
+                                        .fill(theme::overlay(18))
+                                        .stroke(Stroke::new(1.0, theme::border())),
                                 )
                                 .clicked()
                             {
@@ -732,7 +727,7 @@ impl Lobby {
                 Align2::CENTER_CENTER,
                 format!("{value:02}"),
                 FontId::new(32.0, crate::fonts::semibold()),
-                AMBER,
+                theme::warn(),
             );
             painter.text(
                 egui::pos2(x, rect.bottom() - 12.0),
@@ -747,7 +742,7 @@ impl Lobby {
                     Align2::CENTER_CENTER,
                     ":",
                     FontId::proportional(28.0),
-                    AMBER,
+                    theme::warn(),
                 );
             }
         }
@@ -954,11 +949,14 @@ impl Lobby {
                                 let label = if self.config.private {
                                     "Private (Invite Only)"
                                 } else {
-                                    "Open to anyone with the link"
+                                    "Open to anyone with the link (planned)"
                                 };
+                                // A button, so the keyboard reaches it too.
                                 if ui
-                                    .add(egui::Label::new(label).sense(Sense::click()))
-                                    .on_hover_text("Click to change")
+                                    .add(egui::Button::new(label).frame(false))
+                                    .on_hover_text(
+                                        "Click to change. Rooms are local to this computer for now, so this is only a saved preference",
+                                    )
                                     .clicked()
                                 {
                                     self.config.private = !self.config.private;
@@ -1253,7 +1251,7 @@ impl Lobby {
                     .unwrap_or_default();
                 ui.horizontal(|ui| {
                     let color = if agent || you {
-                        Color32::from_rgb(240, 113, 120)
+                        theme::danger()
                     } else {
                         theme::text_dim()
                     };
@@ -1384,9 +1382,9 @@ impl Lobby {
                                         painter.circle_stroke(
                                             center,
                                             13.0,
-                                            Stroke::new(3.0, AMBER),
+                                            Stroke::new(3.0, theme::warn()),
                                         );
-                                        painter.circle_filled(center, 4.5, AMBER);
+                                        painter.circle_filled(center, 4.5, theme::warn());
                                     }
                                     MilestoneStatus::Pending => {
                                         painter.circle_filled(center, 10.0, theme::bg_editor());
@@ -1406,9 +1404,10 @@ impl Lobby {
                                 );
                                 let (status, color) = match milestone.status {
                                     MilestoneStatus::Done => ("Done".to_string(), theme::accent()),
-                                    MilestoneStatus::InProgress => {
-                                        (format!("In Progress ({}%)", milestone.percent), AMBER)
-                                    }
+                                    MilestoneStatus::InProgress => (
+                                        format!("In Progress ({}%)", milestone.percent),
+                                        theme::warn(),
+                                    ),
                                     MilestoneStatus::Pending => {
                                         ("Pending".to_string(), theme::text_dim())
                                     }
@@ -1495,10 +1494,8 @@ impl Lobby {
                             }
                             if ui
                                 .add(
-                                    egui::Label::new(
-                                        RichText::new(&url).color(Color32::from_rgb(110, 165, 255)),
-                                    )
-                                    .sense(Sense::click()),
+                                    egui::Label::new(RichText::new(&url).color(theme::info()))
+                                        .sense(Sense::click()),
                                 )
                                 .on_hover_text("Click to clear and edit")
                                 .clicked()
@@ -1535,6 +1532,13 @@ impl Lobby {
                         ui.label(granted.join(" · "));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.menu_button("Manage", |ui| {
+                                ui.label(
+                                    RichText::new(
+                                        "Saved as preferences. Not enforced yet: rooms are local.",
+                                    )
+                                    .size(12.0)
+                                    .color(theme::text_dim()),
+                                );
                                 for (name, on) in
                                     PERMISSIONS.iter().zip(self.config.permissions.iter_mut())
                                 {
@@ -1576,6 +1580,11 @@ impl Lobby {
                     for (name, on) in SHARING.iter().zip(self.config.sharing.iter_mut()) {
                         ui.checkbox(on, *name);
                     }
+                    ui.label(
+                        RichText::new("Saved as preferences. Not active yet: rooms are local.")
+                            .size(12.0)
+                            .color(theme::text_dim()),
+                    );
                 };
                 let heading = |ui: &mut Ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
@@ -2000,7 +2009,7 @@ fn avatar(painter: &egui::Painter, rect: Rect, name: &str, agent: bool, online: 
     if online == Some(true) {
         let dot = rect.right_bottom() - vec2(6.0, 6.0);
         painter.circle_filled(dot, 6.0, theme::bg_editor());
-        painter.circle_filled(dot, 4.5, Color32::from_rgb(240, 113, 120));
+        painter.circle_filled(dot, 4.5, theme::danger());
     }
 }
 

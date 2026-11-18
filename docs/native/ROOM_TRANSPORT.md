@@ -1,6 +1,13 @@
 # Native Room transport v3 - connected Room workflows and saved patches
 
-This is an ephemeral self-hosted native transport, implemented in `forge-room-core::transport`
+**18 November recovery addition:** [Public recovery checkpoints](ROOM_RECOVERY.md)
+now restore the last explicitly saved public Room state, with fresh TLS and
+host-approved owner-reclaim invites. This does not restore private history,
+credentials or changes made after the checkpoint. Older recovery limitations below
+describe ordinary session reconnect and public archive export; the checkpoint
+contract defines the new explicit restart path.
+
+This is a self-hosted native transport with ephemeral sessions, implemented in `forge-room-core::transport`
 and exposed by **Team / Chat → Network Room → host / join**. It is independent of the
 existing saved local Room. This contract covers invite identities, presence, visibility-filtered messages, and shared
 tasks/handoffs/evidence/activity/countdown. The server creates a separate shared domain RoomState;

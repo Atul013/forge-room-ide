@@ -436,6 +436,7 @@ fn detected_actions(root: &Path, page: Page) -> Vec<Action> {
     Vec::new()
 }
 
+/// A rail page: the same header (semibold title, 14 px gutter) as Explorer and Source Control.
 pub fn show(
     ui: &mut egui::Ui,
     page: Page,
@@ -445,9 +446,40 @@ pub fn show(
     auto_save: bool,
     editor_scale: f32,
 ) -> Option<Selected> {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(page.title())
+                    .size(14.5)
+                    .family(crate::fonts::semibold())
+                    .color(crate::theme::text()),
+            );
+            ui.add_space(6.0);
+            ui.separator();
+            page_body(
+                ui,
+                page,
+                root,
+                task_context,
+                runtimes,
+                auto_save,
+                editor_scale,
+            )
+        })
+        .inner
+}
+
+fn page_body(
+    ui: &mut egui::Ui,
+    page: Page,
+    root: Option<&Path>,
+    task_context: (Option<&Path>, &mut crate::task_pipeline::State),
+    runtimes: &[String],
+    auto_save: bool,
+    editor_scale: f32,
+) -> Option<Selected> {
     let (active_file, task_state) = task_context;
-    ui.heading(page.title());
-    ui.separator();
     match page {
         Page::Tests | Page::Workflows | Page::RunDebug => {
             let Some(root) = root else {

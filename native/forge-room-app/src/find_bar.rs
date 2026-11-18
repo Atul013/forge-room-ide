@@ -142,28 +142,39 @@ pub fn show(context: &egui::Context, state: &mut FindState) -> Vec<Intent> {
                             )
                         };
                         let color = if !state.query.is_empty() && state.matches.is_empty() {
-                            egui::Color32::from_rgb(240, 113, 120)
+                            theme::danger()
                         } else {
                             theme::text_dim()
                         };
                         ui.label(RichText::new(summary).size(12.0).color(color));
-                        if ui
-                            .small_button("‹")
+                        if crate::icons::small_button(ui, "‹")
+                            .accessible_name("Previous match")
                             .on_hover_text("Previous (Shift+Enter)")
                             .clicked()
                         {
                             intents.push(Intent::Previous);
                         }
-                        if ui.small_button("›").on_hover_text("Next (Enter)").clicked() {
+                        if crate::icons::small_button(ui, "›")
+                            .accessible_name("Next match")
+                            .on_hover_text("Next (Enter)")
+                            .clicked()
+                        {
                             intents.push(Intent::Next);
                         }
                         ui.toggle_value(&mut state.mode.case_sensitive, "Aa")
+                            .accessible_name("Match case")
                             .on_hover_text("Match case");
                         ui.toggle_value(&mut state.mode.whole_word, "W")
+                            .accessible_name("Match whole word")
                             .on_hover_text("Match whole word");
                         ui.toggle_value(&mut state.mode.regex, ".*")
+                            .accessible_name("Use regular expression")
                             .on_hover_text("Use regular expression");
-                        if ui.small_button("×").on_hover_text("Close (Esc)").clicked() {
+                        if crate::icons::small_button(ui, "×")
+                            .accessible_name("Close find")
+                            .on_hover_text("Close (Esc)")
+                            .clicked()
+                        {
                             intents.push(Intent::Close);
                         }
                     });

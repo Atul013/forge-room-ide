@@ -507,7 +507,7 @@ impl Terminal {
             let events = ui.input(|input| input.events.clone());
             for event in events {
                 match event {
-                    Event::Text(text) => {
+                    Event::Text(text) | Event::Ime(egui::ImeEvent::Commit(text)) => {
                         self.follow_output();
                         self.send(text.as_bytes());
                     }

@@ -736,7 +736,7 @@ impl State {
         // the default.
         if !self.model.is_empty() && !agent::valid_model(&self.model) {
             self.note(format!(
-                "\"{}\" is not a valid model name (letters, digits and . - _ : / [ ]), so the default                  model is used.",
+                "\"{}\" is not a valid model name (letters, digits and . - _ : / [ ]), so the default model is used.",
                 self.model
             ));
         }
@@ -938,7 +938,7 @@ impl State {
                             };
                             if old.is_some() {
                                 self.note(
-                                    "The conversation could not be continued; your next message                                      starts a new one.",
+                                    "The conversation could not be continued; your next message starts a new one.",
                                 );
                             }
                         }
@@ -1210,7 +1210,7 @@ pub fn show(
                         .size(13.0)
                         .color(theme::text_dim()),
                     );
-                    if ui.small_button("Stop").clicked() {
+                    if crate::icons::small_button(ui, "Stop").clicked() {
                         state.stop();
                     }
                 });
@@ -1454,11 +1454,8 @@ fn controls(ui: &mut egui::Ui, state: &mut State) {
     });
     if state.confirm_full {
         egui::Frame::new()
-            .fill(Color32::from_rgba_unmultiplied(240, 113, 120, 28))
-            .stroke(Stroke::new(
-                1.0,
-                Color32::from_rgba_unmultiplied(240, 113, 120, 120),
-            ))
+            .fill(theme::with_alpha(theme::danger(), 28))
+            .stroke(Stroke::new(1.0, theme::with_alpha(theme::danger(), 120)))
             .corner_radius(8.0)
             .outer_margin(egui::Margin::symmetric(14, 6))
             .inner_margin(egui::Margin::same(10))
@@ -1833,16 +1830,13 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     egui::Frame::new()
-                        .fill(Color32::from_rgba_unmultiplied(240, 113, 120, 26))
-                        .stroke(Stroke::new(
-                            1.0,
-                            Color32::from_rgba_unmultiplied(240, 113, 120, 110),
-                        ))
+                        .fill(theme::with_alpha(theme::danger(), 26))
+                        .stroke(Stroke::new(1.0, theme::with_alpha(theme::danger(), 110)))
                         .corner_radius(8.0)
                         .inner_margin(egui::Margin::symmetric(10, 7))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            wrapped(ui, &message.text, 13.0, Color32::from_rgb(244, 150, 156));
+                            wrapped(ui, &message.text, 13.0, theme::danger());
                         });
                 });
             return;
@@ -1885,8 +1879,7 @@ fn bubble(ui: &mut egui::Ui, message: &Message) {
                         markdown(ui, &message.text);
                     }
                     if !user
-                        && ui
-                            .small_button("Copy")
+                        && crate::icons::small_button(ui, "Copy")
                             .on_hover_text("Copy this answer")
                             .clicked()
                     {
@@ -1967,7 +1960,7 @@ fn composer(
                     .to_owned();
                 ui.horizontal(|ui| {
                     ui.label(format!("Image: {name}"));
-                    if ui.small_button("Remove").clicked() {
+                    if crate::icons::small_button(ui, "Remove").clicked() {
                         state.clear_image();
                     }
                 });
@@ -2025,7 +2018,7 @@ fn composer(
                         if busy { "close" } else { "arrow-up" },
                         rect.center(),
                         18.0,
-                        Color32::WHITE,
+                        theme::readable_on(fill),
                     );
                     let clicked = response
                         .on_hover_text(if busy { "Stop" } else { "Send (Enter)" })
@@ -2047,7 +2040,7 @@ fn composer(
                             RichText::new("Full access")
                                 .size(12.0)
                                 .strong()
-                                .color(Color32::from_rgb(244, 150, 156)),
+                                .color(theme::danger()),
                         );
                     }
                 });

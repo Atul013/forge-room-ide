@@ -13,6 +13,7 @@ pub struct SearchView {
     pub mode: find::Mode,
     results: Option<search::Results>,
     searched_query: String,
+    searched_roots: Vec<PathBuf>,
     running: bool,
     cancel: Arc<AtomicBool>,
     receiver: Option<mpsc::Receiver<search::Results>>,
@@ -37,6 +38,7 @@ impl Default for SearchView {
             mode: find::Mode::default(),
             results: None,
             searched_query: String::new(),
+            searched_roots: Vec::new(),
             running: false,
             cancel: Arc::new(AtomicBool::new(false)),
             receiver: None,
@@ -75,14 +77,26 @@ impl SearchView {
         self.results = None;
         self.running = false;
         self.receiver = None;
+        self.confirming = false;
+        self.replace_requested = false;
+        self.searched_roots.clear();
     }
 
-    fn start(&mut self, root: &Path) {
+    fn reconcile_roots(&mut self, roots: &[PathBuf]) {
+        if self.searched_roots != roots {
+            self.reset();
+            self.searched_roots = roots.to_vec();
+            self.dirty_since = (!roots.is_empty()).then(|| Instant::now() - DEBOUNCE);
+        }
+    }
+
+    fn start(&mut self, roots: &[PathBuf]) {
         self.cancel.store(true, Ordering::Relaxed);
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancel = cancel.clone();
         self.searched_query = self.query.clone();
         self.searched_mode = self.mode;
+        self.searched_roots = roots.to_vec();
         // What a pending confirmation was about is no longer what is shown.
         self.confirming = false;
         if self.query.is_empty() {
@@ -92,9 +106,9 @@ impl SearchView {
             return;
         }
         let (sender, receiver) = mpsc::channel();
-        let (root, query, mode) = (root.to_path_buf(), self.query.clone(), self.mode);
+        let (roots, query, mode) = (roots.to_vec(), self.query.clone(), self.mode);
         std::thread::spawn(move || {
-            let _ = sender.send(search::search(&root, &query, mode, &cancel));
+            let _ = sender.send(search::search_roots(&roots, &query, mode, &cancel));
         });
         self.receiver = Some(receiver);
         self.running = true;
@@ -102,9 +116,19 @@ impl SearchView {
 
     /// Replace every match of the query that was searched in every file, except the `protected`
     /// ones (open with unsaved changes). It runs on a worker thread; `take_replaced` reports.
-    fn start_replace(&mut self, root: &Path, protected: Vec<PathBuf>) {
-        let (root, query, mode, replacement) = (
-            root.to_path_buf(),
+    fn start_replace(&mut self, roots: &[PathBuf], protected: Vec<PathBuf>) {
+        if self.searched_roots != roots
+            || self.running
+            || self.results.is_none()
+            || self.query != self.searched_query
+            || self.mode != self.searched_mode
+        {
+            self.confirming = false;
+            self.replace_requested = false;
+            return;
+        }
+        let (roots, query, mode, replacement) = (
+            self.searched_roots.clone(),
             self.searched_query.clone(),
             self.searched_mode,
             self.replacement.clone(),
@@ -112,14 +136,25 @@ impl SearchView {
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let never = AtomicBool::new(false);
-            let _ = sender.send(search::replace_in_files(
-                &root,
-                &query,
-                mode,
-                &replacement,
-                &protected,
-                &never,
-            ));
+            let mut total = search::Replaced::default();
+            for root in roots {
+                let next =
+                    search::replace_in_files(&root, &query, mode, &replacement, &protected, &never);
+                total.files += next.files;
+                total.replacements += next.replacements;
+                total.skipped.extend(next.skipped);
+                if let Some(error) = next.error {
+                    let error = format!("Root {}: {error}", root.display());
+                    match &mut total.error {
+                        Some(previous) => {
+                            previous.push_str("; ");
+                            previous.push_str(&error);
+                        }
+                        None => total.error = Some(error),
+                    }
+                }
+            }
+            let _ = sender.send(total);
         });
         self.replacing = Some(receiver);
         self.confirming = false;
@@ -175,12 +210,8 @@ impl SearchView {
         self.running || self.replacing.is_some() || self.dirty_since.is_some()
     }
 
-    pub fn show(
-        &mut self,
-        ui: &mut egui::Ui,
-        root: Option<&Path>,
-        protected: &[PathBuf],
-    ) -> Action {
+    pub fn show(&mut self, ui: &mut egui::Ui, roots: &[PathBuf], protected: &[PathBuf]) -> Action {
+        self.reconcile_roots(roots);
         let mut action = Action::None;
         ui.add_space(10.0);
         ui.horizontal(|ui| {
@@ -193,7 +224,7 @@ impl SearchView {
             );
         });
         ui.add_space(8.0);
-        let Some(root) = root else {
+        if roots.is_empty() {
             ui.horizontal(|ui| {
                 ui.add_space(14.0);
                 ui.label(
@@ -201,7 +232,7 @@ impl SearchView {
                 );
             });
             return action;
-        };
+        }
 
         // Text typed while the sidebar was away (or a search that never started) is searched now.
         if self.dirty_since.is_none()
@@ -212,7 +243,7 @@ impl SearchView {
             self.dirty_since = Some(Instant::now() - DEBOUNCE);
         }
         if std::mem::take(&mut self.replace_requested) {
-            self.start_replace(root, protected.to_vec());
+            self.start_replace(roots, protected.to_vec());
         }
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(12, 0))
@@ -233,7 +264,7 @@ impl SearchView {
                     }
                     if input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         self.dirty_since = None;
-                        self.start(root);
+                        self.start(roots);
                     }
                     for (flag, label, hint) in [
                         (&mut self.mode.case_sensitive, "Aa", "Match case"),
@@ -273,7 +304,7 @@ impl SearchView {
             && since.elapsed() >= DEBOUNCE
         {
             self.dirty_since = None;
-            self.start(root);
+            self.start(roots);
         }
         ui.add_space(8.0);
 
@@ -346,12 +377,12 @@ impl SearchView {
                 if self.confirming {
                     let text = if truncated {
                         "Replace every match on disk, including those not listed? Files with \
-                         unsaved changes are skipped. Undo with Git."
+                         unsaved changes are skipped. This cannot be undone here: commit first if you may want the old text back."
                             .to_string()
                     } else {
                         format!(
                             "Replace {hits} matches in {files} files on disk? Files with unsaved \
-                             changes are skipped. Undo with Git."
+                             changes are skipped. This cannot be undone here: commit first if you may want the old text back."
                         )
                     };
                     ui.label(RichText::new(text).size(12.0).color(theme::text()));
@@ -382,6 +413,10 @@ impl SearchView {
                 for hit in &results.hits {
                     if last != Some(&hit.path) {
                         last = Some(&hit.path);
+                        let root = roots
+                            .iter()
+                            .find(|root| hit.path.starts_with(root))
+                            .unwrap_or(&roots[0]);
                         file_header(ui, root, &hit.path);
                     }
                     if hit_row(ui, hit) {
@@ -490,4 +525,66 @@ fn painter_text_dim(ui: &egui::Ui, rect: Rect, line: usize) {
         FontId::proportional(11.0),
         theme::mix(theme::bg_sidebar(), theme::text(), 0.4),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changed_roots_revoke_confirmation_and_pending_replace_before_any_write() {
+        let base = std::env::temp_dir().join(format!(
+            "forge-search-scope-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let (a, b) = (base.join("a"), base.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("x.txt"), "x").unwrap();
+        std::fs::write(b.join("x.txt"), "x").unwrap();
+        let mut view = SearchView {
+            query: "x".into(),
+            replacement: "xx".into(),
+            ..Default::default()
+        };
+        view.start(std::slice::from_ref(&a));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while view.running {
+            view.poll();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        view.confirming = true;
+        view.replace_requested = true;
+        let roots = vec![a.clone(), b.clone()];
+        view.reconcile_roots(&roots);
+        assert!(!view.confirming && !view.replace_requested && view.results.is_none());
+        view.start_replace(&roots, vec![]);
+        assert!(view.replacing.is_none());
+        assert_eq!(std::fs::read_to_string(b.join("x.txt")).unwrap(), "x");
+        view.start(&roots);
+        while view.running {
+            view.poll();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(view.results.as_ref().unwrap().hits.len(), 2);
+        view.start_replace(&roots, vec![]);
+        let done = loop {
+            if let Some(done) = view.take_replaced() {
+                break done;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(done.files, 2);
+        assert_eq!(done.replacements, 2);
+        assert_eq!(std::fs::read_to_string(a.join("x.txt")).unwrap(), "xx");
+        assert_eq!(std::fs::read_to_string(b.join("x.txt")).unwrap(), "xx");
+        std::fs::remove_dir_all(base).unwrap();
+    }
 }
