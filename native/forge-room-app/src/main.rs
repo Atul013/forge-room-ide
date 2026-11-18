@@ -48,6 +48,7 @@ mod room_network;
 mod room_network_workflow;
 mod room_preflight;
 mod room_readiness;
+mod room_shipping;
 mod room_state;
 mod rooms;
 mod search;

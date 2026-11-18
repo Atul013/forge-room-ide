@@ -17,6 +17,10 @@ use std::{
 };
 
 mod readiness;
+mod shipping;
+pub use shipping::{
+    ship_blockers, ship_handoff, ShipCheck, ShipPlan, ShipReport, ShipResult, ShipState,
+};
 mod workflow;
 pub use readiness::{
     assess, Assessment, Declaration, HelpRequest, Impact, ReadinessProfile, ReadinessState,
