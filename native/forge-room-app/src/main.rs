@@ -4238,7 +4238,10 @@ impl ForgeRoomApp {
                     self.status = if added {
                         format!("Added {} to Explorer and search", path.display())
                     } else {
-                        "Folder is invalid or already in this workspace".into()
+                        format!(
+                            "Folder is invalid, already included, or the {}-root limit was reached",
+                            workspace::MAX_ADDITIONAL_ROOTS
+                        )
                     };
                 }
             }

@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 /// Names never shown in the explorer (VS Code hides `.git` by default too).
 const HIDDEN: &[&str] = &[".git"];
+/// Session restore keeps at most this many secondary roots.
+pub const MAX_ADDITIONAL_ROOTS: usize = 15;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Entry {
@@ -39,7 +41,8 @@ impl Workspace {
 
     /// Add a browse/search root, ignoring duplicate paths (including Windows case/slash aliases).
     pub fn add_root(&mut self, root: PathBuf) -> bool {
-        if !root.is_dir()
+        if self.roots.len() >= 1 + MAX_ADDITIONAL_ROOTS
+            || !root.is_dir()
             || self.roots.iter().any(|known| {
                 same_path(known, &root) || root.starts_with(known) || known.starts_with(&root)
             })
@@ -221,6 +224,26 @@ mod tests {
         assert!(!workspace.add_root(primary.join("nested")));
         fs::remove_dir_all(primary).unwrap();
         fs::remove_dir_all(extra).unwrap();
+    }
+
+    #[test]
+    fn secondary_roots_match_the_session_restore_limit() {
+        let parent = temp_dir();
+        let primary = parent.join("primary");
+        fs::create_dir(&primary).unwrap();
+        let mut workspace = Workspace::new(primary);
+
+        for index in 0..MAX_ADDITIONAL_ROOTS {
+            let root = parent.join(format!("extra-{index}"));
+            fs::create_dir(&root).unwrap();
+            assert!(workspace.add_root(root));
+        }
+
+        let overflow = parent.join("overflow");
+        fs::create_dir(&overflow).unwrap();
+        assert!(!workspace.add_root(overflow));
+        assert_eq!(workspace.roots().len(), MAX_ADDITIONAL_ROOTS + 1);
+        fs::remove_dir_all(parent).unwrap();
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! (without being given something to open) puts you back where you were. Unsaved text is not part
 //! of it: that is what crash recovery is for. Files and folders that are gone are dropped.
 
+use crate::workspace::MAX_ADDITIONAL_ROOTS;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -88,7 +89,7 @@ impl Session {
             .into_iter()
             .filter(|item| Path::new(item).is_dir())
             .filter(|item| folder.as_deref() != Some(item.as_str()))
-            .take(15)
+            .take(MAX_ADDITIONAL_ROOTS)
             .collect();
         Session {
             folder,
