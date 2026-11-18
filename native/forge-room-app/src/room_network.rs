@@ -180,6 +180,14 @@ impl NetworkRoom {
                         Err(error) => self.status = error,
                     }
                 }
+                if ui.button("Recover public Room journal...").clicked()
+                    && let Some(path) = rfd::FileDialog::new().add_filter("Room journal", &["frjournal"]).pick_file() {
+                    let result = self.bind.parse().map_err(|_| "Enter an IP:port".to_string()).and_then(|bind| Host::recover_journal(bind, &path));
+                    match result {
+                        Ok(host) => { self.snapshot = host.snapshot().unwrap_or_default(); self.host = Some(host); self.status = "Journal recovered paused. Start a fresh journal before resuming for continued durability.".into(); },
+                        Err(error) => self.status = error,
+                    }
+                }
                 ui.separator();
                 ui.label("Paste a private invite from the host");
                 ui.add(egui::TextEdit::singleline(&mut self.invite_text).password(true).char_limit(16_384));
@@ -217,6 +225,15 @@ impl NetworkRoom {
                             }
                             if ui.small_button("Cancel archive").clicked() { self.confirm_archive = false; }
                         }
+                    }
+                    match host.journal_bytes() {
+                        Ok(Some(bytes)) => { ui.label(format!("Automatic public recovery journal: {bytes} / 67108864 bytes. Writes are flushed before acknowledgement.")); },
+                        Ok(None) => { ui.label("Automatic recovery journal is off. Enable it to preserve subsequent public mutations."); },
+                        Err(error) => { ui.colored_label(egui::Color32::RED, error); }
+                    }
+                    if ui.button("Start / rotate public recovery journal...").clicked()
+                        && let Some(path) = rfd::FileDialog::new().set_file_name("room.frjournal").save_file() {
+                        self.status = match host.enable_journal(&path) { Ok(()) => "Public journal active; private histories and credentials excluded".into(), Err(error) => error };
                     }
                     ui.label("Recovery checkpoints save public Room work only. DMs, patches, credentials and live focus are excluded. Changes after the last save are not recovered.");
                     if ui.button("Save new recovery checkpoint...").clicked()

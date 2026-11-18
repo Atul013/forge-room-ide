@@ -5,6 +5,7 @@ use std::io::{self, BufRead, Read, Write};
 
 fn main() {
     let mut client: Option<Client> = None;
+    let mut hosted: Option<forge_room_core::transport::Host> = None;
     let stdin = io::stdin();
     let mut input = stdin.lock();
     loop {
@@ -21,6 +22,21 @@ fn main() {
             let value: serde_json::Value =
                 serde_json::from_str(&line).map_err(|_| "Invalid command")?;
             match value["command"].as_str().unwrap_or_default() {
+                "host_journal" => {
+                    if hosted.is_some() {
+                        return Err("Already hosting".into());
+                    }
+                    let host = forge_room_core::transport::Host::start(
+                        "127.0.0.1:0".parse().map_err(|_| "Invalid address")?,
+                        "process journal",
+                    )?;
+                    host.enable_journal(std::path::Path::new(
+                        value["path"].as_str().ok_or("Missing journal path")?,
+                    ))?;
+                    let invite = host.invite(std::time::Duration::from_secs(60))?.encode();
+                    hosted = Some(host);
+                    Ok(serde_json::json!({"invite":invite}))
+                }
                 "join" => {
                     if client.is_some() {
                         return Err("Already joined".into());
