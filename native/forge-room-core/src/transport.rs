@@ -17,6 +17,7 @@ use std::{
 };
 
 mod readiness;
+mod recovery;
 mod shipping;
 pub use shipping::{
     ship_blockers, ship_handoff, ShipCheck, ShipPlan, ShipReport, ShipResult, ShipState,
@@ -254,6 +255,7 @@ struct Grant {
     expires: Instant,
     used: bool,
     revoked: bool,
+    reclaim: Option<Member>,
 }
 struct Session {
     id: String,
@@ -285,6 +287,7 @@ struct Authority {
     patches: Vec<Patch>,
     reactions: Vec<MessageReaction>,
     patch_sequence: u64,
+    recovered: HashMap<String, Member>,
 }
 impl Authority {
     fn snapshot(&self, cursor: u64, viewer: Option<&str>) -> Snapshot {
@@ -298,6 +301,7 @@ impl Authority {
                 name: s.name.clone(),
                 online: now.duration_since(s.seen) < LEASE,
             })
+            .chain(self.recovered.values().cloned())
             .collect();
         members.sort_by(|a, b| a.id.cmp(&b.id));
         let reset = cursor > self.sequence
@@ -376,15 +380,28 @@ impl Authority {
                     return Err("Protocol version mismatch".into());
                 }
                 let name = bounded(&name, 64)?;
-                if self.sessions.len() >= MAX_MEMBERS {
-                    return Err("Room is full".into());
-                }
                 let grant = self.grants.get_mut(&invite).ok_or("Invite denied")?;
                 if grant.revoked || grant.used || grant.expires <= now {
                     return Err("Invite expired, revoked or already used".into());
                 }
+                if self.sessions.len() + self.recovered.len() >= MAX_MEMBERS
+                    && grant.reclaim.is_none()
+                {
+                    return Err("Room is full".into());
+                }
                 let token = secret()?;
-                let id = secret()?;
+                let reclaimed = grant.reclaim.clone();
+                let id = match &reclaimed {
+                    Some(member) => member.id.clone(),
+                    None => secret()?,
+                };
+                if self.sessions.values().any(|session| session.id == id) {
+                    return Err("Member already rejoined".into());
+                }
+                let name = reclaimed
+                    .as_ref()
+                    .map_or(name, |member| member.name.clone());
+                self.recovered.remove(&id);
                 grant.used = true;
                 identity = Some(id.clone());
                 viewer = id.clone();
@@ -471,6 +488,12 @@ impl Authority {
                     role: crate::Role::Human,
                     owner_id: None,
                 })
+                .chain(self.recovered.values().map(|member| crate::Participant {
+                    id: member.id.clone(),
+                    name: member.name.clone(),
+                    role: crate::Role::Human,
+                    owner_id: None,
+                }))
                 .collect(),
         );
         let joined: HashSet<_> = self
@@ -830,6 +853,7 @@ impl Host {
             shared: workflow::SharedRoom::new()?,
             patches: Vec::new(),
             reactions: Vec::new(),
+            recovered: HashMap::new(),
             patch_sequence: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -907,6 +931,7 @@ impl Host {
                 expires: now + lifetime,
                 used: false,
                 revoked: false,
+                reclaim: None,
             },
         );
         Ok(Invite {
@@ -1407,6 +1432,7 @@ mod tests {
                     emoji: REACTION_EMOJI[index % REACTION_EMOJI.len()].into(),
                 })
                 .collect(),
+            recovered: HashMap::new(),
             patch_sequence: 0,
         };
         assert!(authority

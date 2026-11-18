@@ -104,6 +104,15 @@ impl NetworkRoom {
                 }
             }
         }
+        if self.connection.is_none()
+            && let Some(host) = &self.host
+        {
+            match host.snapshot() {
+                Ok(snapshot) => self.snapshot = snapshot,
+                Err(error) => self.status = error,
+            }
+        }
+        let mut local_rejoin = None;
         let panel_height = (ui.available_height() * 0.65).max(120.0);
         self.workflow
             .readiness
@@ -121,7 +130,7 @@ impl NetworkRoom {
             if let Some(notice)=&self.notice { ui.label(notice); }
             if self.notice.is_some() && ui.small_button("Dismiss notice").clicked() {self.notice=None;}
             ui.label("Shares your name and items created in this network Room: roster, tasks, handoffs, evidence, activity and public messages. Direct messages go only to sender and recipient. Saved local Room data, files, terminals and agents are not shared by joining. Saved patches require a separate reviewed recipient grant.");
-            if self.connection.is_none() {
+            if self.connection.is_none() && self.host.is_none() {
                 ui.label("Your display name");
                 ui.add(egui::TextEdit::singleline(&mut self.name).char_limit(64));
                 ui.label("Host address (specific loopback or LAN IP:port)");
@@ -135,6 +144,14 @@ impl NetworkRoom {
                                 Err(error) => self.status = error,
                             }
                         }
+                        Err(error) => self.status = error,
+                    }
+                }
+                if ui.button("Recover hosted Room from checkpoint...").clicked()
+                    && let Some(path) = rfd::FileDialog::new().add_filter("Room checkpoint", &["json"]).pick_file() {
+                    let result = self.bind.parse().map_err(|_| "Enter an IP:port".to_string()).and_then(|bind| Host::recover(bind, &path));
+                    match result {
+                        Ok(host) => { self.snapshot = host.snapshot().unwrap_or_default(); self.host = Some(host); self.status = "Recovered checkpoint; review then resume and issue fresh invites".into(); },
                         Err(error) => self.status = error,
                     }
                 }
@@ -175,6 +192,30 @@ impl NetworkRoom {
                             }
                             if ui.small_button("Cancel archive").clicked() { self.confirm_archive = false; }
                         }
+                    }
+                    ui.label("Recovery checkpoints save public Room work only. DMs, patches, credentials and live focus are excluded. Changes after the last save are not recovered.");
+                    if ui.button("Save new recovery checkpoint...").clicked()
+                        && let Some(path) = rfd::FileDialog::new().set_file_name("room-checkpoint.json").save_file() {
+                        self.status = match host.save_checkpoint(&path) { Ok(()) => "Checkpoint saved and flushed; save again after further work".into(), Err(error) => error };
+                    }
+                    if self.connection.is_none() && self.snapshot.lifecycle == RoomLifecycle::Active
+                        && ui.button("Join recovered Room as a new member").clicked() {
+                        match host.invite(Duration::from_secs(60)) { Ok(invite) => local_rejoin = Some(invite), Err(error) => self.status = error }
+                    }
+                    for member in host.recovered_members().unwrap_or_default() {
+                        ui.label(format!("Recovered owner: {} ({}) - offline", member.name, member.id.chars().take(8).collect::<String>()));
+                        ui.horizontal_wrapped(|ui| {
+                            let active = self.snapshot.lifecycle == RoomLifecycle::Active;
+                            if ui.add_enabled(active, egui::Button::new("Copy owner reclaim invite")).on_hover_text("Give privately only to this original owner; it restores their task authority").clicked() {
+                                match host.reclaim_invite(&member.id, Duration::from_secs(300)) {
+                                    Ok(invite) => { ui.ctx().copy_text(invite.encode()); self.invites.push((invite, false)); },
+                                    Err(error) => self.status = error,
+                                }
+                            }
+                            if self.connection.is_none() && ui.add_enabled(active, egui::Button::new("Rejoin locally as this owner")).clicked() {
+                                match host.reclaim_invite(&member.id, Duration::from_secs(60)) { Ok(invite) => local_rejoin = Some(invite), Err(error) => self.status = error }
+                            }
+                        });
                     }
                     if ui.button("Copy public Room archive JSON").clicked() {
                         match host.snapshot().and_then(|snapshot| serde_json::to_string_pretty(&snapshot).map_err(|error| error.to_string())) {
@@ -217,6 +258,9 @@ impl NetworkRoom {
             }
           });
         });
+        if let Some(invite) = local_rejoin {
+            self.connect(invite);
+        }
         ui.separator();
     }
     fn connect(&mut self, invite: Invite) {

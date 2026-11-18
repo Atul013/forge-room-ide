@@ -161,6 +161,18 @@ impl Default for Authority {
     }
 }
 impl Authority {
+    pub(super) fn restore(view: ReadinessState) -> Result<Self, String> {
+        let next = view
+            .impacts
+            .iter()
+            .map(|impact| impact.id)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or("Impact sequence exhausted")?;
+        Ok(Self { view, next })
+    }
+
     pub fn apply(
         &mut self,
         actor: &str,

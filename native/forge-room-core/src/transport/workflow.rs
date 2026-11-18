@@ -237,6 +237,28 @@ impl SharedRoom {
             code_locations: Default::default(),
         })
     }
+    pub(super) fn restore(host: String, snapshot: SharedSnapshot) -> Result<Self, String> {
+        validate(&snapshot)?;
+        let mut room = Self::new()?;
+        room.state.host_id = host.clone();
+        room.state.participants[0].id = host;
+        room.state.tasks = snapshot.tasks;
+        room.state.pending_handoffs = snapshot.handoffs;
+        room.state.evidence = snapshot.evidence;
+        room.state.activity = snapshot.activity;
+        room.activity_sequence = room
+            .state
+            .activity
+            .iter()
+            .filter_map(|event| event.id.strip_prefix("network-")?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        room.shipping = snapshot.shipping;
+        room.readiness = super::readiness::Authority::restore(snapshot.readiness)?;
+        room.milestones = snapshot.milestones;
+        room.remaining = Duration::from_secs(snapshot.countdown.remaining_seconds);
+        Ok(room)
+    }
     pub(super) fn sync_members(&mut self, members: Vec<Participant>) {
         self.state
             .participants

@@ -12,6 +12,110 @@ struct Peer {
     input: ChildStdin,
     output: Receiver<Value>,
 }
+
+#[test]
+fn checkpoint_restart_requires_fresh_claims_and_preserves_owner_work() {
+    use forge_room_core::{
+        transport::{Action, RoomLifecycle},
+        TaskPriority, TaskStatus,
+    };
+    let checkpoint = std::env::temp_dir().join(format!(
+        "forge-room-recovery-{}-{}.json",
+        std::process::id(),
+        forge_room_core::now_epoch_seconds()
+    ));
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "recovery trial").unwrap();
+    let address = host.address();
+    let (mut owner, mut other) = (Peer::start(), Peer::start());
+    let old_invite = host.invite(Duration::from_secs(60)).unwrap();
+    let joined = owner.request(json!({"command":"join","invite":old_invite.encode(),"name":"Ada"}));
+    let owner_id = joined["identity"].as_str().unwrap().to_owned();
+    let joined = other.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Grace"}));
+    let other_id = joined["identity"].as_str().unwrap().to_owned();
+    host.control(Action::CreateTask {
+        title: "Recover owner work".into(),
+        owner: owner_id.clone(),
+        criteria: vec![],
+        dependencies: vec![],
+        priority: TaskPriority::High,
+        due_hours: None,
+    })
+    .unwrap();
+    assert!(owner.execute(Action::message("public checkpoint message"))["rejection"].is_null());
+    assert!(owner.execute(Action::Message {
+        text: "private must not persist".into(),
+        recipient: Some(other_id.clone()),
+        task: None,
+        decision: false,
+        parent: None
+    })["rejection"]
+        .is_null());
+    assert!(owner.execute(Action::SharePatch {
+        recipient: other_id,
+        path: "src/main.rs".into(),
+        before: "private original".into(),
+        after: "private replacement".into()
+    })["rejection"]
+        .is_null());
+    host.control(Action::Countdown {
+        seconds: Some(180),
+        running: true,
+    })
+    .unwrap();
+    host.save_checkpoint(&checkpoint).unwrap();
+    let saved = std::fs::read(&checkpoint).unwrap();
+    assert!(!String::from_utf8_lossy(&saved).contains("private must not persist"));
+    assert!(!String::from_utf8_lossy(&saved).contains("private original"));
+    assert!(!String::from_utf8_lossy(&saved).contains("private replacement"));
+    assert!(!String::from_utf8_lossy(&saved).contains(&old_invite.encode()));
+    assert!(host.save_checkpoint(&checkpoint).is_err());
+    assert_eq!(std::fs::read(&checkpoint).unwrap(), saved);
+    drop(host);
+    let host = Host::recover(address, &checkpoint).unwrap();
+    assert_eq!(host.lifecycle().unwrap(), RoomLifecycle::Paused);
+    assert!(host.invite(Duration::from_secs(60)).is_err());
+    let snapshot = host.snapshot().unwrap();
+    assert_eq!(snapshot.shared.tasks[0].owner_id, owner_id);
+    assert!(!snapshot.shared.countdown.running);
+    assert!(snapshot.members.iter().all(|member| !member.online));
+    host.resume().unwrap();
+    let (mut impostor, mut reclaimed) = (Peer::start(), Peer::start());
+    let joined = impostor.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    assert_ne!(joined["identity"], owner_id);
+    assert!(impostor.execute(Action::Transition {
+        task: "T1".into(),
+        status: TaskStatus::InProgress,
+        completed: vec![]
+    })["rejection"]
+        .is_string());
+    let stale = host
+        .reclaim_invite(&owner_id, Duration::from_secs(60))
+        .unwrap();
+    let claim = host
+        .reclaim_invite(&owner_id, Duration::from_secs(60))
+        .unwrap();
+    assert!(
+        reclaimed.request(json!({"command":"join","invite":stale.encode(),"name":"Ada"}))["error"]
+            .is_string()
+    );
+    let joined =
+        reclaimed.request(json!({"command":"join","invite":claim.encode(),"name":"Changed name"}));
+    assert_eq!(joined["identity"], owner_id);
+    assert!(reclaimed.execute(Action::Transition {
+        task: "T1".into(),
+        status: TaskStatus::InProgress,
+        completed: vec![]
+    })["rejection"]
+        .is_null());
+    assert!(host
+        .reclaim_invite(&owner_id, Duration::from_secs(60))
+        .is_err());
+    assert!(owner.request(json!({"command":"poll"}))["error"].is_string());
+    host.revoke(&claim).unwrap();
+    assert!(reclaimed.request(json!({"command":"poll"}))["error"].is_string());
+    drop(host);
+    std::fs::remove_file(checkpoint).unwrap();
+}
 impl Peer {
     fn execute(&mut self, action: forge_room_core::transport::Action) -> Value {
         self.request(json!({"command":"execute","action":action}))

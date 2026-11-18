@@ -28,6 +28,8 @@ Keep entries short. Newest entry first in "Log". Never delete the other agent's 
 
 ## Log (newest first)
 
+- **2026-11-18 Codex:** #81/#82 plus Atul through d29799e are integrated locally; combined app 372 passed/9 ignored. Added cohesive explicit public Room checkpoint/restart/owner-reclaim bundle, with fresh TLS/invites, paused restore and private-data exclusion. Focused archive/malformed and independent restart/reclaim tests pass; final expanded checks pending. User confirms second physical machine/native server unavailable now; desktop helper returned os error 2. No visible/provider/physical acceptance claim. See docs/native/ROOM_RECOVERY.md.
+
 - **2026-11-18 Codex:** Integrating #81, #82 and Atul native UX changes on integrate/workspace-ship-recovery. Shared core/app/log ownership claimed for this authorized bundle. Preserve native provider guards, working debugger and task pipeline through merge. Desktop pipe unavailable (os error 2); provider and physical two-machine acceptance still separate. Durable Room recovery follows acceptance investigation.
 
 - **2026-11-18 Codex:** Completed the expanded #81 workspace bundle on source `6e4100f`: portable documents, active-project routing/trust reset, buffer preservation, keyboard/relative-path navigation and resolved-alias guards. Final local 364 passed/9 ignored, format/Clippy clean. Windows verify 44262021911 and full verify/package/install/uninstall/headless launch 44262017117 passed; downloaded hashes and five archive entries verified. Desktop/interactive installer, live provider and physical two-client acceptance remain separate. Single existing PR extended; no new PR.
