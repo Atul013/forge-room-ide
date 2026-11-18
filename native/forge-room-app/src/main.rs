@@ -7052,9 +7052,6 @@ enum Confirm {
 
 /// What to tell the user after Replace All.
 fn replaced_status(done: &search::Replaced) -> String {
-    if let Some(error) = &done.error {
-        return format!("Replace failed: {}", error.lines().next().unwrap_or(""));
-    }
     let mut text = format!(
         "Replaced {} match{} in {} file{}",
         done.replacements,
@@ -7072,6 +7069,9 @@ fn replaced_status(done: &search::Replaced) -> String {
             "; skipped {} (first: {name}, {why})",
             done.skipped.len()
         ));
+    }
+    if let Some(error) = &done.error {
+        text = format!("Replace incomplete: {text}; {error}");
     }
     text
 }
@@ -7146,9 +7146,17 @@ fn dialog_buttons(
 
 /// Whether a status message reports a failure (it is then shown in red and held for a while).
 fn is_error_status(text: &str) -> bool {
-    ["Git:", "Cannot ", "Could not ", "Failed", "Unable", "Error"]
-        .iter()
-        .any(|prefix| text.starts_with(prefix))
+    [
+        "Git:",
+        "Cannot ",
+        "Could not ",
+        "Failed",
+        "Unable",
+        "Error",
+        "Replace incomplete:",
+    ]
+    .iter()
+    .any(|prefix| text.starts_with(prefix))
 }
 
 /// A message nobody asked for (an auto-save, an agent finishing): it waits behind a held error,
@@ -7247,6 +7255,22 @@ fn underline_tab_padded(
 #[cfg(test)]
 mod status_tests {
     use super::{is_background_status, is_error_status};
+
+    #[test]
+    fn partial_replacement_reports_writes_and_root_failure_together() {
+        let done = crate::search::Replaced {
+            files: 3,
+            replacements: 5,
+            error: Some("Root D:/large: nothing was changed".into()),
+            ..Default::default()
+        };
+        let status = super::replaced_status(&done);
+        assert_eq!(
+            status,
+            "Replace incomplete: Replaced 5 matches in 3 files; Root D:/large: nothing was changed"
+        );
+        assert!(is_error_status(&status));
+    }
 
     #[test]
     fn failures_are_recognised_by_how_they_start_not_by_file_names() {

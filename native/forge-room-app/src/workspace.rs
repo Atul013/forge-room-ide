@@ -41,6 +41,7 @@ impl Workspace {
 
     /// Add a browse/search root, ignoring duplicate paths (including Windows case/slash aliases).
     pub fn add_root(&mut self, root: PathBuf) -> bool {
+        let root = crate::tabs::normalize(&root);
         if self.roots.len() > MAX_ADDITIONAL_ROOTS
             || !root.is_dir()
             || self.roots.iter().any(|known| roots_overlap(known, &root))
@@ -292,6 +293,26 @@ mod tests {
         assert!(!workspace.add_root(PathBuf::from(
             project.join("child").to_string_lossy().to_uppercase()
         )));
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn secondary_alias_uses_tab_identity_for_activation_and_relative_paths() {
+        let base = temp_dir();
+        let primary = base.join("primary");
+        let secondary = base.join("secondary");
+        fs::create_dir(&primary).unwrap();
+        fs::create_dir(&secondary).unwrap();
+        fs::create_dir(base.join("alias-parent")).unwrap();
+        let mut workspace = Workspace::new(primary);
+        assert!(workspace.add_root(base.join("alias-parent").join("..").join("secondary")));
+        let normalized = crate::tabs::normalize(&secondary);
+        assert_eq!(workspace.roots()[1], normalized);
+        assert!(workspace.activation_roots(&normalized).is_some());
+        assert_eq!(
+            workspace.containing_root(&normalized.join("file.rs")),
+            Some(normalized.as_path())
+        );
         fs::remove_dir_all(base).unwrap();
     }
 

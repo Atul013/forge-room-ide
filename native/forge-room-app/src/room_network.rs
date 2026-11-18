@@ -12,6 +12,28 @@ enum Command {
     Action(Action),
     Stop,
 }
+
+fn member_action(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::Message { .. }
+            | Action::ContextMessage { .. }
+            | Action::MentionMessage { .. }
+            | Action::React { .. }
+            | Action::RequestHandoff { .. }
+            | Action::SharePatch { .. }
+            | Action::ReviewPatch { .. }
+            | Action::ShareFocus { .. }
+            | Action::ShareLocation { .. }
+            | Action::ReportShipCheck { .. }
+            | Action::UpdateReadiness { .. }
+            | Action::RequestHelp { .. }
+            | Action::CloseHelp { .. }
+            | Action::DeclareImpact { .. }
+            | Action::AcknowledgeImpact { .. }
+    )
+}
+
 type Update = Result<(Snapshot, Option<(String, Action)>), String>;
 struct Connection {
     commands: SyncSender<Command>,
@@ -249,7 +271,7 @@ impl NetworkRoom {
                 let mut actions=self.workflow.show(ui,&self.snapshot,self.host.is_some(),root.filter(|_|trusted));
                 actions.extend(self.changes.show(ui,&self.snapshot,root,trusted,dirty,self.status.starts_with("Connected")));
                 for action in actions {
-                    if !matches!(action,Action::Message {..}|Action::ContextMessage {..}|Action::MentionMessage {..}|Action::React {..}|Action::RequestHandoff {..}|Action::SharePatch {..}|Action::ShareFocus {..}|Action::ShareLocation {..}) && let Some(host)=&self.host {
+                    if !member_action(&action) && let Some(host)=&self.host {
                         if let Err(error)=host.control(action.clone()) {self.workflow.restore(action);self.notice=Some(error);}
                     } else if let Some(connection)=&self.connection {
                         if let Err(error)=connection.commands.try_send(Command::Action(action)) {
@@ -354,5 +376,69 @@ impl NetworkRoom {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+    use forge_room_core::transport::{ShipCheck, ShipPlan, ShipResult};
+
+    #[test]
+    fn hosting_members_report_checks_and_readiness_as_the_joined_identity() {
+        let host = Host::start("127.0.0.1:0".parse().unwrap(), "routing").unwrap();
+        let (mut client, _) = Client::join(
+            host.invite(Duration::from_secs(60)).unwrap(),
+            "Local member",
+        )
+        .unwrap();
+        let plan = Action::SetShipPlan {
+            expected_revision: 0,
+            plan: ShipPlan {
+                title: "Release".into(),
+                checks: vec![ShipCheck {
+                    title: "Smoke".into(),
+                    owner: client.identity.clone(),
+                }],
+                ..Default::default()
+            },
+        };
+        assert!(!member_action(&plan));
+        host.control(plan).unwrap();
+        let report = Action::ReportShipCheck {
+            expected_revision: 1,
+            check: 0,
+            result: ShipResult::ClaimedPass,
+            note: "manual smoke".into(),
+        };
+        assert!(member_action(&report));
+        assert!(host.control(report.clone()).is_err());
+        assert!(client.execute(report).unwrap().rejection.is_none());
+        host.control(Action::CreateTask {
+            title: "Owner task".into(),
+            owner: client.identity.clone(),
+            criteria: vec![],
+            dependencies: vec![],
+            priority: forge_room_core::TaskPriority::Normal,
+            due_hours: None,
+        })
+        .unwrap();
+        let readiness = Action::UpdateReadiness {
+            task: "T1".into(),
+            expected_revision: 0,
+            profile: Default::default(),
+        };
+        assert!(member_action(&readiness));
+        assert!(host.control(readiness.clone()).is_err());
+        let outcome = client.execute(readiness).unwrap();
+        assert!(outcome.rejection.is_none());
+        assert_eq!(
+            outcome.snapshot.shared.shipping.reports[0].actor,
+            client.identity
+        );
+        assert_eq!(
+            outcome.snapshot.shared.readiness.profiles[0].owner,
+            client.identity
+        );
     }
 }

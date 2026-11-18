@@ -172,6 +172,9 @@ impl Checkpoint {
                     || e.sequence > snapshot.cursor
                     || e.mentions.len() > MAX_MENTIONS
                     || e.mentions.iter().any(|id| !identity(id))
+                    || e.mentions.iter().collect::<HashSet<_>>().len() != e.mentions.len()
+                    || e.task.as_ref().is_some_and(|task| task.len() > 16)
+                    || e.parent.is_some_and(|parent| parent >= e.sequence)
                     || e.code_reference.as_ref().is_some_and(|reference| {
                         workflow::validate_code_location(&reference.path, reference.line).is_err()
                     })
@@ -182,6 +185,10 @@ impl Checkpoint {
         let mut events = HashSet::new();
         let mut tasks = HashSet::new();
         if snapshot.events.iter().any(|e| !events.insert(e.sequence))
+            || snapshot
+                .events
+                .windows(2)
+                .any(|pair| pair[0].sequence >= pair[1].sequence)
             || snapshot
                 .shared
                 .tasks
@@ -202,6 +209,43 @@ impl Checkpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn messages_rejected_by_clients_are_rejected_before_recovery() {
+        let path = std::env::temp_dir().join(format!(
+            "forge-room-invalid-events-{}.json",
+            secret().unwrap()
+        ));
+        let host = Host::start("127.0.0.1:0".parse().unwrap(), "messages").unwrap();
+        let (mut client, _) =
+            Client::join(host.invite(Duration::from_secs(60)).unwrap(), "Ada").unwrap();
+        client.post("first").unwrap();
+        client.post("second").unwrap();
+        host.save_checkpoint(&path).unwrap();
+        let original: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        for case in 0..4 {
+            let mut value = original.clone();
+            let events = value["snapshot"]["events"].as_array_mut().unwrap();
+            match case {
+                0 => events.swap(0, 1),
+                1 => {
+                    events[0]["mentions"] =
+                        serde_json::json!([client.identity.clone(), client.identity.clone()])
+                }
+                2 => events[0]["task"] = "x".repeat(17).into(),
+                _ => events[0]["parent"] = events[0]["sequence"].clone(),
+            }
+            let bytes = serde_json::to_vec(&value).unwrap();
+            std::fs::write(&path, &bytes).unwrap();
+            assert!(
+                Host::recover("127.0.0.1:0".parse().unwrap(), &path).is_err(),
+                "case {case}"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn archived_checkpoint_stays_archived_and_invalid_data_is_preserved() {

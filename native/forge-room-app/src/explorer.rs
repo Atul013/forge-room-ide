@@ -336,7 +336,7 @@ fn keyboard(ui: &mut egui::Ui, workspace: &mut Workspace, state: &mut State, act
         return;
     };
     let is_dir = rows.iter().any(|(path, dir)| *path == selected && *dir);
-    let is_root = selected == workspace.root;
+    let is_root = workspace.roots().contains(&selected);
     if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter)) {
         if is_dir {
             workspace.toggle(&selected);
@@ -574,6 +574,33 @@ mod tests {
         );
         workspace.toggle(&second);
         assert_eq!(visible_rows(&mut workspace).len(), 2);
+        let context = egui::Context::default();
+        for key in [Key::F2, Key::Delete] {
+            let mut state = State {
+                selected: Some(second.clone()),
+                focused: true,
+                ..Default::default()
+            };
+            let mut action = Action::None;
+            let input = egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+                ..Default::default()
+            };
+            let mut output = context.run_ui(input, |ui| {
+                keyboard(ui, &mut workspace, &mut state, &mut action)
+            });
+            output.textures_delta.clear();
+            assert!(
+                matches!(action, Action::None),
+                "configured roots cannot be renamed or deleted"
+            );
+        }
         std::fs::remove_dir_all(base).unwrap();
     }
 
