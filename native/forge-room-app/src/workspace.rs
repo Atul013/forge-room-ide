@@ -25,6 +25,7 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(root: PathBuf) -> Self {
+        let root = crate::tabs::normalize(&root);
         let mut expanded = HashSet::new();
         expanded.insert(root.clone());
         Self {
@@ -157,8 +158,12 @@ fn roots_overlap(left: &Path, right: &Path) -> bool {
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
-    let left = left.to_string_lossy().replace('/', "\\");
-    let right = right.to_string_lossy().replace('/', "\\");
+    let left = crate::tabs::normalize(left)
+        .to_string_lossy()
+        .replace('/', "\\");
+    let right = crate::tabs::normalize(right)
+        .to_string_lossy()
+        .replace('/', "\\");
     left.trim_end_matches('\\')
         .eq_ignore_ascii_case(right.trim_end_matches('\\'))
 }
@@ -207,7 +212,7 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::tabs::normalize(&dir)
     }
 
     #[test]
@@ -312,6 +317,45 @@ mod tests {
         assert_eq!(
             workspace.containing_root(&normalized.join("file.rs")),
             Some(normalized.as_path())
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_short_paths_keep_canonical_root_identity_and_activation() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetShortPathNameW(long: *const u16, short: *mut u16, size: u32) -> u32;
+        }
+        let base = temp_dir();
+        let primary = base.join("long-primary-project");
+        let secondary = base.join("long-secondary-project");
+        fs::create_dir(&primary).unwrap();
+        fs::create_dir(&secondary).unwrap();
+        let short = |path: &Path| {
+            let long: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            let mut buffer = vec![0u16; 32768];
+            let length = unsafe {
+                GetShortPathNameW(long.as_ptr(), buffer.as_mut_ptr(), buffer.len() as u32)
+            };
+            assert!(length > 0 && (length as usize) < buffer.len());
+            PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length as usize]))
+        };
+        let mut workspace = Workspace::new(short(&primary));
+        assert!(workspace.add_root(short(&secondary)));
+        assert_eq!(workspace.root, crate::tabs::normalize(&primary));
+        assert_eq!(
+            workspace.activation_roots(&short(&secondary)),
+            Some(vec![
+                crate::tabs::normalize(&secondary),
+                crate::tabs::normalize(&primary)
+            ])
+        );
+        assert_eq!(
+            workspace.containing_root(&crate::tabs::normalize(&secondary).join("file.rs")),
+            Some(crate::tabs::normalize(&secondary).as_path())
         );
         fs::remove_dir_all(base).unwrap();
     }

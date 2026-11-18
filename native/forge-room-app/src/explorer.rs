@@ -560,6 +560,8 @@ mod tests {
         let second = base.join("second");
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
+        let first = crate::tabs::normalize(&first);
+        let second = crate::tabs::normalize(&second);
         std::fs::write(second.join("file.txt"), "text").unwrap();
         let mut workspace = Workspace::new(first.clone());
         assert!(workspace.add_root(second.clone()));
