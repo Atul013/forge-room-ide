@@ -10,13 +10,39 @@ $releaseExe = Join-Path $root "native\forge-room-app\target\$Target\release\forg
 $artifacts = Join-Path $root "artifacts\windows-x64"
 $package = Join-Path $artifacts "Forge-Room-Early-Preview-$Version-windows-x64"
 
-Remove-Item $artifacts -Recurse -Force -ErrorAction SilentlyContinue
+$resolvedArtifacts = [IO.Path]::GetFullPath($artifacts)
+$expectedArtifacts = [IO.Path]::GetFullPath((Join-Path $root "artifacts\windows-x64"))
+if ($resolvedArtifacts -ne $expectedArtifacts -or -not $resolvedArtifacts.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Artifact cleanup escaped the workspace" }
+foreach ($artifactPath in @((Join-Path $root "artifacts"), $resolvedArtifacts)) {
+    if (Test-Path -LiteralPath $artifactPath) {
+        $artifactItem = Get-Item -LiteralPath $artifactPath -Force
+        if (($artifactItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Artifact cleanup refuses linked directories" }
+    }
+}
+Remove-Item -LiteralPath $resolvedArtifacts -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $package -ItemType Directory -Force | Out-Null
 
 if (-not (Test-Path $releaseExe)) {
     throw "Release executable is missing: $releaseExe"
 }
+$sourceChanges = git -C $root -c core.fsmonitor=false status --porcelain=v1 --untracked-files=normal -- native packaging .github/workflows/native-rust.yml
+if ($LASTEXITCODE -ne 0) { throw "Could not verify package input cleanliness" }
+if ($sourceChanges) { throw "Commit native, packaging and workflow changes before packaging a recorded build" }
 
+$identityPath = Join-Path $artifacts "BUILD_IDENTITY.json"
+$identityProcess = Start-Process -FilePath $releaseExe -ArgumentList "--forge-build-info" -RedirectStandardOutput $identityPath -WindowStyle Hidden -PassThru
+$null = $identityProcess.Handle
+if (-not $identityProcess.WaitForExit(10000)) { $identityProcess.Kill(); throw "Build identity probe timed out" }
+$identityProcess.WaitForExit()
+if ($identityProcess.ExitCode -ne 0) { throw "Build identity probe failed: $($identityProcess.ExitCode)" }
+$identity = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
+$source = (git -C $root rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw "Source identity unavailable" }
+$nativeTree = (git -C $root rev-parse HEAD:native).Trim()
+if ($LASTEXITCODE -ne 0) { throw "Native tree identity unavailable" }
+if (-not $identity.recorded -or $identity.sourceRevision -ne $source -or $identity.nativeTree -ne $nativeTree -or $identity.version -ne $Version -or $identity.target -ne $Target -or $identity.profile -ne "release") { throw "Executable identity does not match the requested package source/target/version" }
+$identity | Add-Member -NotePropertyName executableSha256 -NotePropertyValue (Get-FileHash -LiteralPath $releaseExe -Algorithm SHA256).Hash.ToLowerInvariant()
+$identity | ConvertTo-Json | Set-Content -LiteralPath $identityPath -Encoding utf8NoBOM
 Copy-Item $releaseExe (Join-Path $package "forge-room-early-preview.exe")
 Copy-Item (Join-Path $root "docs\native\EARLY_PREVIEW_NOTES.md") $package
 Copy-Item (Join-Path $root "native\LICENSE-MIT") (Join-Path $package "LICENSE-MIT.txt")

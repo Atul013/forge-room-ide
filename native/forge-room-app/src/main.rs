@@ -9,6 +9,7 @@ mod autosave;
 mod background;
 #[allow(dead_code)] // Keep optional brand artwork available to the AI panel and future themes.
 mod brand;
+mod build_identity;
 mod commands;
 mod controlled_build;
 mod dap;
@@ -41,6 +42,7 @@ mod position;
 mod preview;
 mod project_tools;
 mod recovery;
+mod release_desk;
 mod review_checkpoints;
 mod room_changes;
 mod room_code_navigation;
@@ -117,6 +119,17 @@ enum BottomTab {
 }
 
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--forge-build-info")) {
+        use std::io::Write;
+        if std::io::stdout()
+            .lock()
+            .write_all(build_identity::json().as_bytes())
+            .is_err()
+        {
+            std::process::exit(2);
+        }
+        return;
+    }
     if let Err(error) = run() {
         let message = format!("{error:#}");
         let log_path = startup_error_path();
@@ -290,6 +303,7 @@ struct ForgeRoomApp {
     task_pipelines: task_pipeline::State,
     workflow_center: workflow_center::State,
     studio_packs: studio_packs::State,
+    release_desk: release_desk::State,
     density: forge_room_core::packs::Density,
     reduced_motion: bool,
     lsp_live: lsp::live::Manager,
@@ -484,6 +498,7 @@ impl ForgeRoomApp {
             task_pipelines: task_pipeline::State::default(),
             workflow_center: workflow_center::State::default(),
             studio_packs: studio_packs::State::default(),
+            release_desk: release_desk::State::default(),
             density: settings::load()
                 .appearance_profile
                 .and_then(|value| {
@@ -4100,6 +4115,9 @@ impl ForgeRoomApp {
                 {
                     self.studio_packs.open = true;
                 }
+                if ui.button("Open Release Evidence Desk").clicked() {
+                    self.release_desk.open = true;
+                }
                 if page == project_tools::Page::Workflows
                     && ui.button("Open Workflow execution center").clicked()
                 {
@@ -6014,7 +6032,8 @@ impl ForgeRoomApp {
                 .on_hover_text(&self.status);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let dim = |text: String| egui::RichText::new(text).color(theme::status_dim());
-                ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()));
+                ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()))
+                    .on_hover_text(build_identity::json());
                 ui.add_space(6.0);
                 if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
                     ui.label(dim(tab.doc.line_ending().label().to_string()));
@@ -6485,6 +6504,23 @@ impl eframe::App for ForgeRoomApp {
             .show(&context, self.trusted, &workflow_dirty, &workflow_records);
         self.studio_packs_frame(&context, workflow_config.as_ref());
         self.room.recovery_frame(&context, workflow_root.as_deref());
+        self.release_desk.frame(
+            &context,
+            workflow_root.as_deref(),
+            self.trusted,
+            &self.room.workflow_room_id(),
+            &self.room.workflow_tasks(),
+        );
+        if let Some((room, task, text)) = self.release_desk.stage.take() {
+            self.status = self
+                .room
+                .stage_workflow_receipt(&room, &task, text)
+                .err()
+                .unwrap_or_else(|| {
+                    "Release status staged in Room evidence; inspect and attach explicitly".into()
+                });
+        }
+
         if let Some(workspace) = self.workflow_center.created.take() {
             self.status = self
                 .ai
