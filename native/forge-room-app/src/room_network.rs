@@ -59,6 +59,7 @@ pub struct NetworkRoom {
     status: String,
     confirm_archive: bool,
     recovery: crate::room_recovery::State,
+    launch: crate::room_launch::State,
     journal_lease: Option<crate::room_recovery::Lease>,
     journal_path: Option<PathBuf>,
 }
@@ -78,6 +79,7 @@ impl Default for NetworkRoom {
             status: "Offline".into(),
             confirm_archive: false,
             recovery: Default::default(),
+            launch: Default::default(),
             journal_lease: None,
             journal_path: None,
         }
@@ -97,6 +99,22 @@ impl Drop for NetworkRoom {
 }
 impl NetworkRoom {
     pub fn recovery_frame(&mut self, ctx: &egui::Context, root: Option<&Path>) {
+        self.launch.tick();
+        if let Some(mut prepared) = self.launch.ready.take() {
+            if self.host.is_none() && self.connection.is_none() {
+                if let (Some(host), Some(client)) = (prepared.host.take(), prepared.client.take()) {
+                    self.snapshot = prepared.snapshot.clone();
+                    self.host = Some(host);
+                    let snapshot = prepared.snapshot.clone();
+                    self.attach(move || Ok((client, snapshot)));
+                    self.invites.clear();
+                }
+            } else {
+                self.launch.operation_notice("Network Room changed before launch adoption; temporary host closed, existing Room preserved".into());
+            }
+        }
+        self.launch
+            .show(ctx, self.host.is_none() && self.connection.is_none());
         self.recovery.tick(ctx, root);
         if let Some(creation) = self.recovery.create.take() {
             let creation = *creation;
@@ -183,6 +201,10 @@ impl NetworkRoom {
             self.journal_path.as_deref(),
         );
     }
+    pub fn stage_blueprint(&mut self, blueprint: forge_room_core::transport::RoomBlueprint) {
+        self.launch.replace(blueprint);
+        self.launch.open = true;
+    }
     pub fn workflow_tasks(&self) -> Vec<forge_room_core::Task> {
         self.snapshot.shared.tasks.clone()
     }
@@ -267,6 +289,12 @@ impl NetworkRoom {
             .preflight
             .reconcile(root.filter(|_| trusted), &self.snapshot);
         let unread_activity = self.workflow.observe_activity(&self.snapshot);
+        if ui.button("Open Room Launch Center").clicked() {
+            self.launch.open = true;
+        }
+        if self.host.is_some() && ui.button("Capture public setup as blueprint").clicked() {
+            self.launch.capture(&self.snapshot);
+        }
         if ui.button("Open Room Recovery Center").clicked() {
             self.recovery.open = true;
         }
@@ -401,8 +429,10 @@ impl NetworkRoom {
                 }
                 if ui.button(if self.host.is_some() { "End hosted Room" } else { "Leave network Room" }).clicked() {
                     let recovery=std::mem::take(&mut self.recovery);
+                    let launch=std::mem::take(&mut self.launch);
                     let mut next=Self::default();
                     next.recovery=recovery;
+                    next.launch=launch;
                     *self=next;
                     return;
                 }
@@ -435,13 +465,19 @@ impl NetworkRoom {
         ui.separator();
     }
     fn connect(&mut self, invite: Invite) {
+        let name = self.name.clone();
+        self.attach(move || Client::join(invite, &name));
+    }
+    fn attach(
+        &mut self,
+        join: impl FnOnce() -> Result<(Client, Snapshot), String> + Send + 'static,
+    ) {
         let (commands, receiver) = mpsc::sync_channel(4);
         let (sender, updates) = mpsc::sync_channel(4);
-        let name = self.name.clone();
         self.status = "Connecting…".into();
         self.connection = Some(Connection { commands, updates });
         thread::spawn(move || {
-            let (mut client, mut snapshot) = match Client::join(invite, &name) {
+            let (mut client, mut snapshot) = match join() {
                 Ok(joined) => joined,
                 Err(error) => {
                     let _ = sender.send(Err(format!(
@@ -691,6 +727,35 @@ mod recovery_integration_tests {
         }
         assert!(journal.exists());
         assert!(forge_room_core::transport::inspect_recovery(&journal).is_ok());
+    }
+    #[test]
+    fn blueprint_launch_adopts_the_prepared_member_and_never_replaces_an_existing_room() {
+        let fixture = Fixture::new();
+        let ctx = egui::Context::default();
+        let mut room = NetworkRoom::default();
+        room.recovery = crate::room_recovery::State::at(&fixture.catalog());
+        let blueprint = forge_room_core::transport::RoomBlueprint::starters().remove(1);
+        let prepare = || {
+            let (host, client, snapshot) =
+                Host::from_blueprint("127.0.0.1:0".parse().unwrap(), &blueprint, "Owner", false)
+                    .unwrap();
+            Box::new(crate::room_launch::Prepared {
+                host: Some(host),
+                client: Some(client),
+                snapshot,
+            })
+        };
+        room.launch.ready = Some(prepare());
+        room.recovery_frame(&ctx, None);
+        assert!(room.connection.is_some());
+        assert_eq!(room.snapshot.shared.tasks.len(), 4);
+        assert!(room.invites.is_empty());
+        let first = room.host.as_ref().unwrap().address();
+        let identity = room.snapshot.shared.tasks[0].owner_id.clone();
+        room.launch.ready = Some(prepare());
+        room.recovery_frame(&ctx, None);
+        assert_eq!(room.host.as_ref().unwrap().address(), first);
+        assert_eq!(room.snapshot.shared.tasks[0].owner_id, identity);
     }
     #[test]
     fn reviewed_host_adopts_paused_and_never_replaces_an_existing_host() {

@@ -34,6 +34,7 @@ pub struct State {
     pub changed: bool,
     pub stage_workflows: Option<crate::workflow_center::WorkflowLibrary>,
     pub stage_skill: Option<(String, String)>,
+    pub stage_blueprint: Option<forge_room_core::transport::RoomBlueprint>,
     resource: String,
     clear_room_links: bool,
     appearance_history: Vec<appearance_history::Saved>,
@@ -460,6 +461,14 @@ impl State {
                                     }
                                 }
                                 self.stage_workflows = Some(library);
+                            }
+                        }
+                        runtime::Value::RoomBlueprint(blueprint) => {
+                            ui.label(
+                                "Stages setup only. No host starts and no existing Room changes.",
+                            );
+                            if ui.button("Stage blueprint in Room Launch Center").clicked() {
+                                self.stage_blueprint = Some(blueprint.clone());
                             }
                         }
                         runtime::Value::Skill(text) => {

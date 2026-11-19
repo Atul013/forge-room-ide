@@ -45,6 +45,7 @@ mod review_checkpoints;
 mod room_changes;
 mod room_code_navigation;
 mod room_impact_scan;
+mod room_launch;
 mod room_network;
 mod room_network_workflow;
 mod room_planning;

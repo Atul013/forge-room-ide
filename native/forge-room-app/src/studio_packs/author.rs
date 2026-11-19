@@ -19,6 +19,7 @@ id:"project".into(),label:"Project".into(),source:DataSource::Workspace,view:Vie
 id:"runs".into(),label:"Workflow records".into(),source:DataSource::Workflows,view:View::List,limit:4}
 ]}
 ).unwrap_or_default(),
+ Kind::RoomBlueprint=>serde_json::to_string_pretty(&forge_room_core::transport::RoomBlueprint::starters().remove(1)).unwrap_or_default(),
  Kind::Readme=>"# Local Studio pack\n\nInspect the publisher/license claims and every resource before installing. Appearance and widget data grants are separate choices. Workflow definitions and Skills are staged explicitly; nothing runs or sends automatically.\n".into(),
 }
 }

@@ -16,7 +16,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod blueprints;
 mod readiness;
+pub use blueprints::{BlueprintMilestone, BlueprintTask, RoomBlueprint, MAX_BLUEPRINT};
 mod recovery;
 pub use recovery::{
     inspect_recovery, recovery_file_stamp, RecoveryComparison, RecoveryFileStamp, RecoveryKind,

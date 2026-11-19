@@ -14,6 +14,7 @@ pub enum Value {
     Profile(Profile),
     Widget(Widget),
     Readme(String),
+    RoomBlueprint(forge_room_core::transport::RoomBlueprint),
 }
 #[derive(Clone)]
 pub struct Asset {
@@ -167,6 +168,9 @@ pub fn prepare(activation: &Activation, catalog: &Catalog) -> Result<Prepared, S
                 Kind::Profile => Value::Profile(Profile::parse(&resource.content)?),
                 Kind::Widget => Value::Widget(Widget::parse(&resource.content)?),
                 Kind::Readme => Value::Readme(resource.content.clone()),
+                Kind::RoomBlueprint => Value::RoomBlueprint(
+                    forge_room_core::transport::RoomBlueprint::parse(resource.content.as_bytes())?,
+                ),
             };
             resources.assets.insert(
                 key,
@@ -233,13 +237,13 @@ mod tests {
         }
     }
     #[test]
-    fn all_eight_resource_types_prepare_without_execution_or_global_publication() {
+    fn all_nine_resource_types_prepare_without_execution_or_global_publication() {
         let pack = author::starter();
-        assert_eq!(validate_pack(&pack).unwrap().len(), 8);
+        assert_eq!(validate_pack(&pack).unwrap().len(), 9);
         let before = Arc::as_ptr(&current());
         let catalog = [(pack.key(), pack.clone())].into_iter().collect();
         let prepared = prepare(&activation(&pack), &catalog).unwrap();
-        assert_eq!(prepared.resources.assets.len(), 8);
+        assert_eq!(prepared.resources.assets.len(), 9);
         assert_eq!(prepared.resources.themes.len(), 1);
         assert_eq!(prepared.resources.snippets.len(), 1);
         assert!(

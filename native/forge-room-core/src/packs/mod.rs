@@ -80,9 +80,10 @@ pub enum Kind {
     Profile,
     Widget,
     Readme,
+    RoomBlueprint,
 }
 impl Kind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Theme,
         Self::Grammar,
         Self::Snippets,
@@ -91,6 +92,7 @@ impl Kind {
         Self::Profile,
         Self::Widget,
         Self::Readme,
+        Self::RoomBlueprint,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -102,6 +104,7 @@ impl Kind {
             Self::Profile => "Appearance/layout profile",
             Self::Widget => "Read-only widget",
             Self::Readme => "Documentation",
+            Self::RoomBlueprint => "Room blueprint",
         }
     }
     pub fn max_bytes(self) -> usize {
@@ -109,6 +112,7 @@ impl Kind {
             Self::Theme => 512 * 1024,
             Self::Grammar | Self::Snippets => 128 * 1024,
             Self::Workflow => MAX_RESOURCE,
+            Self::RoomBlueprint => crate::transport::MAX_BLUEPRINT,
             Self::Skill | Self::Readme => 32 * 1024,
             Self::Profile | Self::Widget => 64 * 1024,
         }
@@ -123,6 +127,9 @@ impl Kind {
             Self::Profile => "Preview supported appearance/layout settings; explicit Keep/Restore",
             Self::Widget => "Only explicitly granted current-workspace summary bindings",
             Self::Readme => "Local text inspection",
+            Self::RoomBlueprint => {
+                "Stage public setup; fresh host creation requires separate review"
+            }
         }
     }
 }
@@ -163,6 +170,9 @@ impl Resource {
             return Err("Resource content is unsupported or its digest changed".into());
         }
         match self.kind {
+            Kind::RoomBlueprint => {
+                crate::transport::RoomBlueprint::parse(self.content.as_bytes())?;
+            }
             Kind::Profile => {
                 Profile::parse(&self.content)?;
             }
