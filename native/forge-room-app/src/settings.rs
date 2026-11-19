@@ -132,6 +132,17 @@ pub fn ui_zoom_factor(chosen: Option<f32>, native: f32) -> f32 {
     }
 }
 
+/// The largest interface size that still leaves the layout its minimum window (760 x 480 points)
+/// on a monitor of `monitor_px` physical pixels (width, height), when that is known.
+pub fn max_ui_scale(monitor_px: Option<(f32, f32)>) -> f32 {
+    let Some((width, height)) = monitor_px.filter(|(w, h)| w.is_finite() && h.is_finite()) else {
+        return MAX_UI_SCALE;
+    };
+    (width / 760.0)
+        .min(height / 480.0)
+        .clamp(MIN_UI_SCALE, MAX_UI_SCALE)
+}
+
 /// The interface size one step (a tenth) from `current`, kept inside the allowed range.
 pub fn step_ui_scale(current: f32, delta: i32) -> f32 {
     let tenths = (current * 10.0).round() as i32 + delta;
@@ -258,6 +269,12 @@ mod tests {
         assert_eq!(step_ui_scale(1.0, 1), 1.1);
         assert_eq!(step_ui_scale(MAX_UI_SCALE, 1), MAX_UI_SCALE);
         assert_eq!(step_ui_scale(MIN_UI_SCALE, -1), MIN_UI_SCALE);
+        // A small screen caps the size so the layout keeps its minimum window.
+        assert_eq!(max_ui_scale(None), MAX_UI_SCALE);
+        assert_eq!(max_ui_scale(Some((3840.0, 2160.0))), MAX_UI_SCALE);
+        assert!((max_ui_scale(Some((1366.0, 768.0))) - 1.6).abs() < 1e-6);
+        assert_eq!(max_ui_scale(Some((600.0, 300.0))), MIN_UI_SCALE);
+        assert_eq!(max_ui_scale(Some((f32::NAN, 768.0))), MAX_UI_SCALE);
         let parsed: Settings = serde_json::from_str(r#"{"ui_scale":1.5}"#).unwrap();
         assert_eq!(parsed.ui_scale, Some(1.5));
     }

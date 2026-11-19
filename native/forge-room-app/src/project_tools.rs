@@ -607,12 +607,12 @@ fn page_body(
             {
                 return Some(action);
             }
+            ui.label(match ui_scale {
+                Some(scale) => format!("Interface size: {:.0}%", scale * 100.0),
+                None => "Interface size: automatic".to_string(),
+            });
             if let Some(action) = ui
                 .horizontal(|ui| {
-                    ui.label(match ui_scale {
-                        Some(scale) => format!("Interface size: {:.0}%", scale * 100.0),
-                        None => "Interface size: automatic".to_string(),
-                    });
                     if ui
                         .button("−")
                         .on_hover_text("Make the whole interface smaller")

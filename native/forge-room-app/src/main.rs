@@ -271,7 +271,8 @@ struct ForgeRoomApp {
     stash_count: usize,
     /// Editor text size relative to the default, kept in the settings.
     editor_scale: f32,
-    /// The chosen interface size (`None`: automatic) and the Windows display scale it is applied on.
+    /// The chosen interface size (`None`: automatic) and the Windows display scale of the monitor the
+    /// window was on when it last changed (a move to another monitor is picked up at the next change).
     ui_scale: Option<f32>,
     native_ppp: f32,
     /// Save file tabs automatically once their text rests.
@@ -389,11 +390,25 @@ fn shortcut(ui: &egui::Ui, modifiers: Modifiers, key: Key) -> bool {
 impl ForgeRoomApp {
     fn new(creation_context: &eframe::CreationContext<'_>, initial_path: Option<PathBuf>) -> Self {
         // The layout is tuned for 1 pixel per point; on a 125% display that means a 0.8 zoom.
-        let native = creation_context.egui_ctx.pixels_per_point();
+        let native = creation_context
+            .egui_ctx
+            .native_pixels_per_point()
+            .unwrap_or_else(|| creation_context.egui_ctx.pixels_per_point());
         let ui_scale = settings::clean_ui_scale(settings::load().ui_scale);
+        // A size saved on a big screen must not swallow a small one: it is capped to what the
+        // monitor can hold, without rewriting the saved choice.
+        let monitor_px = creation_context.egui_ctx.input(|input| {
+            input
+                .viewport()
+                .monitor_size
+                .map(|size| (size.x * native, size.y * native))
+        });
         creation_context
             .egui_ctx
-            .set_zoom_factor(settings::ui_zoom_factor(ui_scale, native));
+            .set_zoom_factor(settings::ui_zoom_factor(
+                ui_scale.map(|scale| scale.min(settings::max_ui_scale(monitor_px))),
+                native,
+            ));
         fonts::install(&creation_context.egui_ctx);
         theme::load_import();
         syntax::load_imports();
@@ -1219,12 +1234,34 @@ impl ForgeRoomApp {
                 if let Some(native) = self.egui_ctx.native_pixels_per_point() {
                     self.native_ppp = native;
                 }
-                // From automatic, a step starts at the size automatic currently gives.
-                let current = self.ui_scale.unwrap_or_else(|| {
-                    settings::ui_zoom_factor(None, self.native_ppp) * self.native_ppp
+                // From automatic, a step starts at the size automatic currently gives (kept inside
+                // the allowed range, so "bigger" can never shrink it).
+                let current = self
+                    .ui_scale
+                    .unwrap_or_else(|| {
+                        settings::ui_zoom_factor(None, self.native_ppp) * self.native_ppp
+                    })
+                    .clamp(settings::MIN_UI_SCALE, settings::MAX_UI_SCALE);
+                // The biggest size this monitor can hold with the layout's minimum window.
+                let monitor_px = self.egui_ctx.input(|input| {
+                    input
+                        .viewport()
+                        .monitor_size
+                        .map(|size| (size.x * self.native_ppp, size.y * self.native_ppp))
                 });
+                let cap = settings::max_ui_scale(monitor_px);
                 self.ui_scale = match command {
-                    Command::InterfaceBigger => Some(settings::step_ui_scale(current, 1)),
+                    Command::InterfaceBigger => {
+                        let next = settings::step_ui_scale(current, 1);
+                        if next > cap && current >= cap {
+                            self.status = format!(
+                                "This screen cannot hold a bigger interface ({}% is the most)",
+                                (cap * 100.0).floor()
+                            );
+                            return;
+                        }
+                        Some(next.min(cap))
+                    }
                     Command::InterfaceSmaller => Some(settings::step_ui_scale(current, -1)),
                     _ => None,
                 };
