@@ -12,7 +12,7 @@ Studio is one local declarative resource system, entered from Extensions, Settin
 
 ## Appearance and Morph
 
-Profiles are strict typed JSON: theme reference, editor text size (60?250%), interface size (Automatic or 80?200%), compact/comfortable/spacious control spacing, control animation preference and existing native panel visibility/sizes. Theme references must be available. Profiles cannot grant trust, configure a provider, edit shortcuts or write source.
+Profiles are strict typed JSON: theme reference, editor text size (60-250%), interface size (Automatic or 80-200%), compact/comfortable/spacious control spacing, control animation preference and existing native panel visibility/sizes. Theme references must be available. Profiles cannot grant trust, configure a provider, edit shortcuts or write source.
 
 Capture, edit or select a profile, then Preview. The modal displays changes and offers Keep or Restore. Session persistence is suspended during preview; a normal exit restores the prior appearance. If the workspace/layout changes meanwhile, restore can preserve the newer layout. Keep saves appearance through existing Settings/session paths and appends private appearance history (eight retained entries); a history failure is reported separately from a successful Settings save. History selection only stages a candidate. Saved malformed appearance payloads do not discard unrelated trust/provider settings. Native monitor fitting remains the interface-scaling contract; no automatic multi-monitor relocation claim is added.
 
@@ -20,7 +20,7 @@ Morph optionally uses the enabled Native HTTP configuration. Prepare freezes a r
 
 ## Widgets and privacy
 
-Widgets use bounded native Metric/List/Table bindings with one or two columns, 1?60 second refresh and at most twelve bindings/32 rows each. Sources are a closed enum: Workspace, cached Git, cached Problems, Workflow status counts and visible public network Room task counts. The bridge captures only requested, explicitly granted sources, with no file paths, messages, private conversations, logs, raw terminal output, identities or arbitrary APIs. Workspace counts cover application buffers; Git counts are repository-wide; diagnostics are filtered to the active root; workflow successes may include manual/model steps and are not CI acceptance.
+Widgets use bounded native Metric/List/Table bindings with one or two columns, 1-60 second refresh and at most twelve bindings/32 rows each. Sources are a closed enum: Workspace, cached Git, cached Problems, Workflow status counts and visible public network Room task counts. The bridge captures only requested, explicitly granted sources, with no file paths, messages, private conversations, logs, raw terminal output, identities or arbitrary APIs. Workspace counts cover application buffers; Git counts are repository-wide; diagnostics are filtered to the active root; workflow successes may include manual/model steps and are not CI acceptance.
 
 Permissions start empty and are scoped to the trusted active workspace/session. Scope/trust/resource changes revoke grants and clear cached data. No grants are serialized. Each binding checks its grant again at render time. Simulated previews have their own labeled sample snapshot; they are rejected by the live capture path. Up to four widget windows can be pinned. Cached snapshots are labeled and refresh wakes idle egui frames; refresh never runs Git, diagnostics, commands or network requests. Widget exports are definitions only.
 

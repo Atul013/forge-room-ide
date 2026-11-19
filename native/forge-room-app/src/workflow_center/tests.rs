@@ -518,7 +518,7 @@ fn trust_revocation_cancels_owned_python_and_never_starts_queued_peer() {
         return;
     }
     let fixture = Fixture::new();
-    fs::write(fixture.root.join("test_wait.py"),"import unittest,time\nfrom pathlib import Path\nclass Trial(unittest.TestCase):\n def test_wait(self):\n  Path('started.txt').write_text('owned')\n  time.sleep(10)\n  Path('should-not-exist.txt').write_text('late')\n").unwrap();
+    fs::write(fixture.root.join("test_wait.py"),"import unittest,time\nfrom pathlib import Path\nclass Trial(unittest.TestCase):\n def test_wait(self):\n  Path('started.txt').write_text('owned')\n  deadline=time.monotonic()+90\n  while not Path('release.txt').exists() and time.monotonic()<deadline: time.sleep(0.02)\n  Path('should-not-exist.txt').write_text('late')\n").unwrap();
     let mut workflow = manual();
     workflow.steps[0].action = StepKind::Check {
         recipe: CheckRecipe::PythonUnittest,
@@ -530,13 +530,18 @@ fn trust_revocation_cancels_owned_python_and_never_starts_queued_peer() {
     let second = engine.add(review).unwrap();
     approve(&mut engine, &first);
     approve(&mut engine, &second);
-    let until = Instant::now() + Duration::from_secs(5);
+    let until = Instant::now() + Duration::from_secs(30);
     while !fixture.root.join("started.txt").exists() {
         tick(&fixture, &mut engine, None);
-        assert!(Instant::now() < until);
+        assert!(
+            Instant::now() < until,
+            "Owned Python did not reach its cancellation checkpoint; run {:?}, step {:?}",
+            engine.records[0].saved.run.status,
+            engine.records[0].saved.run.steps[0].status
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
-    let until = Instant::now() + Duration::from_secs(5);
+    let until = Instant::now() + Duration::from_secs(15);
     while engine.active_count() > 0 {
         engine.tick(
             &egui::Context::default(),

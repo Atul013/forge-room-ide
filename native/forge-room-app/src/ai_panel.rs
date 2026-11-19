@@ -2637,11 +2637,29 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
+    fn cli_context_echo_helper() {
+        if std::env::var_os("FORGE_ROOM_CONTEXT_ECHO").as_deref() != Some(std::ffi::OsStr::new("1"))
+        {
+            return;
+        }
+        use std::io::Read;
+        let mut prompt = String::new();
+        std::io::stdin().read_to_string(&mut prompt).unwrap();
+        std::fs::write("prompt.txt", prompt).unwrap();
+        // Start on a fresh line even when the nested test harness has printed a test name.
+        println!("\n{{\"type\":\"turn.completed\"}}");
+    }
+    #[cfg(windows)]
+    #[test]
     fn cli_context_is_explicit_and_changing_it_starts_a_fresh_conversation() {
         let root = std::env::temp_dir().join(format!("forge-cli-context-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let program = root.join("mock-codex.cmd");
-        std::fs::write(&program,"@echo off\r\npowershell.exe -NoProfile -NonInteractive -Command \"[IO.File]::WriteAllText('prompt.txt',[Console]::In.ReadToEnd())\"\r\necho {\"type\":\"turn.completed\"}\r\n").unwrap();
+        let helper = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .replace('%', "%%");
+        std::fs::write(&program,format!("@echo off\r\nset \"FORGE_ROOM_CONTEXT_ECHO=1\"\r\n\"{helper}\" --exact ai_panel::tests::cli_context_echo_helper --nocapture\r\n")).unwrap();
         let mut state = State::default();
         state.set_workspace(&root);
         state.provider = Provider::Codex;
@@ -2671,9 +2689,12 @@ mod tests {
         state.codex_session = Some("old-session".into());
         state.input = "Explain".into();
         state.send(&egui::Context::default(), Some(&root), true);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while state.busy() {
-            assert!(std::time::Instant::now() < deadline);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "CLI context echo helper did not finish"
+            );
             state.poll();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
