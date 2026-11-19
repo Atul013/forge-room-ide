@@ -271,6 +271,9 @@ struct ForgeRoomApp {
     stash_count: usize,
     /// Editor text size relative to the default, kept in the settings.
     editor_scale: f32,
+    /// The chosen interface size (`None`: automatic) and the Windows display scale it is applied on.
+    ui_scale: Option<f32>,
+    native_ppp: f32,
     /// Save file tabs automatically once their text rests.
     auto_save: bool,
     /// The last `cargo check`, and the worker that makes the next one.
@@ -387,9 +390,10 @@ impl ForgeRoomApp {
     fn new(creation_context: &eframe::CreationContext<'_>, initial_path: Option<PathBuf>) -> Self {
         // The layout is tuned for 1 pixel per point; on a 125% display that means a 0.8 zoom.
         let native = creation_context.egui_ctx.pixels_per_point();
+        let ui_scale = settings::clean_ui_scale(settings::load().ui_scale);
         creation_context
             .egui_ctx
-            .set_zoom_factor((1.0 / native).clamp(0.8, 1.0));
+            .set_zoom_factor(settings::ui_zoom_factor(ui_scale, native));
         fonts::install(&creation_context.egui_ctx);
         theme::load_import();
         syntax::load_imports();
@@ -447,6 +451,8 @@ impl ForgeRoomApp {
             history_name: None,
             stash_count: 0,
             editor_scale: settings::clean_scale(settings::load().editor_scale),
+            ui_scale,
+            native_ppp: native,
             auto_save: settings::load().auto_save.unwrap_or(false),
             problems: None,
             checking: background::Latest::default(),
@@ -1207,6 +1213,34 @@ impl ForgeRoomApp {
                     settings.editor_scale = (scale != 1.0).then_some(scale);
                 });
                 self.status = format!("Editor font size {}%", (scale * 100.0).round());
+            }
+            Command::InterfaceBigger | Command::InterfaceSmaller | Command::InterfaceAutomatic => {
+                // The display may have changed since start (the window moved to another monitor).
+                if let Some(native) = self.egui_ctx.native_pixels_per_point() {
+                    self.native_ppp = native;
+                }
+                // From automatic, a step starts at the size automatic currently gives.
+                let current = self.ui_scale.unwrap_or_else(|| {
+                    settings::ui_zoom_factor(None, self.native_ppp) * self.native_ppp
+                });
+                self.ui_scale = match command {
+                    Command::InterfaceBigger => Some(settings::step_ui_scale(current, 1)),
+                    Command::InterfaceSmaller => Some(settings::step_ui_scale(current, -1)),
+                    _ => None,
+                };
+                self.egui_ctx
+                    .set_zoom_factor(settings::ui_zoom_factor(self.ui_scale, self.native_ppp));
+                let chosen = self.ui_scale;
+                let saved = settings::update(|settings| settings.ui_scale = chosen);
+                self.status = match (chosen, saved) {
+                    (_, Err(error)) => {
+                        format!(
+                            "Could not save the interface size ({error}); it applies until you quit"
+                        )
+                    }
+                    (Some(scale), _) => format!("Interface size {}%", (scale * 100.0).round()),
+                    (None, _) => "Interface size automatic".into(),
+                };
             }
             Command::GoToSymbol => {
                 let outline =
@@ -3999,7 +4033,7 @@ impl ForgeRoomApp {
                     (self.tabs.active_path(), &mut self.task_pipelines),
                     &self.runtimes,
                     self.auto_save,
-                    self.editor_scale,
+                    (self.editor_scale, self.ui_scale),
                 ) {
                     Some(project_tools::Selected::Command(_)) if !self.trusted => {
                         self.status = "Trust this folder first (Folder: Trust This Folder): project commands run its build scripts".into();

@@ -16,6 +16,10 @@ pub struct Settings {
     /// Size of the editor text relative to the default (1.0). Missing or odd values mean 1.0.
     #[serde(default)]
     pub editor_scale: Option<f32>,
+    /// How big the whole interface is, as a multiple of the design size (1.0 = one pixel per layout
+    /// point). Missing means automatic: the app's own fit to the Windows display scale.
+    #[serde(default)]
+    pub ui_scale: Option<f32>,
     /// Save file tabs automatically once their text stops changing.
     #[serde(default)]
     pub auto_save: Option<bool>,
@@ -99,6 +103,39 @@ pub fn clean_scale(value: Option<f32>) -> f32 {
 pub fn step_scale(current: f32, delta: i32) -> f32 {
     let tenths = (current * 10.0).round() as i32 + delta;
     (tenths as f32 / 10.0).clamp(MIN_SCALE, MAX_SCALE)
+}
+
+/// Smallest and largest interface size the user can pick.
+pub const MIN_UI_SCALE: f32 = 0.8;
+pub const MAX_UI_SCALE: f32 = 2.0;
+
+/// An interface size from a settings file: anything that is not a sane number means automatic.
+pub fn clean_ui_scale(value: Option<f32>) -> Option<f32> {
+    value
+        .filter(|scale| scale.is_finite())
+        .map(|scale| scale.clamp(MIN_UI_SCALE, MAX_UI_SCALE))
+}
+
+/// The egui zoom factor for the chosen interface size on a display whose Windows scale is `native`
+/// (physical pixels per point). Automatic keeps the layout near one pixel per point (never shrinking
+/// it below 80%); a chosen size is exactly that many pixels per point, so 150% is 150% whatever the
+/// Windows scale is.
+pub fn ui_zoom_factor(chosen: Option<f32>, native: f32) -> f32 {
+    let native = if native.is_finite() && native > 0.0 {
+        native
+    } else {
+        1.0
+    };
+    match clean_ui_scale(chosen) {
+        Some(scale) => scale / native,
+        None => (1.0 / native).clamp(0.8, 1.0),
+    }
+}
+
+/// The interface size one step (a tenth) from `current`, kept inside the allowed range.
+pub fn step_ui_scale(current: f32, delta: i32) -> f32 {
+    let tenths = (current * 10.0).round() as i32 + delta;
+    (tenths as f32 / 10.0).clamp(MIN_UI_SCALE, MAX_UI_SCALE)
 }
 
 /// How many recent folders are kept.
@@ -198,6 +235,31 @@ mod tests {
         assert_eq!(with_shell.terminal_shell.as_deref(), Some("cmd"));
         // Settings written before recent folders existed still load.
         assert!(empty.recent_folders.is_empty());
+    }
+
+    #[test]
+    fn the_interface_size_follows_windows_unless_one_is_chosen() {
+        // Automatic: close to one pixel per point, never below 80%.
+        assert_eq!(ui_zoom_factor(None, 1.0), 1.0);
+        assert!((ui_zoom_factor(None, 1.25) - 0.8).abs() < 1e-6);
+        assert!((ui_zoom_factor(None, 2.0) - 0.8).abs() < 1e-6);
+        // Chosen: that many pixels per point, whatever Windows says.
+        assert!((ui_zoom_factor(Some(1.5), 1.5) - 1.0).abs() < 1e-6);
+        assert!((ui_zoom_factor(Some(1.5), 1.0) - 1.5).abs() < 1e-6);
+        assert!((ui_zoom_factor(Some(2.0), 2.0) - 1.0).abs() < 1e-6);
+        // Odd input never breaks the layout.
+        assert_eq!(ui_zoom_factor(None, 0.0), 1.0);
+        assert_eq!(ui_zoom_factor(None, f32::NAN), 1.0);
+        assert_eq!(clean_ui_scale(Some(f32::NAN)), None);
+        assert_eq!(clean_ui_scale(Some(9.0)), Some(MAX_UI_SCALE));
+        assert_eq!(clean_ui_scale(Some(0.1)), Some(MIN_UI_SCALE));
+        assert_eq!(clean_ui_scale(None), None);
+        // Steps are tenths and stop at the ends.
+        assert_eq!(step_ui_scale(1.0, 1), 1.1);
+        assert_eq!(step_ui_scale(MAX_UI_SCALE, 1), MAX_UI_SCALE);
+        assert_eq!(step_ui_scale(MIN_UI_SCALE, -1), MIN_UI_SCALE);
+        let parsed: Settings = serde_json::from_str(r#"{"ui_scale":1.5}"#).unwrap();
+        assert_eq!(parsed.ui_scale, Some(1.5));
     }
 
     #[test]
