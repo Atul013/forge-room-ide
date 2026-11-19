@@ -150,7 +150,7 @@ impl State {
     fn bookmarks(&mut self, ui: &mut egui::Ui) {
         if let Some((profile, _, _)) = &self.last_joined {
             ui.label(format!(
-                "Last locally adopted connection: {} / {}",
+                "Last adopted Access Center join: {} / {}",
                 profile.room, profile.address
             ));
             if ui

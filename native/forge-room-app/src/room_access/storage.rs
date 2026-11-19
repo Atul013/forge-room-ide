@@ -236,10 +236,15 @@ impl Store {
                     .iter_mut()
                     .find(|e| e.profile.id().ok().as_deref() == Some(&id))
                 {
-                    entry.joined_at = Some(entry.joined_at.map_or(at, |old| old.max(at)));
-                    if project.is_some() {
-                        entry.project = project;
+                    if entry.joined_at.is_none_or(|old| at >= old) {
+                        let label = entry.profile.label.clone();
+                        entry.profile = profile;
+                        entry.profile.label = label;
+                        if project.is_some() {
+                            entry.project = project;
+                        }
                     }
+                    entry.joined_at = Some(entry.joined_at.map_or(at, |old| old.max(at)));
                 } else {
                     if next.entries.len() >= 64 {
                         return Err("Bookmark catalog is full (64); joining succeeded but metadata was not saved".into());
@@ -349,11 +354,13 @@ mod tests {
         let mut a = Store::open(&root).unwrap();
         let seal = a.index.seal().unwrap();
         let mut b = Store::open(&root).unwrap();
+        let mut claimed = profile();
+        claimed.room = "Imported name claim".into();
         a.edit(
             Some(&seal),
             Edit::Import(Profiles {
                 version: 1,
-                entries: vec![profile()],
+                entries: vec![claimed],
             }),
         )
         .unwrap();
@@ -368,8 +375,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a.index.entries[0].joined_at, Some(42));
-        a.edit(None, Edit::Visited(profile(), None, 21)).unwrap();
+        assert_eq!(a.index.entries[0].profile.room, "Room");
+        assert_eq!(a.index.entries[0].profile.label, "Saved");
+        let mut older = profile();
+        older.room = "Stale older name".into();
+        a.edit(
+            None,
+            Edit::Visited(older, Some("C:/older-project".into()), 21),
+        )
+        .unwrap();
         assert_eq!(a.index.entries[0].joined_at, Some(42));
+        assert_eq!(a.index.entries[0].profile.room, "Room");
+        assert_eq!(
+            a.index.entries[0].project.as_deref(),
+            Some("C:/private-project")
+        );
         let export = a.index.public().encode().unwrap();
         assert!(
             !String::from_utf8(export.clone())
