@@ -123,6 +123,11 @@ if quarantined{ui.weak("Private quarantine");}});
         };
         let summary = preview.summary();
         ui.heading(&summary.room);
+        ui.weak(format!(
+            "Stored capture clock: {} / {}",
+            summary.captured,
+            age(summary.captured)
+        ));
         ui.label(format!(
             "{} / declared lifecycle {:?} / message cursor {}",
             summary.kind.label(),
@@ -217,10 +222,10 @@ if quarantined{ui.weak("Private quarantine");}});
                     .set_file_name("public-room-checkpoint.json")
                     .save_file()
             {
-                let destination=self.external_destination(&path);
+                let root=self.catalog_root.clone();
                 let preview = preview.clone();
                 self.job.request(ui.ctx(), move || {
-                    Job::Exported(destination.and_then(|_|preview.export_checkpoint(&path)).map(|_| {
+                    Job::Exported(external_destination_at(root.as_deref(),&path).and_then(|_|preview.export_checkpoint(&path)).map(|_| {
                         "Sanitized checkpoint saved to a new file; original source unchanged".into()
                     }))
                 });
@@ -333,11 +338,11 @@ if quarantined{ui.weak("Private quarantine");}});
                 .set_file_name("room-recovery-inspection.json")
                 .save_file()
         {
-            let destination = self.external_destination(&path);
+            let root = self.catalog_root.clone();
             let value = serde_json::json!({"format":1,"summary":summary,"local_path":self.include_path.then(||preview.source().to_string_lossy().into_owned()),"comparison":self.comparison.as_ref().map(|value|&value.1),"restores_private_history":false,"restores_old_credentials":false,"manual_results_independently_verified":false});
             self.job.request(ui.ctx(), move || {
                 Job::Exported(
-                    destination
+                    external_destination_at(root.as_deref(), &path)
                         .and_then(|_| serde_json::to_vec_pretty(&value).map_err(|e| e.to_string()))
                         .and_then(|bytes| {
                             crate::local_records::create_file(&path, &bytes, 1024 * 1024)
@@ -355,7 +360,7 @@ if quarantined{ui.weak("Private quarantine");}});
             return;
         };
         let seal = store.index.seal().unwrap_or_default();
-        let managed = store.managed(Path::new(&entry.path)).unwrap_or(false);
+        let managed = store.managed_candidate(Path::new(&entry.path));
         let current = active.is_some_and(|path| Store::id(path) == entry.id);
         let matching = self
             .stamp

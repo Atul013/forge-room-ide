@@ -49,6 +49,12 @@ enum Job {
     Discovered(Result<Vec<PathBuf>, String>),
     Exported(Result<String, String>),
 }
+fn external_destination_at(root: Option<&Path>, path: &Path) -> Result<(), String> {
+    if Store::owned_directory(root, path)? {
+        return Err("Use the managed-vault controls for private recovery storage; choose an external destination here".into());
+    }
+    Ok(())
+}
 fn catalog_at(root: Option<&Path>) -> Result<Store, String> {
     match root {
         Some(root) => Store::open_at(root),
@@ -357,10 +363,7 @@ impl State {
         });
     }
     pub fn external_destination(&self, path: &Path) -> Result<(), String> {
-        if Store::owned_directory(self.catalog_root.as_deref(), path)? {
-            return Err("Use the managed-vault controls for private recovery storage; choose an external destination here".into());
-        }
-        Ok(())
+        external_destination_at(self.catalog_root.as_deref(), path)
     }
     fn request_reload(&mut self, ctx: &egui::Context) {
         let root = self.catalog_root.clone();

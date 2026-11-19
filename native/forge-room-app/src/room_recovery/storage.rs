@@ -303,19 +303,23 @@ impl Store {
     }
     pub fn managed(&self, path: &Path) -> Result<bool, String> {
         let path = self.normalized(path)?;
-        let parent = path.parent().ok_or("Missing recovery parent")?;
+        Ok(self.managed_candidate(&path))
+    }
+    /// UI classification is lexical; worker mutations revalidate the real path and held lease.
+    pub fn managed_candidate(&self, path: &Path) -> bool {
+        let Some(parent) = path.parent() else {
+            return false;
+        };
         let name = path
             .file_stem()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
-        Ok(
-            (parent == self.root.join("vault") || parent == self.root.join("quarantine"))
-                && name.len() == 32
-                && name.bytes().all(|byte| byte.is_ascii_hexdigit())
-                && path
-                    .extension()
-                    .is_some_and(|ext| ext == "json" || ext == "frjournal"),
-        )
+        (parent == self.root.join("vault") || parent == self.root.join("quarantine"))
+            && name.len() == 32
+            && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && path
+                .extension()
+                .is_some_and(|ext| ext == "json" || ext == "frjournal")
     }
     pub fn lease(&self, path: &Path) -> Result<Option<Lease>, String> {
         self.directories()?;
