@@ -25,6 +25,9 @@ New-Item $package -ItemType Directory -Force | Out-Null
 if (-not (Test-Path $releaseExe)) {
     throw "Release executable is missing: $releaseExe"
 }
+$sourceChanges = git -C $root -c core.fsmonitor=false status --porcelain=v1 --untracked-files=normal -- native packaging .github/workflows/native-rust.yml
+if ($LASTEXITCODE -ne 0) { throw "Could not verify package input cleanliness" }
+if ($sourceChanges) { throw "Commit native, packaging and workflow changes before packaging a recorded build" }
 
 $identityPath = Join-Path $artifacts "BUILD_IDENTITY.json"
 $identityProcess = Start-Process -FilePath $releaseExe -ArgumentList "--forge-build-info" -RedirectStandardOutput $identityPath -WindowStyle Hidden -PassThru
