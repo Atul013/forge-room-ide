@@ -15,6 +15,7 @@ A light, fast, native IDE written in Rust. No Electron, no webview, no bundled N
 - Several terminals with split view, maximize and a VS Code-style header. Choose an installed shell profile for each new terminal; the default choice is saved, and restarting an individual terminal keeps its selected shell. See [terminal shell profiles](docs/native/TERMINAL_SHELLS.md).
 - Six appearance themes and a per-user Windows installer with in-place updates and a themed uninstaller.
 
+- [Room Access Center](docs/native/ROOM_ACCESS_CENTER.md): reviewed private joins and identity checks, public connection bookmarks/import-export, scoped host grant revocation and fresh original-owner reclaim. Network success, local adoption and metadata persistence remain separate.
 - Room Launch and Recovery Centers: reusable reviewed blueprints, public-only setup capture, fresh Room creation, inspected checkpoint/journal restoration, comparisons and protected managed recovery files.
 - Studio/Packs: versioned declarative resources, authoring/import/export, selective activation/rollback, typed appearance previews, permissioned summary widgets and explicit Workflow/Skill/Room blueprint staging.
 - Release Evidence Desk: source anchors, artifact fingerprints, separate attributed acceptance reports, checked portable handoffs and explicit Room evidence staging. Running release builds expose their recorded source identity; visible desktop, real-provider and physical-client acceptance remain separate.
