@@ -1,5 +1,5 @@
 //! Prepared resource snapshots contain no grants, project paths, executable commands or network clients.
-use forge_room_core::packs::{Activation, Catalog, Kind, Profile, Widget};
+use forge_room_core::packs::{self, Activation, Catalog, Kind, Profile, Widget};
 use std::{
     collections::BTreeMap,
     sync::{Arc, OnceLock, RwLock},
@@ -40,6 +40,40 @@ fn slot() -> &'static RwLock<Arc<Resources>> {
 pub fn current() -> Arc<Resources> {
     slot().read().expect("pack resources lock").clone()
 }
+pub fn theme_reference(actual: &str) -> String {
+    current()
+        .theme_refs
+        .iter()
+        .find(|(_, key)| key.as_str() == actual)
+        .map(|(reference, _)| reference.clone())
+        .unwrap_or_else(|| actual.into())
+}
+pub fn validate_pack(pack: &packs::Pack) -> Result<Vec<String>, String> {
+    pack.validate()?;
+    let mut notes = Vec::new();
+    for resource in &pack.resources {
+        let result = match resource.kind {
+            Kind::Theme => crate::theme::parse_import(&resource.content).map(|_| ()),
+            Kind::Grammar => crate::syntax::parse_grammar(&resource.content).map(|_| ()),
+            Kind::Snippets => crate::snippets::parse_pack(&resource.content).map(|_| ()),
+            Kind::Workflow => {
+                crate::workflow_center::WorkflowLibrary::parse(resource.content.as_bytes())
+                    .map(|_| ())
+            }
+            Kind::Profile => Profile::parse(&resource.content).map(|_| ()),
+            Kind::Widget => Widget::parse(&resource.content).map(|_| ()),
+            _ => Ok(()),
+        };
+        result.map_err(|error| format!("{}: {error}", resource.id))?;
+        notes.push(format!(
+            "{}: {} · {} bytes",
+            resource.id,
+            resource.kind.label(),
+            resource.content.len()
+        ));
+    }
+    Ok(notes)
+}
 pub struct Prepared {
     pub resources: Resources,
     syntax: crate::syntax::Prepared,
@@ -55,6 +89,7 @@ pub fn prepare(activation: &Activation, catalog: &Catalog) -> Result<Prepared, S
     for id in order {
         let selection = &activation.enabled[&id];
         let pack = &catalog[&format!("{id}@{}", selection.version)];
+        let pack_digest = pack.digest()?;
         for resource in &pack.resources {
             if !selection.resources.contains(&resource.id) {
                 continue;
@@ -63,7 +98,7 @@ pub fn prepare(activation: &Activation, catalog: &Catalog) -> Result<Prepared, S
             let value = match resource.kind {
                 Kind::Theme => {
                     let mut theme = crate::theme::parse_import(&resource.content)?;
-                    let actual = format!("pack-{}-{}", &pack.digest()?[..16], resource.id);
+                    let actual = format!("pack-{}-{}", &pack_digest[..16], resource.id);
                     let theme_mut = Arc::make_mut(&mut theme);
                     theme_mut.key = actual.clone();
                     theme_mut.mood = "Pack theme".into();
@@ -125,14 +160,13 @@ pub fn prepare(activation: &Activation, catalog: &Catalog) -> Result<Prepared, S
         }
     }
     for (key, asset) in &resources.assets {
-        if let Value::Profile(profile) = &asset.value {
-            if let Some(theme) = &profile.theme {
-                if !resources.theme_refs.contains_key(theme) {
-                    return Err(format!(
-                        "{key} needs theme {theme}; enable its resource before this profile"
-                    ));
-                }
-            }
+        if let Value::Profile(profile) = &asset.value
+            && let Some(theme) = &profile.theme
+            && !resources.theme_refs.contains_key(theme)
+        {
+            return Err(format!(
+                "{key} needs theme {theme}; enable its resource before this profile"
+            ));
         }
     }
     let syntax = crate::syntax::prepare_packs(&resources.grammars)?;
@@ -141,4 +175,100 @@ pub fn prepare(activation: &Activation, catalog: &Catalog) -> Result<Prepared, S
 pub fn apply(prepared: Prepared) {
     *slot().write().expect("pack resources lock") = Arc::new(prepared.resources);
     crate::syntax::install(prepared.syntax);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::author;
+    use super::*;
+    fn activation(pack: &packs::Pack) -> Activation {
+        Activation {
+            enabled: [(
+                pack.id.clone(),
+                packs::Selection {
+                    version: pack.version,
+                    resources: pack.resources.iter().map(|r| r.id.clone()).collect(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Activation::default()
+        }
+    }
+    #[test]
+    fn all_eight_resource_types_prepare_without_execution_or_global_publication() {
+        let pack = author::starter();
+        assert_eq!(validate_pack(&pack).unwrap().len(), 8);
+        let before = Arc::as_ptr(&current());
+        let catalog = [(pack.key(), pack.clone())].into_iter().collect();
+        let prepared = prepare(&activation(&pack), &catalog).unwrap();
+        assert_eq!(prepared.resources.assets.len(), 8);
+        assert_eq!(prepared.resources.themes.len(), 1);
+        assert_eq!(prepared.resources.snippets.len(), 1);
+        assert!(
+            prepared
+                .syntax
+                .names
+                .iter()
+                .any(|name| name == "Forge Notes (local.studio/resource-2)")
+        );
+        assert_eq!(Arc::as_ptr(&current()), before);
+        assert!(matches!(
+            prepared.resources.assets["local.studio/resource-4"].value,
+            Value::Workflow(_)
+        ));
+        assert!(matches!(
+            prepared.resources.assets["local.studio/resource-5"].value,
+            Value::Skill(_)
+        ));
+        let disabled = prepare(&Activation::default(), &catalog).unwrap();
+        assert!(disabled.resources.assets.is_empty());
+        assert!(disabled.resources.grammars.is_empty());
+        assert!(disabled.resources.snippets.is_empty());
+    }
+    #[test]
+    fn semantic_errors_and_unselected_profile_theme_dependencies_fail_before_publication() {
+        let mut pack = author::starter();
+        let profile = Profile {
+            theme: Some("local.studio/resource-1".into()),
+            ..Profile::default()
+        };
+        pack.resources[5].content = serde_json::to_string(&profile).unwrap();
+        pack.resources[5].sha256 =
+            forge_room_core::workflows::digest(pack.resources[5].content.as_bytes());
+        let catalog = [(pack.key(), pack.clone())].into_iter().collect();
+        let mut selected = activation(&pack);
+        assert!(prepare(&selected, &catalog).is_ok());
+        selected
+            .enabled
+            .get_mut(&pack.id)
+            .unwrap()
+            .resources
+            .remove("resource-1");
+        assert!(
+            prepare(&selected, &catalog)
+                .err()
+                .unwrap()
+                .contains("needs theme")
+        );
+        pack.resources[2].content = "{\"Bad\":{\"prefix\":\"x\",\"body\":\"${1:script}\"}}".into();
+        pack.resources[2].sha256 =
+            forge_room_core::workflows::digest(pack.resources[2].content.as_bytes());
+        assert!(validate_pack(&pack).is_err());
+        let catalog = [(pack.key(), pack.clone())].into_iter().collect();
+        assert!(prepare(&activation(&pack), &catalog).is_err());
+    }
+    #[test]
+    fn conflicting_selected_grammar_extensions_are_rejected_as_one_transaction() {
+        let mut first = author::starter();
+        first.resources.retain(|r| r.kind == Kind::Grammar);
+        let mut second = first.clone();
+        second.id = "local.second".into();
+        let catalog = [(first.key(), first.clone()), (second.key(), second.clone())]
+            .into_iter()
+            .collect();
+        let mut selected = activation(&first);
+        selected.enabled.extend(activation(&second).enabled);
+        assert!(prepare(&selected, &catalog).is_err());
+    }
 }

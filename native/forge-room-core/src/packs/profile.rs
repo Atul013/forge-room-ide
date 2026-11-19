@@ -77,10 +77,10 @@ impl Profile {
         text(&self.name, 160, true)?;
         if self.version != 1
             || !self.editor_scale.is_finite()
-            || !(0.7..=2.0).contains(&self.editor_scale)
-            || !(180..=600).contains(&self.layout.sidebar_width)
-            || !(280..=800).contains(&self.layout.dock_width)
-            || !(120..=800).contains(&self.layout.terminal_height)
+            || !(0.6..=2.5).contains(&self.editor_scale)
+            || !(180..=560).contains(&self.layout.sidebar_width)
+            || !(280..=640).contains(&self.layout.dock_width)
+            || !(120..=720).contains(&self.layout.terminal_height)
         {
             return Err("Profile contains unsupported version, scale or layout bounds".into());
         }

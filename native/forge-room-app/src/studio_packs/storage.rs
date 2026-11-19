@@ -636,6 +636,17 @@ mod tests {
         assert!(store.purge(&first.key()).is_err());
         let off = store.review(BTreeMap::new()).unwrap();
         store.activate(&off).unwrap();
+        let restore = store
+            .rollback_review(store.ledger.history.len() - 1)
+            .unwrap();
+        store.activate(&restore).unwrap();
+        assert_eq!(store.ledger.activation.enabled.len(), 1);
+        let export = fixture.0.join("export.json");
+        store.export(&first.key(), &export).unwrap();
+        assert_eq!(Pack::parse(&fs::read(&export).unwrap()).unwrap(), first);
+        assert!(store.export(&first.key(), &export).is_err());
+        let off = store.review(BTreeMap::new()).unwrap();
+        store.activate(&off).unwrap();
         let warning = store.purge(&first.key()).unwrap();
         assert!(warning.is_none());
         assert!(store.ledger.versions.is_empty());

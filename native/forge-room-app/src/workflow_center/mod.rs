@@ -52,6 +52,45 @@ pub struct State {
 }
 
 impl State {
+    pub fn import_library(&mut self, root: &Path, library: WorkflowLibrary) -> Result<(), String> {
+        if self.root.as_ref() != root.canonicalize().ok().as_ref() {
+            return Err("Workflow staging belongs to another active project".into());
+        }
+        if self.json.is_some() {
+            return Err(
+                "Apply or discard the open workflow JSON draft before staging more definitions"
+                    .into(),
+            );
+        }
+        self.library.append(library)?;
+        self.open = true;
+        self.page = 0;
+        self.notice =
+            "Pack workflows appended locally; inspect and explicitly save/review before execution"
+                .into();
+        Ok(())
+    }
+    pub fn widget_summary(&self) -> Option<(usize, usize, usize, usize)> {
+        let engine = self.engine.as_ref()?;
+        Some((
+            engine.records.len(),
+            engine
+                .records
+                .iter()
+                .filter(|record| {
+                    record.saved.run.status == forge_room_core::workflows::RunStatus::Succeeded
+                })
+                .count(),
+            engine
+                .records
+                .iter()
+                .filter(|record| {
+                    record.saved.run.status == forge_room_core::workflows::RunStatus::Failed
+                })
+                .count(),
+            engine.active_count(),
+        ))
+    }
     pub fn finish(&mut self) {
         self.preserve_draft(true);
         if let Some(engine) = &mut self.engine {

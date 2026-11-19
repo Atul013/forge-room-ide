@@ -8,6 +8,19 @@ use std::{
 };
 pub const INCOMPLETE: &str = "Incomplete local record";
 const MAX: u64 = 8 * 1024 * 1024;
+pub fn create_file(path: &Path, bytes: &[u8], max: usize) -> Result<(), String> {
+    if bytes.len() > max {
+        return Err("Export exceeds its byte limit".into());
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| e.to_string())
+}
 #[derive(Serialize, Deserialize)]
 struct Envelope {
     version: u32,
