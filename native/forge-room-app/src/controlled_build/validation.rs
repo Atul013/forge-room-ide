@@ -439,28 +439,87 @@ impl Drop for Run {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    const CRASH_ROLE: &str = "FORGE_VALIDATION_CRASH_FIXTURE";
+    fn fixture_selected(name: &str) -> bool {
+        let args = std::env::args().collect::<Vec<_>>();
+        args.windows(2).any(|pair| {
+            pair[0] == "--exact"
+                && pair[1] == format!("controlled_build::validation::tests::{name}")
+        })
+    }
+    fn fixture_root(prefix: &str) -> PathBuf {
+        let root = std::env::current_dir().unwrap().canonicalize().unwrap();
+        assert!(root.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        assert!(
+            root.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(prefix)
+        );
+        root
+    }
+    fn fixture_plan(root: PathBuf, name: &str) -> Plan {
+        Plan {
+            program: std::env::current_exe().unwrap(),
+            args: vec![
+                "--exact".into(),
+                format!("controlled_build::validation::tests::{name}"),
+                "--nocapture".into(),
+                "--test-threads=1".into(),
+            ],
+            root,
+            recipe: Recipe::CargoCheck,
+        }
+    }
+    #[test]
+    fn fixture_output() {
+        if !fixture_selected("fixture_output") {
+            return;
+        }
+        use std::io::Write;
+        std::io::stdout()
+            .lock()
+            .write_all(&vec![b'x'; 100000])
+            .unwrap();
+        std::io::stderr().lock().write_all(b"failure").unwrap();
+        std::process::exit(7);
+    }
+    #[test]
+    fn fixture_wait() {
+        if !fixture_selected("fixture_wait") {
+            return;
+        }
+        let root = fixture_root("forge-validation-probe-");
+        std::fs::write(root.join("fixture-ready"), "ready").unwrap();
+        std::thread::sleep(Duration::from_secs(30));
+    }
+    #[test]
+    fn fixture_crash_child() {
+        if !fixture_selected("fixture_crash_child") {
+            return;
+        }
+        let root = fixture_root("forge-owned-crash-");
+        assert!(std::env::var_os(CRASH_ROLE).is_some());
+        std::fs::write(root.join("child-pid"), std::process::id().to_string()).unwrap();
+        std::fs::write(root.join("child-started"), "owned").unwrap();
+        std::thread::sleep(Duration::from_secs(30));
+        std::fs::write(root.join("child-finished"), "orphan").unwrap();
+    }
     #[test]
     fn owned_child_cannot_outlive_runner_process() {
-        const ROLE: &str = "FORGE_VALIDATION_CRASH_FIXTURE";
         const TEST: &str =
             "controlled_build::validation::tests::owned_child_cannot_outlive_runner_process";
-        if let Some(root) = std::env::var_os(ROLE) {
+        if let Some(root) = std::env::var_os(CRASH_ROLE) {
             let root = PathBuf::from(root).canonicalize().unwrap();
-            let temp = std::env::temp_dir().canonicalize().unwrap();
-            assert!(
-                root.starts_with(temp)
-                    && root
-                        .file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .starts_with("forge-owned-crash-")
-            );
-            let plan=Plan{program:PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/WindowsPowerShell/v1.0/powershell.exe"),args:vec!["-NoProfile".into(),"-NonInteractive".into(),"-Command".into(),"[IO.File]::WriteAllText([IO.Path]::Combine($env:FORGE_VALIDATION_CRASH_FIXTURE,'child-started'),'owned'); Start-Sleep -Milliseconds 1000; [IO.File]::WriteAllText([IO.Path]::Combine($env:FORGE_VALIDATION_CRASH_FIXTURE,'child-finished'),'orphan')".into()],root:root.clone(),recipe:Recipe::CargoCheck};
-            let mut run = Run::start(plan, 30, || {});
-            let deadline = Instant::now() + Duration::from_secs(10);
+            assert_eq!(root, fixture_root("forge-owned-crash-"));
+            let mut run = Run::start(fixture_plan(root.clone(), "fixture_crash_child"), 30, || {});
+            let deadline = Instant::now() + Duration::from_secs(15);
             while !root.join("child-started").exists() {
                 assert!(run.poll().is_none(), "Owned child ended before startup");
-                assert!(Instant::now() < deadline);
+                assert!(
+                    Instant::now() < deadline,
+                    "Owned Rust child did not become ready"
+                );
                 std::thread::sleep(Duration::from_millis(10));
             }
             std::fs::write(root.join("helper-ready"), "ready").unwrap();
@@ -480,33 +539,64 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
-            .args(["--exact", TEST, "--test-threads=1"])
-            .env(ROLE, crate::tabs::normalize(&root))
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env(CRASH_ROLE, crate::tabs::normalize(&root))
+            .current_dir(&root)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(std::fs::File::create(root.join("helper.log")).unwrap())
+            .stderr(std::fs::File::create(root.join("helper-error.log")).unwrap());
         {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000);
         }
         let mut helper = command.spawn().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(20);
         while !root.join("helper-ready").exists() {
-            assert!(
-                helper.try_wait().unwrap().is_none(),
-                "Runner helper exited before readiness"
-            );
-            if Instant::now() >= deadline {
+            let exited = helper.try_wait().unwrap();
+            if exited.is_some() || Instant::now() >= deadline {
                 let _ = helper.kill();
                 let _ = helper.wait();
-                panic!("Runner helper did not become ready");
+                panic!(
+                    "Runner helper readiness failed ({exited:?}): {} / {}",
+                    std::fs::read_to_string(root.join("helper.log")).unwrap_or_default(),
+                    std::fs::read_to_string(root.join("helper-error.log")).unwrap_or_default()
+                );
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows_sys::Win32::{
+            Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
+            System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+        };
+        let pid = std::fs::read_to_string(root.join("child-pid"))
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        // SAFETY: The fixture recorded its own PID before readiness. This handle only waits; it cannot terminate another process.
+        let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        assert!(
+            !raw.is_null(),
+            "Could not observe owned fixture child: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: OpenProcess returned a live owned handle, released exactly once here.
+        let child = unsafe { OwnedHandle::from_raw_handle(raw) };
+        // SAFETY: The process handle stays live for both wait calls.
+        assert_eq!(
+            unsafe { WaitForSingleObject(child.as_raw_handle(), 0) },
+            WAIT_TIMEOUT
+        );
         helper.kill().unwrap();
         helper.wait().unwrap();
-        std::thread::sleep(Duration::from_millis(1800));
-        let orphan = root.join("child-finished").exists();
+        // SAFETY: Waiting on our observed fixture process is read-only and bounded.
+        assert_eq!(
+            unsafe { WaitForSingleObject(child.as_raw_handle(), 10000) },
+            WAIT_OBJECT_0,
+            "Owned child outlived its force-terminated runner"
+        );
+        assert!(!root.join("child-finished").exists());
+        drop(child);
         assert!(
             root.starts_with(&temp)
                 && root
@@ -516,33 +606,51 @@ mod tests {
                     .starts_with("forge-owned-crash-")
         );
         std::fs::remove_dir_all(root).unwrap();
-        assert!(
-            !orphan,
-            "Owned validation child kept running after its runner process was force-terminated"
-        );
     }
-    fn run(script: &str, seconds: u64, cancel: bool) -> Evidence {
-        let plan = Plan {
-            program: PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-                .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
-            args: vec![
-                "-NoProfile".into(),
-                "-NonInteractive".into(),
-                "-Command".into(),
-                script.into(),
-            ],
-            root: std::env::temp_dir(),
-            recipe: Recipe::CargoCheck,
-        };
-        let mut run = Run::start(plan, seconds, || {});
+    fn run(fixture: &str, seconds: u64, cancel: bool) -> Evidence {
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        let root = temp.join(format!(
+            "forge-validation-probe-{}",
+            forge_room_core::workflows::new_id().unwrap()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let mut run = Run::start(fixture_plan(root.clone(), fixture), seconds, || {});
+        let deadline = Instant::now() + Duration::from_secs(30);
         if cancel {
-            std::thread::sleep(Duration::from_millis(300));
+            while !root.join("fixture-ready").exists() {
+                if let Some(result) = run.poll() {
+                    panic!(
+                        "Fixture ended before cancellation checkpoint: {}",
+                        result
+                            .map(|e| format!(
+                                "exit={:?}, stopped={}, timeout={}, stderr={}",
+                                e.exit_code, e.stopped, e.timed_out, e.stderr
+                            ))
+                            .unwrap_or_else(|e| e)
+                    );
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "Rust fixture did not become ready"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
             run.cancel();
         }
-        let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if let Some(result) = run.poll() {
-                return result.unwrap();
+                let evidence = result.unwrap();
+                drop(run);
+                assert!(
+                    root.starts_with(&temp)
+                        && root
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with("forge-validation-probe-")
+                );
+                std::fs::remove_dir_all(root).unwrap();
+                return evidence;
             }
             assert!(Instant::now() < deadline, "validation did not stop");
             std::thread::sleep(Duration::from_millis(20));
@@ -550,12 +658,14 @@ mod tests {
     }
     #[test]
     fn owned_process_captures_failure_and_bounds_output() {
-        let e = run(
-            "[Console]::Out.Write(('x' * 100000)); [Console]::Error.Write('failure'); exit 7",
-            10,
-            false,
+        let e = run("fixture_output", 10, false);
+        assert_eq!(
+            e.exit_code,
+            Some(7),
+            "stdout={} stderr={}",
+            e.stdout,
+            e.stderr
         );
-        assert_eq!(e.exit_code, Some(7));
         assert!(e.truncated);
         assert!(e.capture_complete);
         assert_eq!(e.stdout.len(), 65536);
@@ -563,10 +673,10 @@ mod tests {
     }
     #[test]
     fn owned_process_timeout_and_cancellation() {
-        let timed = run("Start-Sleep -Seconds 10", 1, false);
+        let timed = run("fixture_wait", 1, false);
         assert!(timed.timed_out);
-        let canceled = run("Start-Sleep -Seconds 10", 10, true);
-        assert!(canceled.stopped);
+        let cancelled = run("fixture_wait", 30, true);
+        assert!(cancelled.stopped);
     }
     #[test]
     fn read_failure_is_not_complete_capture() {
