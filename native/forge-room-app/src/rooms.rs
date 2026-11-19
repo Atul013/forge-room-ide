@@ -165,6 +165,9 @@ impl Default for RoomView {
 }
 
 impl RoomView {
+    pub fn recovery_frame(&mut self, ctx: &egui::Context, root: Option<&Path>) {
+        self.network.recovery_frame(ctx, root);
+    }
     pub fn workflow_tasks(&self) -> Vec<forge_room_core::Task> {
         self.network.workflow_tasks()
     }

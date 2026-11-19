@@ -18,6 +18,10 @@ use std::{
 
 mod readiness;
 mod recovery;
+pub use recovery::{
+    inspect_recovery, recovery_file_stamp, RecoveryComparison, RecoveryFileStamp, RecoveryKind,
+    RecoveryPreview, RecoverySummary, RecoveryTaskChange,
+};
 mod shipping;
 pub use shipping::{
     ship_blockers, ship_handoff, ShipCheck, ShipPlan, ShipReport, ShipResult, ShipState,

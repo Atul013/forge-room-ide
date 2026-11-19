@@ -99,47 +99,11 @@ impl Host {
     /// Preserves the original journal, ignores an incomplete final record, rejects complete corruption.
     /// The recovered host is paused and requires an explicit fresh journal before future durability.
     pub fn recover_journal(bind: SocketAddr, path: &Path) -> Result<Self> {
-        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        if !file.metadata().map_err(|e| e.to_string())?.is_file() {
-            return Err("Choose a regular journal file".into());
+        let preview = inspect_recovery(path)?;
+        if preview.summary().kind != RecoveryKind::Journal {
+            return Err("Choose a public journal, not a checkpoint".into());
         }
-        let mut bytes = Vec::new();
-        file.take(MAX_JOURNAL + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.len() as u64 > MAX_JOURNAL || !bytes.starts_with(b"FRJ1\n") {
-            return Err("Invalid or oversized public journal".into());
-        }
-        let (mut offset, mut last) = (5usize, None);
-        while bytes.len().saturating_sub(offset) >= 4 {
-            let length = u32::from_be_bytes(
-                bytes[offset..offset + 4]
-                    .try_into()
-                    .map_err(|_| "Invalid journal header")?,
-            ) as usize;
-            if length > MAX_FRAME {
-                return Err("Invalid journal record length".into());
-            }
-            let end = offset + 4 + length;
-            if bytes.len() < end + 4 {
-                break;
-            }
-            if &bytes[end..end + 4] != b"DONE" {
-                return Err("Corrupt complete journal record".into());
-            }
-            let record = &bytes[offset + 4..end];
-            let checkpoint: Checkpoint =
-                serde_json::from_slice(record).map_err(|_| "Corrupt complete journal JSON")?;
-            checkpoint.validate()?;
-            last = Some(record);
-            offset = end + 4;
-        }
-        let host = Self::recover_bytes(bind, last.ok_or("Journal has no complete saved record")?)?;
-        host.authority
-            .lock()
-            .map_err(|_| "Room unavailable")?
-            .journal_required = true;
-        Ok(host)
+        Self::recover_preview(bind, &preview)
     }
 }
 

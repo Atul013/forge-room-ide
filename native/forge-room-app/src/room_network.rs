@@ -58,6 +58,9 @@ pub struct NetworkRoom {
     snapshot: Snapshot,
     status: String,
     confirm_archive: bool,
+    recovery: crate::room_recovery::State,
+    journal_lease: Option<crate::room_recovery::Lease>,
+    journal_path: Option<PathBuf>,
 }
 impl Default for NetworkRoom {
     fn default() -> Self {
@@ -74,18 +77,112 @@ impl Default for NetworkRoom {
             snapshot: Snapshot::default(),
             status: "Offline".into(),
             confirm_archive: false,
+            recovery: Default::default(),
+            journal_lease: None,
+            journal_path: None,
         }
     }
 }
 impl Drop for NetworkRoom {
     fn drop(&mut self) {
         self.connection.take();
+        let lease = self.journal_lease.take();
         if let Some(host) = self.host.take() {
-            thread::spawn(move || drop(host));
+            thread::spawn(move || {
+                drop(host);
+                drop(lease);
+            });
         }
     }
 }
 impl NetworkRoom {
+    pub fn recovery_frame(&mut self, ctx: &egui::Context, root: Option<&Path>) {
+        self.recovery.tick(ctx, root);
+        if let Some(creation) = self.recovery.create.take() {
+            let creation = *creation;
+            let matches = self
+                .host
+                .as_ref()
+                .and_then(|host| host.snapshot().ok())
+                .is_some_and(|snapshot| snapshot.shared.room_id == creation.room);
+            if matches {
+                let reservation = creation.reservation;
+                let host = self.host.as_ref().expect("matching recovery host");
+                let result = match reservation.kind {
+                    forge_room_core::transport::RecoveryKind::Checkpoint => {
+                        host.save_checkpoint(&reservation.path)
+                    }
+                    forge_room_core::transport::RecoveryKind::Journal => {
+                        host.enable_journal(&reservation.path)
+                    }
+                };
+                self.status = match result {
+                    Ok(()) => {
+                        let path = reservation.path;
+                        let kind = reservation.kind;
+                        if kind == forge_room_core::transport::RecoveryKind::Journal {
+                            self.journal_path = Some(reservation.lease.path.clone());
+                            self.journal_lease = Some(reservation.lease);
+                        } else {
+                            drop(reservation.lease);
+                        }
+                        self.recovery.remember(
+                            ctx,
+                            path,
+                            creation.project.as_deref().map(Path::new),
+                        );
+                        format!(
+                            "Managed {} saved and flushed; catalog registration follows separately",
+                            kind.label()
+                        )
+                    }
+                    Err(error) => {
+                        self.recovery.remember(
+                            ctx,
+                            reservation.path,
+                            creation.project.as_deref().map(Path::new),
+                        );
+                        error
+                    }
+                };
+            } else {
+                self.status="Managed path was reserved but not written because the hosted Room changed; inspect or forget its private reservation".into();
+            }
+            self.recovery.operation_notice(self.status.clone());
+        }
+        if let Some(mut restored) = self.recovery.ready.take() {
+            if self.host.is_none() && self.connection.is_none() {
+                match restored
+                    .host
+                    .as_ref()
+                    .ok_or("Recovered host unavailable".to_string())
+                    .and_then(|host| host.snapshot())
+                {
+                    Ok(snapshot) => {
+                        self.snapshot = snapshot;
+                        self.host = restored.host.take();
+                        self.journal_lease = restored.lease.take();
+                        self.journal_path = restored.journal.take();
+                        self.status = restored.notice.clone();
+                        self.invites.clear();
+                        self.recovery.operation_notice(self.status.clone());
+                    }
+                    Err(error) => {
+                        self.status = error;
+                        self.recovery.operation_notice(self.status.clone());
+                    }
+                }
+            } else {
+                self.recovery.operation_notice("Network Room changed before restore adoption; the temporary paused host was closed and source files preserved".into());
+            }
+        }
+        self.recovery.show(
+            ctx,
+            self.host.is_none() && self.connection.is_none(),
+            &self.bind,
+            self.journal_path.as_deref(),
+        );
+    }
     pub fn workflow_tasks(&self) -> Vec<forge_room_core::Task> {
         self.snapshot.shared.tasks.clone()
     }
@@ -170,6 +267,9 @@ impl NetworkRoom {
             .preflight
             .reconcile(root.filter(|_| trusted), &self.snapshot);
         let unread_activity = self.workflow.observe_activity(&self.snapshot);
+        if ui.button("Open Room Recovery Center").clicked() {
+            self.recovery.open = true;
+        }
         let header = if unread_activity > 0 {
             format!("Network Room · {unread_activity} new activity")
         } else {
@@ -198,21 +298,13 @@ impl NetworkRoom {
                         Err(error) => self.status = error,
                     }
                 }
-                if ui.button("Recover hosted Room from checkpoint...").clicked()
+                if ui.button("Inspect checkpoint for recovery...").clicked()
                     && let Some(path) = rfd::FileDialog::new().add_filter("Room checkpoint", &["json"]).pick_file() {
-                    let result = self.bind.parse().map_err(|_| "Enter an IP:port".to_string()).and_then(|bind| Host::recover(bind, &path));
-                    match result {
-                        Ok(host) => { self.snapshot = host.snapshot().unwrap_or_default(); self.host = Some(host); self.status = "Recovered checkpoint; review then resume and issue fresh invites".into(); },
-                        Err(error) => self.status = error,
-                    }
+                    self.recovery.inspect_selected(ui.ctx(),path);
                 }
-                if ui.button("Recover public Room journal...").clicked()
+                if ui.button("Inspect public journal for recovery...").clicked()
                     && let Some(path) = rfd::FileDialog::new().add_filter("Room journal", &["frjournal"]).pick_file() {
-                    let result = self.bind.parse().map_err(|_| "Enter an IP:port".to_string()).and_then(|bind| Host::recover_journal(bind, &path));
-                    match result {
-                        Ok(host) => { self.snapshot = host.snapshot().unwrap_or_default(); self.host = Some(host); self.status = "Journal recovered paused. Start a fresh journal before resuming for continued durability.".into(); },
-                        Err(error) => self.status = error,
-                    }
+                    self.recovery.inspect_selected(ui.ctx(),path);
                 }
                 ui.separator();
                 ui.label("Paste a private invite from the host");
@@ -252,19 +344,23 @@ impl NetworkRoom {
                             if ui.small_button("Cancel archive").clicked() { self.confirm_archive = false; }
                         }
                     }
+                    ui.horizontal_wrapped(|ui|{
+                        if ui.add_enabled(!self.recovery.busy(),egui::Button::new("Save checkpoint in managed vault")).clicked(){self.recovery.reserve_managed(ui.ctx(),forge_room_core::transport::RecoveryKind::Checkpoint,self.snapshot.shared.room_id.clone(),self.snapshot.room.clone(),root);}
+                        if ui.add_enabled(!self.recovery.busy(),egui::Button::new("Start / rotate managed journal")).clicked(){self.recovery.reserve_managed(ui.ctx(),forge_room_core::transport::RecoveryKind::Journal,self.snapshot.shared.room_id.clone(),self.snapshot.room.clone(),root);}
+                    });
                     match host.journal_bytes() {
                         Ok(Some(bytes)) => { ui.label(format!("Automatic public recovery journal: {bytes} / 67108864 bytes. Writes are flushed before acknowledgement.")); },
                         Ok(None) => { ui.label("Automatic recovery journal is off. Enable it to preserve subsequent public mutations."); },
                         Err(error) => { ui.colored_label(egui::Color32::RED, error); }
                     }
-                    if ui.button("Start / rotate public recovery journal...").clicked()
+                    if ui.add_enabled(!self.recovery.busy(),egui::Button::new("Start / rotate public recovery journal...")).clicked()
                         && let Some(path) = rfd::FileDialog::new().set_file_name("room.frjournal").save_file() {
-                        self.status = match host.enable_journal(&path) { Ok(()) => "Public journal active; private histories and credentials excluded".into(), Err(error) => error };
+                        self.status = match self.recovery.external_destination(&path).and_then(|_|host.enable_journal(&path)) { Ok(()) => {self.journal_path=Some(path.canonicalize().unwrap_or_else(|_|path.clone()));self.journal_lease=None;self.recovery.remember(ui.ctx(),path,root);"Public journal active; private histories and credentials excluded".into()}, Err(error) => error };
                     }
                     ui.label("Recovery checkpoints save public Room work only. DMs, patches, credentials and live focus are excluded. Changes after the last save are not recovered.");
-                    if ui.button("Save new recovery checkpoint...").clicked()
+                    if ui.add_enabled(!self.recovery.busy(),egui::Button::new("Save new recovery checkpoint...")).clicked()
                         && let Some(path) = rfd::FileDialog::new().set_file_name("room-checkpoint.json").save_file() {
-                        self.status = match host.save_checkpoint(&path) { Ok(()) => "Checkpoint saved and flushed; save again after further work".into(), Err(error) => error };
+                        self.status = match self.recovery.external_destination(&path).and_then(|_|host.save_checkpoint(&path)) { Ok(()) => {self.recovery.remember(ui.ctx(),path,root);"Checkpoint saved and flushed; save again after further work".into()}, Err(error) => error };
                     }
                     if self.connection.is_none() && self.snapshot.lifecycle == RoomLifecycle::Active
                         && ui.button("Join recovered Room as a new member").clicked() {
@@ -304,7 +400,10 @@ impl NetworkRoom {
                     }
                 }
                 if ui.button(if self.host.is_some() { "End hosted Room" } else { "Leave network Room" }).clicked() {
-                    *self = Self::default();
+                    let recovery=std::mem::take(&mut self.recovery);
+                    let mut next=Self::default();
+                    next.recovery=recovery;
+                    *self=next;
                     return;
                 }
                 ui.separator();
@@ -483,5 +582,153 @@ mod routing_tests {
             outcome.snapshot.shared.readiness.profiles[0].owner,
             client.identity
         );
+    }
+}
+
+#[cfg(test)]
+mod recovery_integration_tests {
+    use super::*;
+    use std::{fs, time::Instant};
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "forge-network-recovery-{}",
+                forge_room_core::workflows::new_id().unwrap()
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path.canonicalize().unwrap())
+        }
+        fn catalog(&self) -> PathBuf {
+            self.0.join("catalog")
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            assert!(
+                self.0
+                    .starts_with(std::env::temp_dir().canonicalize().unwrap())
+            );
+            assert!(
+                self.0
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("forge-network-recovery-")
+            );
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    fn indexed(catalog: &Path, kind: &str) -> bool {
+        let Ok(entries) = fs::read_dir(catalog.join("states")) else {
+            return false;
+        };
+        let mut paths = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+            .last()
+            .and_then(|path| {
+                crate::local_records::read::<serde_json::Value>(path, 1024 * 1024).ok()
+            })
+            .and_then(|value| value["entries"].as_object().cloned())
+            .is_some_and(|entries| {
+                entries
+                    .values()
+                    .any(|entry| entry["summary"]["kind"] == kind)
+            })
+    }
+    #[test]
+    fn managed_save_rotation_catalog_registration_and_host_close_keep_writer_lease_owned_together()
+    {
+        let fixture = Fixture::new();
+        let host = Host::start("127.0.0.1:0".parse().unwrap(), "Network managed").unwrap();
+        let mut room = NetworkRoom::default();
+        room.snapshot = host.snapshot().unwrap();
+        room.host = Some(host);
+        room.recovery = crate::room_recovery::State::at(&fixture.catalog());
+        let context = egui::Context::default();
+        room.recovery.reserve_managed(
+            &context,
+            forge_room_core::transport::RecoveryKind::Checkpoint,
+            room.snapshot.shared.room_id.clone(),
+            room.snapshot.room.clone(),
+            None,
+        );
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !indexed(&fixture.catalog(), "checkpoint") {
+            room.recovery_frame(&context, None);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        while room.recovery.busy() {
+            room.recovery_frame(&context, None);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        room.recovery.reserve_managed(
+            &context,
+            forge_room_core::transport::RecoveryKind::Journal,
+            room.snapshot.shared.room_id.clone(),
+            room.snapshot.room.clone(),
+            None,
+        );
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while room.journal_path.is_none() || !indexed(&fixture.catalog(), "journal") {
+            room.recovery_frame(&context, None);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        let journal = room.journal_path.clone().unwrap();
+        assert!(crate::room_recovery::lease_for_test(Some(&fixture.catalog()), &journal).is_err());
+        drop(room);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while crate::room_recovery::lease_for_test(Some(&fixture.catalog()), &journal).is_err() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(journal.exists());
+        assert!(forge_room_core::transport::inspect_recovery(&journal).is_ok());
+    }
+    #[test]
+    fn reviewed_host_adopts_paused_and_never_replaces_an_existing_host() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("source.json");
+        let original = Host::start("127.0.0.1:0".parse().unwrap(), "Restored network").unwrap();
+        original.save_checkpoint(&source).unwrap();
+        drop(original);
+        let preview = forge_room_core::transport::inspect_recovery(&source).unwrap();
+        let context = egui::Context::default();
+        let mut room = NetworkRoom::default();
+        room.recovery = crate::room_recovery::State::at(&fixture.catalog());
+        room.recovery
+            .request_restore(&context, preview.clone(), "127.0.0.1:0".into(), true);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while room.host.is_none() {
+            room.recovery_frame(&context, None);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(room.snapshot.lifecycle, RoomLifecycle::Paused);
+        assert!(room.journal_lease.is_some());
+        assert!(room.invites.is_empty());
+        let first = room.host.as_ref().unwrap().address();
+        while room.recovery.busy() {
+            room.recovery_frame(&context, None);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        room.recovery
+            .request_restore(&context, preview, "127.0.0.1:0".into(), false);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while room.recovery.busy() {
+            room.recovery_frame(&context, None);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(room.host.as_ref().unwrap().address(), first);
+        assert_eq!(room.snapshot.room, "Restored network");
     }
 }
