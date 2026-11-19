@@ -50,6 +50,7 @@ mod room_network_workflow;
 mod room_planning;
 mod room_preflight;
 mod room_readiness;
+mod room_recovery;
 mod room_shipping;
 mod room_state;
 mod rooms;
@@ -6482,6 +6483,7 @@ impl eframe::App for ForgeRoomApp {
         self.workflow_center
             .show(&context, self.trusted, &workflow_dirty, &workflow_records);
         self.studio_packs_frame(&context, workflow_config.as_ref());
+        self.room.recovery_frame(&context, workflow_root.as_deref());
         if let Some(workspace) = self.workflow_center.created.take() {
             self.status = self
                 .ai

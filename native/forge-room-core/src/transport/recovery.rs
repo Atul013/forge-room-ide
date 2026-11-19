@@ -1,10 +1,15 @@
 //! Explicit immutable public checkpoints. No session token, invite, TLS key, DM or patch is saved.
 use super::*;
+mod inspection;
 mod journal;
+pub use inspection::{
+    inspect_recovery, recovery_file_stamp, RecoveryComparison, RecoveryFileStamp, RecoveryKind,
+    RecoveryPreview, RecoverySummary, RecoveryTaskChange,
+};
 pub(super) use journal::Journal;
 use std::{fs::OpenOptions, path::Path};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Checkpoint {
     version: u32,
@@ -35,18 +40,11 @@ impl Host {
 
     /// Starts a fresh TLS host from a checkpoint, paused unless the source was archived.
     pub fn recover(bind: SocketAddr, path: &Path) -> Result<Self> {
-        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        if !file.metadata().map_err(|e| e.to_string())?.is_file() {
-            return Err("Choose a regular checkpoint file".into());
+        let preview = inspect_recovery(path)?;
+        if preview.summary().kind != RecoveryKind::Checkpoint {
+            return Err("Choose a public checkpoint, not a journal".into());
         }
-        let mut bytes = Vec::new();
-        file.take(MAX_FRAME as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.len() > MAX_FRAME {
-            return Err("Checkpoint is too large".into());
-        }
-        Self::recover_bytes(bind, &bytes)
+        Self::recover_preview(bind, &preview)
     }
 
     fn recover_bytes(bind: SocketAddr, bytes: &[u8]) -> Result<Self> {

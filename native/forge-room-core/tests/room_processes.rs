@@ -104,7 +104,25 @@ fn killed_host_recovers_acknowledged_public_work_from_disk() {
     assert!(ack["error"].is_null());
     server.child.kill().unwrap();
     server.child.wait().unwrap();
-    let host = Host::recover_journal("127.0.0.1:0".parse().unwrap(), &path).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let preview = forge_room_core::transport::inspect_recovery(&path).unwrap();
+    assert_eq!(
+        preview.summary().kind,
+        forge_room_core::transport::RecoveryKind::Journal
+    );
+    assert!(preview.summary().messages >= 1);
+    let inspected = path.with_extension("inspected.json");
+    preview.export_checkpoint(&inspected).unwrap();
+    assert_eq!(
+        forge_room_core::transport::inspect_recovery(&inspected)
+            .unwrap()
+            .summary()
+            .messages,
+        preview.summary().messages
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    std::fs::remove_file(inspected).unwrap();
+    let host = Host::recover_preview("127.0.0.1:0".parse().unwrap(), &preview).unwrap();
     assert!(host
         .snapshot()
         .unwrap()
