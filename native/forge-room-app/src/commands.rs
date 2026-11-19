@@ -15,6 +15,9 @@ pub enum Command {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    InterfaceBigger,
+    InterfaceSmaller,
+    InterfaceAutomatic,
     SelectNextOccurrence,
     GoToMatchingBracket,
     SelectToMatchingBracket,
@@ -110,6 +113,21 @@ pub const ALL: &[(Command, &str, &str)] = &[
         "Ctrl+-",
     ),
     (Command::ZoomReset, "View: Reset Editor Font Size", "Ctrl+0"),
+    (
+        Command::InterfaceBigger,
+        "View: Make the Interface Bigger",
+        "",
+    ),
+    (
+        Command::InterfaceSmaller,
+        "View: Make the Interface Smaller",
+        "",
+    ),
+    (
+        Command::InterfaceAutomatic,
+        "View: Interface Size Automatic",
+        "",
+    ),
     (
         Command::GoToMatchingBracket,
         "Selection: Go to Matching Bracket",
