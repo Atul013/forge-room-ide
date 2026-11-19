@@ -444,7 +444,7 @@ pub fn show(
     task_context: (Option<&Path>, &mut crate::task_pipeline::State),
     runtimes: &[String],
     auto_save: bool,
-    editor_scale: f32,
+    scales: (f32, Option<f32>, f32),
 ) -> Option<Selected> {
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(14, 10))
@@ -457,15 +457,7 @@ pub fn show(
             );
             ui.add_space(6.0);
             ui.separator();
-            page_body(
-                ui,
-                page,
-                root,
-                task_context,
-                runtimes,
-                auto_save,
-                editor_scale,
-            )
+            page_body(ui, page, root, task_context, runtimes, auto_save, scales)
         })
         .inner
 }
@@ -477,8 +469,10 @@ fn page_body(
     task_context: (Option<&Path>, &mut crate::task_pipeline::State),
     runtimes: &[String],
     auto_save: bool,
-    editor_scale: f32,
+    scales: (f32, Option<f32>, f32),
 ) -> Option<Selected> {
+    // Editor text scale, saved interface choice (`None`: automatic), and rendered size.
+    let (editor_scale, ui_scale, applied_ui_scale) = scales;
     let (active_file, task_state) = task_context;
     match page {
         Page::Tests | Page::Workflows | Page::RunDebug => {
@@ -606,6 +600,44 @@ fn page_body(
                         .clicked()
                     {
                         return Some(Selected::AppCommand(Command::ZoomReset));
+                    }
+                    None
+                })
+                .inner
+            {
+                return Some(action);
+            }
+            ui.label(match ui_scale {
+                Some(scale) if (scale - applied_ui_scale).abs() > 0.01 => format!(
+                    "Interface size: {:.0}% (saved {:.0}%, fitted to this screen)",
+                    applied_ui_scale * 100.0,
+                    scale * 100.0
+                ),
+                Some(scale) => format!("Interface size: {:.0}%", scale * 100.0),
+                None => "Interface size: automatic".to_string(),
+            });
+            if let Some(action) = ui
+                .horizontal(|ui| {
+                    if ui
+                        .button("−")
+                        .on_hover_text("Make the whole interface smaller")
+                        .clicked()
+                    {
+                        return Some(Selected::AppCommand(Command::InterfaceSmaller));
+                    }
+                    if ui
+                        .button("+")
+                        .on_hover_text("Make the whole interface bigger")
+                        .clicked()
+                    {
+                        return Some(Selected::AppCommand(Command::InterfaceBigger));
+                    }
+                    if ui
+                        .button("Automatic")
+                        .on_hover_text("Fit the interface to the Windows display scale")
+                        .clicked()
+                    {
+                        return Some(Selected::AppCommand(Command::InterfaceAutomatic));
                     }
                     None
                 })
