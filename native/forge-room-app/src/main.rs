@@ -55,6 +55,7 @@ mod room_planning;
 mod room_preflight;
 mod room_readiness;
 mod room_recovery;
+mod room_rescue;
 mod room_shipping;
 mod room_state;
 mod rooms;

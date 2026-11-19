@@ -11,6 +11,7 @@ use std::{
 
 #[derive(Default)]
 pub struct Workflow {
+    rescue: crate::room_rescue::Panel,
     shipping: crate::room_shipping::Panel,
     planning: crate::room_planning::Panel,
     pub readiness: crate::room_readiness::Panel,
@@ -299,6 +300,7 @@ impl Workflow {
                 "Follow".to_owned(),
                 "Ship".to_owned(),
                 "Planning".to_owned(),
+                "Rescue".to_owned(),
             ]
             .iter()
             .enumerate()
@@ -467,6 +469,15 @@ impl Workflow {
             }
         });
         match self.tab {
+            7 => {
+                if let Some(task) = self
+                    .rescue
+                    .show(ui, snapshot, host, remaining, &mut actions)
+                {
+                    self.readiness.select_task(task);
+                    self.tab = 3;
+                }
+            }
             6 => {
                 if let Some(task) = self.planning.show(ui, snapshot, host, &mut actions) {
                     self.checked = snapshot

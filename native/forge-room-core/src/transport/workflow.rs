@@ -10,6 +10,10 @@ pub use planning::{preview_plan, PlannedTask, TaskPlan};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
+    SetRescueScope {
+        expected_anchor: String,
+        selected: Vec<String>,
+    },
     ApplyTaskPlan {
         expected_tasks: Vec<Task>,
         plan: TaskPlan,
@@ -360,6 +364,37 @@ impl SharedRoom {
         }
     }
     pub(super) fn apply(&mut self, actor: &str, action: Action) -> Result<(), String> {
+        if let Action::SetRescueScope {
+            expected_anchor,
+            selected,
+        } = &action
+        {
+            if actor != self.state.host_id {
+                return Err("Only the host can publish rescue scope".into());
+            }
+            let plan = super::rescue::scope_plan(
+                &self.state.room_id,
+                &self.state.tasks,
+                &self.readiness.view,
+                &self.shipping,
+                expected_anchor,
+                selected,
+            )?;
+            let revision = self.shipping.revision;
+            self.shipping.apply(
+                actor,
+                &Action::SetShipPlan {
+                    expected_revision: revision,
+                    plan,
+                },
+                &self.state,
+            )?;
+            self.audit(
+                actor,
+                "published reviewed dependency-closed rescue scope; manual check reports reset",
+            );
+            return Ok(());
+        }
         if let Some(detail) = self.readiness.apply(actor, &action, &self.state)? {
             self.audit(actor, &detail);
             return Ok(());
@@ -370,6 +405,7 @@ impl SharedRoom {
         }
         let before = self.state.activity.len();
         match action {
+            Action::SetRescueScope { .. } => unreachable!("rescue authority handled action"),
             Action::ApplyTaskPlan {
                 expected_tasks,
                 plan,
