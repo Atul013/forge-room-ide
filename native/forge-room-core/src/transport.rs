@@ -26,7 +26,11 @@ pub use recovery::{
     inspect_recovery, recovery_file_stamp, RecoveryComparison, RecoveryFileStamp, RecoveryKind,
     RecoveryPreview, RecoverySummary, RecoveryTaskChange,
 };
+mod rescue;
 mod shipping;
+pub use rescue::{
+    rescue_anchor, rescue_report, rescue_scope, RescueReport, RescueRow, MAX_RESCUE_REPORT,
+};
 pub use shipping::{
     ship_blockers, ship_handoff, ShipCheck, ShipPlan, ShipReport, ShipResult, ShipState,
 };

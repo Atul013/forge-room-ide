@@ -14,6 +14,143 @@ struct Peer {
 }
 
 #[test]
+fn independent_clients_review_rescue_scope_and_recovery_preserves_only_public_coordination() {
+    use forge_room_core::{
+        transport::{
+            rescue_report, Action, Countdown, RescueReport, ShipCheck, ShipPlan, ShipResult,
+            Snapshot,
+        },
+        TaskPriority,
+    };
+    let path = std::env::temp_dir().join(format!(
+        "forge-rescue-journal-{}-{}",
+        std::process::id(),
+        forge_room_core::workflows::new_id().unwrap()
+    ));
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "rescue process").unwrap();
+    host.enable_journal(&path).unwrap();
+    let (mut a, mut b) = (Peer::start(), Peer::start());
+    let joined = a.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Ada"}));
+    let owner = joined["identity"].as_str().unwrap().to_owned();
+    let joined = b.request(json!({"command":"join","invite":host.invite(Duration::from_secs(60)).unwrap().encode(),"name":"Grace"}));
+    let reviewer = joined["identity"].as_str().unwrap().to_owned();
+    for dependencies in [vec![], vec!["T1".into()], vec![]] {
+        host.control(Action::CreateTask {
+            title: "Work".into(),
+            owner: owner.clone(),
+            criteria: vec![],
+            dependencies,
+            priority: TaskPriority::Normal,
+            due_hours: None,
+        })
+        .unwrap();
+    }
+    host.control(Action::SetShipPlan {
+        expected_revision: 0,
+        plan: ShipPlan {
+            title: "Release".into(),
+            required_tasks: vec!["T1".into(), "T2".into(), "T3".into()],
+            checks: vec![ShipCheck {
+                title: "Smoke".into(),
+                owner: owner.clone(),
+            }],
+            preview_reference: "build 42".into(),
+            submission_reference: "receipt 42".into(),
+        },
+    })
+    .unwrap();
+    assert!(a.execute(Action::ReportShipCheck {
+        expected_revision: 1,
+        check: 0,
+        result: ShipResult::ClaimedPass,
+        note: "Manual smoke".into()
+    })["rejection"]
+        .is_null());
+    let private_message = a.execute(Action::Message {
+        text: "PRIVATE_RESCUE_MESSAGE".into(),
+        recipient: Some(reviewer.clone()),
+        task: None,
+        decision: false,
+        parent: None,
+    });
+    let message_snapshot: Snapshot =
+        serde_json::from_value(private_message["snapshot"].clone()).unwrap();
+    assert!(message_snapshot
+        .events
+        .iter()
+        .any(|e| e.text == "PRIVATE_RESCUE_MESSAGE"));
+    let message_report = rescue_report(
+        &message_snapshot,
+        &["T2".into()],
+        &Countdown {
+            remaining_seconds: 1200,
+            running: true,
+        },
+        message_snapshot.server_time_epoch_seconds,
+    )
+    .unwrap();
+    assert!(!message_report
+        .json()
+        .unwrap()
+        .contains("PRIVATE_RESCUE_MESSAGE"));
+    let private = a.execute(Action::SharePatch {
+        recipient: reviewer,
+        path: "private-rescue.txt".into(),
+        before: "PRIVATE_RESCUE_BEFORE".into(),
+        after: "PRIVATE_RESCUE_AFTER".into(),
+    });
+    let snapshot: Snapshot = serde_json::from_value(private["snapshot"].clone()).unwrap();
+    assert!(!snapshot.patches.is_empty());
+    let report = rescue_report(
+        &snapshot,
+        &["T2".into()],
+        &Countdown {
+            remaining_seconds: 1200,
+            running: true,
+        },
+        snapshot.server_time_epoch_seconds,
+    )
+    .unwrap();
+    let exported = report.json().unwrap();
+    assert!(!exported.contains("PRIVATE_RESCUE"));
+    assert!(!exported.contains("private-rescue.txt"));
+    assert_eq!(RescueReport::parse(exported.as_bytes()).unwrap(), report);
+    let action = Action::SetRescueScope {
+        expected_anchor: report.anchor,
+        selected: report.selected,
+    };
+    assert!(a.execute(action.clone())["rejection"].is_string());
+    host.pause().unwrap();
+    assert!(host.control(action.clone()).is_err());
+    host.resume().unwrap();
+    host.control(action.clone()).unwrap();
+    let observed = b.request(json!({"command":"poll"}));
+    assert_eq!(
+        observed["snapshot"]["shared"]["shipping"]["plan"]["required_tasks"],
+        json!(["T1", "T2"])
+    );
+    assert_eq!(
+        observed["snapshot"]["shared"]["shipping"]["reports"],
+        json!([])
+    );
+    assert!(host.control(action).is_err());
+    let tasks = host.snapshot().unwrap().shared.tasks;
+    drop(host);
+    let recovered = Host::recover_journal("127.0.0.1:0".parse().unwrap(), &path).unwrap();
+    let restored = recovered.snapshot().unwrap();
+    assert_eq!(
+        restored.shared.shipping.plan.required_tasks,
+        vec!["T1", "T2"]
+    );
+    assert!(restored.shared.shipping.reports.is_empty());
+    assert_eq!(restored.shared.tasks, tasks);
+    assert!(restored.patches.is_empty());
+    assert!(restored.events.is_empty());
+    drop(recovered);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn independent_clients_review_invite_revocation_and_reclaim_departed_task_owners() {
     use forge_room_core::transport::Action;
     let host = Host::start("127.0.0.1:0".parse().unwrap(), "Access process").unwrap();

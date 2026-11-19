@@ -59,6 +59,9 @@ fn declaration(ui: &mut egui::Ui, name: &str, value: &mut Declaration) {
         });
 }
 impl Panel {
+    pub fn select_task(&mut self, task: String) {
+        self.selected = Some(task);
+    }
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,

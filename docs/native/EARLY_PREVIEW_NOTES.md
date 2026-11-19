@@ -4,7 +4,16 @@
 
 This is an early preview of the native Rust IDE: not a beta, unsigned, and Windows 11 x64 only.
 
-## New in alpha.3
+## Current source-build capabilities ? 20 November 2026
+
+These are native source capabilities, not a claim that every workflow has passed desktop, real-provider or physical two-client acceptance. The original alpha.3 notes below describe earlier editor work; current limitations and extension tiers apply to this build.
+
+- **Deadline Rescue / Ship Triage:** dependency-closed release scenarios, current-owner workload and risk/unknown review, consent-aware help navigation, frozen public report comparison and host-reviewed scope changes. Scope publication rechecks exact source, preserves task ownership/status and resets manual release check reports. No automatic agent dispatch or deployment. See [rescue contract](ROOM_DEADLINE_RESCUE.md).
+- **Self-hosted Rooms:** pinned TLS, reviewed private joins and public bookmarks, scoped expiring/revocable invites, leased presence/reconnect, public/DM chat, task planning/readiness/impacts, saved-patch review, consent-based read-only follow, Ship coordination, public journals and reviewed recovery. No accounts/hosted relay, concurrent editing or physical-client acceptance is implied.
+- **Daily IDE and AI:** multi-root workspace documents, native language-server sessions and Python debugging, task pipelines, installed CLI agents, reviewed native text-provider requests, scoped context/Skills, controlled edits/checks/undo and local Workflow Center. Real native-provider and broad desktop acceptance remain open; provider/CLI authentication and execution permissions remain separate.
+- **Studio and release evidence:** declarative themes/grammars/snippets, typed appearance profiles and Morph proposals, permissioned cached widgets, versioned local Packs/Workshop/Room blueprints and Release Evidence Desk. Reports are manual claims; source/file fingerprints, CI, package tests and visible acceptance are independent evidence layers.
+
+## Earlier alpha.3 editor additions
 
 - **AI panel** (Ctrl+Shift+A): installed CLI agents and explicitly reviewed native text model requests are available. Native Chat Completions-compatible and Anthropic Messages requests send only selected prompt/context and optional native history to the configured endpoint after approval; keys are resolved from environment variables. CLI agents retain their separate workspace permissions and authentication. Ask/Plan, reviewed replacements, guarded undo and durable recovery are implemented. See [native connection contract](NATIVE_MODEL_CONNECTIONS.md). Protocol/stand-in tests are distinct from live-provider and desktop acceptance.
 - **Folder trust:** Git, cargo check, the sidebar's project commands and the AI agent only run in a folder you trust. Opening a new folder asks once (trusting a folder also trusts the folders inside it); until then it opens in a restricted mode. Folder: Trust This Folder asks again. After updating, each folder asks once, because the list of trusted folders starts empty.
@@ -41,32 +50,31 @@ This is an early preview of the native Rust IDE: not a beta, unsigned, and Windo
 - AI agent panel: see the first item of "New in alpha.3". Claude Code or Codex can also be run in the integrated terminal, as before.
 - A per-user installer that updates in place (older to newer; a downgrade is blocked in the setup window) and a themed uninstaller. Uninstalling keeps your data under `%LOCALAPPDATA%\Forge Room Early Preview` (settings, session, room data and any unsaved text a crash left behind).
 
-## Missing
+## Still open
 
-- Run/Debug, Extensions, Debug Console and Ports are placeholders (Problems lists cargo check output only).
-- Editor-level AI actions (inline edits, plan/build flows, an approval UI for agent commands), token-by-token streaming, Codex follow-up conversations, image paste; LSP and DAP, extensions, a task runner.
-- Rebase, line history, minimap, multi-cursor and split editors.
-- Explorer rows cannot be reached with Tab (the arrow keys work once the tree is clicked or opened with Ctrl+Shift+E); there is no word wrap.
-- Realtime room transport, invitations, encryption and reconnect.
-- Theme/profile import, accessibility and high-DPI acceptance.
-- A signed release.
+- Visible Windows desktop/accessibility/high-DPI and interactive installer acceptance, real native-provider inference and physical two-client Room trials.
+- Concurrent shared editing, voice/screen-share Sessions, Pocket, hosted relay/accounts and independent operational security review.
+- Automatic cross-agent dispatch, automatic integration/deployment and actual preview/submission service connectors.
+- Arbitrary executable extensions/widgets or universal VS Code JavaScript extension compatibility; remote Pack catalogs and verified publisher signatures.
+- Comprehensive large-file performance acceptance, minimap, multi-cursor and split editors.
+- A signed release. Linux/macOS support remains unverified and unsupported.
 
 ## Known limitations
 
-- The CLI state file is local and trusted; it is not an authenticated multi-user protocol.
+- The local Room/CLI state file is trusted local data. Self-hosted network Rooms use a separate pinned-TLS/capability protocol; local state is never automatically uploaded.
 - Activity timestamps use Unix seconds and are not signed or tamper-evident.
-- Atomic save and crash recovery are implemented but have not been verified by crash injection on real Windows filesystems.
+- Atomic editor saves and unsaved-text recovery still need separate desktop/filesystem crash acceptance. Public Room journal recovery has independent forced-host-process tests; those do not establish editor recovery or physical-client acceptance.
 - CI compilation and a non-interactive launch probe are not Windows 11 desktop acceptance. The Windows build uses eframe's WGPU renderer because the hosted runner has no usable OpenGL 2.0 context.
 - Silent per-user installation is exercised by CI. The workflow installs a 0.109.0-alpha.0 baseline with the same stable AppId, upgrades to the version being built, verifies application-data and external-project preservation, checks default shortcut behavior, and then performs a clean uninstall. Machine-readable install and launch evidence are emitted with the artifact.
 - The build is unsigned.
-- The installer is per-user and deliberately does not modify PATH or register file associations; the native app has no stable project-file format yet.
+- The installer is per-user and deliberately does not modify PATH or register file associations. Native multi-root workspace documents are available; review their roots before opening projects.
 - The portable archive includes a locked dependency inventory and a cargo-about-generated report associating shipped Rust dependencies with their full license texts. Packaging fails closed if a dependency license cannot be determined. Windows artifacts are also retained as CI artifacts.
 
 ## Extension tiers
 
-- Declarative themes, snippets and grammars: candidate, not yet implemented.
-- LSP and DAP: planned native adapters, not yet implemented.
-- Compatible local VSIX inspection: under design; no execution support yet.
+- Declarative themes, snippets and grammars: bounded native imports and local Pack catalogs are implemented; desktop compatibility acceptance remains separate.
+- LSP and DAP: native language-server sessions and Python debugger workflows are implemented; adapter availability and language-specific desktop acceptance vary.
+- Local declarative Packs have inspection, immutable versions, selective activation and rollback. General VSIX execution is unsupported.
 - Arbitrary VS Code API extensions: unsupported because they require a JavaScript/Node or web extension host outside the strict Rust-only runtime.
 - Microsoft Marketplace catalog: unresolved for a non-Microsoft editor.
 - Open VSX or a Forge catalog: candidates only; neither is represented as the Microsoft Marketplace.
