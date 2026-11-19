@@ -570,7 +570,7 @@ impl Store {
             "Recorded reviewed quarantine target; file movement requires completion/inspection"
                 .into(),
         )?;
-        fs::rename(&path,&target).map_err(|e|format!("Index retained the quarantine target, but the original file is still preserved at {}: {e}",path.display()))?;
+        fs::rename(&path,&target).map_err(|e|format!("Quarantine target was recorded, but moving source {} failed: {e}. Reinspect both paths; no further cleanup was attempted",path.display()))?;
         self.commit(
             self.index.clone(),
             "quarantine_completed",
@@ -688,7 +688,7 @@ impl Store {
         )?;
         fs::remove_file(&path).map_err(|e| {
             format!(
-                "Metadata removed but bytes remain preserved at {}: {e}",
+                "Metadata was removed, but removing owned path {} failed: {e}. Reinspect that path before further action",
                 path.display()
             )
         })?;
