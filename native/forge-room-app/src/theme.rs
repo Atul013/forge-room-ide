@@ -374,6 +374,16 @@ fn imported() -> &'static RwLock<Vec<Arc<Theme>>> {
 }
 
 pub fn all() -> Vec<Arc<Theme>> {
+    let mut themes = base_all();
+    themes.extend(
+        crate::studio_packs::runtime::current()
+            .themes
+            .iter()
+            .cloned(),
+    );
+    themes
+}
+pub(crate) fn base_all() -> Vec<Arc<Theme>> {
     let mut themes = bundled().to_vec();
     themes.extend(imported().read().expect("theme lock").iter().cloned());
     themes

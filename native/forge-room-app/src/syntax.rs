@@ -37,7 +37,7 @@ fn grammar_key(text: &str) -> String {
     format!("grammar-{hash:016x}")
 }
 
-fn parse_grammar(text: &str) -> Result<SyntaxDefinition, String> {
+pub(crate) fn parse_grammar(text: &str) -> Result<SyntaxDefinition, String> {
     if text.len() > 128 * 1024 {
         return Err("Grammar exceeds 128 KB".into());
     }
@@ -56,7 +56,24 @@ fn parse_grammar(text: &str) -> Result<SyntaxDefinition, String> {
     Ok(syntax)
 }
 
+pub(crate) struct Prepared {
+    set: Arc<SyntaxSet>,
+    pub names: Vec<String>,
+}
+pub(crate) fn prepare_packs(grammars: &[(String, String)]) -> Result<Prepared, String> {
+    build(None, grammars)
+}
 fn rebuild(extra: Option<SyntaxDefinition>) -> Result<Vec<String>, String> {
+    let grammars = crate::studio_packs::runtime::current().grammars.clone();
+    let prepared = build(extra, &grammars)?;
+    let names = prepared.names.clone();
+    install(prepared);
+    Ok(names)
+}
+fn build(
+    extra: Option<SyntaxDefinition>,
+    grammars: &[(String, String)],
+) -> Result<Prepared, String> {
     let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
     let mut names = Vec::new();
     if let Ok(entries) = fs::read_dir(grammar_dir()) {
@@ -83,12 +100,30 @@ fn rebuild(extra: Option<SyntaxDefinition>) -> Result<Vec<String>, String> {
         names.push(syntax.name.clone());
         builder.add(syntax);
     }
+    let mut extensions = std::collections::BTreeMap::new();
+    for (key, text) in grammars {
+        let syntax = parse_grammar(text)?;
+        for extension in &syntax.file_extensions {
+            if let Some(prior) = extensions.insert(extension.to_ascii_lowercase(), key) {
+                return Err(format!(
+                    "Pack grammars {prior} and {key} both claim .{extension}; select one"
+                ));
+            }
+        }
+        names.push(format!("{} ({key})", syntax.name));
+        builder.add(syntax);
+    }
     let set = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| builder.build()))
         .map_err(|_| "Grammar references could not be linked".to_string())?;
-    *syntax_slot().write().expect("syntax lock") = Arc::new(set);
-    *grammar_names_slot().write().expect("grammar names lock") = names.clone();
+    Ok(Prepared {
+        set: Arc::new(set),
+        names,
+    })
+}
+pub(crate) fn install(prepared: Prepared) {
+    *syntax_slot().write().expect("syntax lock") = prepared.set;
+    *grammar_names_slot().write().expect("grammar names lock") = prepared.names;
     cache().lock().expect("syntax cache").take();
-    Ok(names)
 }
 
 fn grammar_names_slot() -> &'static RwLock<Vec<String>> {
@@ -109,6 +144,17 @@ pub fn load_imports() {
 
 pub fn import_grammar(text: &str) -> Result<String, String> {
     let syntax = parse_grammar(text)?;
+    for (_, text) in &crate::studio_packs::runtime::current().grammars {
+        let packed = parse_grammar(text)?;
+        if syntax.file_extensions.iter().any(|extension| {
+            packed
+                .file_extensions
+                .iter()
+                .any(|other| extension.eq_ignore_ascii_case(other))
+        }) {
+            return Err("An active pack owns one of these extensions; disable its grammar before importing a loose replacement".into());
+        }
+    }
     let name = syntax.name.clone();
     // Confirm it links with the currently installed grammars before persisting it.
     rebuild(Some(syntax))?;

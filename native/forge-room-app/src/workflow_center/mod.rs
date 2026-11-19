@@ -2,6 +2,7 @@
 mod editor;
 mod executor;
 mod library;
+pub(crate) use library::Library as WorkflowLibrary;
 mod reports;
 mod resolver;
 mod storage;
