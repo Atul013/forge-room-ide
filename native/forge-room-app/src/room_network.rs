@@ -48,10 +48,8 @@ impl Drop for Connection {
 pub struct NetworkRoom {
     host: Option<Host>,
     connection: Option<Connection>,
-    invites: Vec<(Invite, bool)>,
     bind: String,
     name: String,
-    invite_text: String,
     workflow: crate::room_network_workflow::Workflow,
     changes: crate::room_changes::Changes,
     notice: Option<String>,
@@ -60,6 +58,7 @@ pub struct NetworkRoom {
     confirm_archive: bool,
     recovery: crate::room_recovery::State,
     launch: crate::room_launch::State,
+    access: crate::room_access::State,
     journal_lease: Option<crate::room_recovery::Lease>,
     journal_path: Option<PathBuf>,
 }
@@ -68,10 +67,8 @@ impl Default for NetworkRoom {
         Self {
             host: None,
             connection: None,
-            invites: Vec::new(),
             bind: "127.0.0.1:0".into(),
             name: crate::room_state::local_user_name(),
-            invite_text: String::new(),
             workflow: Default::default(),
             changes: Default::default(),
             notice: None,
@@ -80,6 +77,7 @@ impl Default for NetworkRoom {
             confirm_archive: false,
             recovery: Default::default(),
             launch: Default::default(),
+            access: Default::default(),
             journal_lease: None,
             journal_path: None,
         }
@@ -99,6 +97,20 @@ impl Drop for NetworkRoom {
 }
 impl NetworkRoom {
     pub fn recovery_frame(&mut self, ctx: &egui::Context, root: Option<&Path>) {
+        self.access.tick();
+        if let Some(mut joined) = self.access.ready.take() {
+            if self.host.is_none() && self.connection.is_none() {
+                if let Some(client) = joined.client.take() {
+                    let snapshot = joined.snapshot.clone();
+                    self.snapshot = snapshot.clone();
+                    self.attach(move || Ok((client, snapshot)));
+                    self.access.remember(ctx, &joined);
+                    self.access.operation_notice("Reviewed connection adopted; metadata registration is separate from join success".into());
+                }
+            } else {
+                self.access.operation_notice("Network Room changed before join adoption; temporary client left and the existing connection was preserved".into());
+            }
+        }
         self.launch.tick();
         if let Some(mut prepared) = self.launch.ready.take() {
             if self.host.is_none() && self.connection.is_none() {
@@ -107,7 +119,6 @@ impl NetworkRoom {
                     self.host = Some(host);
                     let snapshot = prepared.snapshot.clone();
                     self.attach(move || Ok((client, snapshot)));
-                    self.invites.clear();
                 }
             } else {
                 self.launch.operation_notice("Network Room changed before launch adoption; temporary host closed, existing Room preserved".into());
@@ -182,7 +193,6 @@ impl NetworkRoom {
                         self.journal_lease = restored.lease.take();
                         self.journal_path = restored.journal.take();
                         self.status = restored.notice.clone();
-                        self.invites.clear();
                         self.recovery.operation_notice(self.status.clone());
                     }
                     Err(error) => {
@@ -194,12 +204,31 @@ impl NetworkRoom {
                 self.recovery.operation_notice("Network Room changed before restore adoption; the temporary paused host was closed and source files preserved".into());
             }
         }
+        self.access.show(
+            ctx,
+            self.host.is_none() && self.connection.is_none(),
+            self.host.as_ref(),
+            root,
+        );
+        if std::mem::take(&mut self.access.detach_member) {
+            self.detach_local_member();
+        }
         self.recovery.show(
             ctx,
             self.host.is_none() && self.connection.is_none(),
             &self.bind,
             self.journal_path.as_deref(),
         );
+    }
+    fn detach_local_member(&mut self) {
+        self.connection.take();
+        self.snapshot.you.clear();
+        if self.host.is_none() {
+            self.snapshot = Snapshot::default();
+            self.status = "Offline; joined member connection closed".into();
+        } else {
+            self.status="Member detached; host remains running. Retained owners need a fresh private reclaim invite.".into();
+        }
     }
     pub fn stage_blueprint(&mut self, blueprint: forge_room_core::transport::RoomBlueprint) {
         self.launch.replace(blueprint);
@@ -283,12 +312,16 @@ impl NetworkRoom {
             }
         }
         let mut local_rejoin = None;
+        let mut detach_member = false;
         let panel_height = (ui.available_height() * 0.65).max(120.0);
         self.workflow
             .readiness
             .preflight
             .reconcile(root.filter(|_| trusted), &self.snapshot);
         let unread_activity = self.workflow.observe_activity(&self.snapshot);
+        if ui.button("Open Room Access Center").clicked() {
+            self.access.open_join();
+        }
         if ui.button("Open Room Launch Center").clicked() {
             self.launch.open = true;
         }
@@ -335,13 +368,7 @@ impl NetworkRoom {
                     self.recovery.inspect_selected(ui.ctx(),path);
                 }
                 ui.separator();
-                ui.label("Paste a private invite from the host");
-                ui.add(egui::TextEdit::singleline(&mut self.invite_text).password(true).char_limit(16_384));
-                let preview = Invite::decode(&self.invite_text);
-                if let Ok(invite) = &preview { ui.label(format!("Join {} at {}. The invite pins this host's TLS certificate.", invite.room_name(), invite.address())); }
-                if ui.add_enabled(preview.is_ok(), egui::Button::new("Join network Room")).clicked()
-                    && let Ok(invite) = preview { self.connect(invite); self.invite_text.clear();
-                }
+                if ui.button("Review private invite / saved connection bookmarks...").clicked(){self.access.open_join();}
                 ui.label("Self-hosted preview: send invites privately. No discovery, relay or account identity. LAN requires a reachable host and firewall configuration.");
             } else {
                 if let Some(host) = &self.host {
@@ -391,16 +418,16 @@ impl NetworkRoom {
                         self.status = match self.recovery.external_destination(&path).and_then(|_|host.save_checkpoint(&path)) { Ok(()) => {self.recovery.remember(ui.ctx(),path,root);"Checkpoint saved and flushed; save again after further work".into()}, Err(error) => error };
                     }
                     if self.connection.is_none() && self.snapshot.lifecycle == RoomLifecycle::Active
-                        && ui.button("Join recovered Room as a new member").clicked() {
+                        && ui.button("Join this hosted Room as a new member").clicked() {
                         match host.invite(Duration::from_secs(60)) { Ok(invite) => local_rejoin = Some(invite), Err(error) => self.status = error }
                     }
                     for member in host.recovered_members().unwrap_or_default() {
-                        ui.label(format!("Recovered owner: {} ({}) - offline", member.name, member.id.chars().take(8).collect::<String>()));
+                        ui.label(format!("Retained offline owner: {} ({}) - offline", member.name, member.id.chars().take(8).collect::<String>()));
                         ui.horizontal_wrapped(|ui| {
                             let active = self.snapshot.lifecycle == RoomLifecycle::Active;
                             if ui.add_enabled(active, egui::Button::new("Copy owner reclaim invite")).on_hover_text("Give privately only to this original owner; it restores their task authority").clicked() {
                                 match host.reclaim_invite(&member.id, Duration::from_secs(300)) {
-                                    Ok(invite) => { ui.ctx().copy_text(invite.encode()); self.invites.push((invite, false)); },
+                                    Ok(invite) => { ui.ctx().copy_text(invite.encode()); },
                                     Err(error) => self.status = error,
                                 }
                             }
@@ -415,24 +442,17 @@ impl NetworkRoom {
                             Err(error) => self.status = format!("Archive export failed: {error}"),
                         }
                     }
-                    if ui.add_enabled(self.snapshot.lifecycle == RoomLifecycle::Active && self.invites.len() < 32, egui::Button::new("Copy single-use invite · expires in 5 minutes")).clicked() {
-                        match host.invite(Duration::from_secs(300)) {
-                            Ok(invite) => { ui.ctx().copy_text(invite.encode()); self.invites.push((invite, false)); }
-                            Err(error) => self.status = error,
-                        }
-                    }
-                    for (index, (invite, revoked)) in self.invites.iter_mut().enumerate() {
-                        if ui.add_enabled(!*revoked, egui::Button::new(format!("Revoke invite {} and its joined member{}", index + 1, if *revoked { " · revoked" } else { "" }))).clicked() {
-                            match host.revoke(invite) { Ok(()) => *revoked = true, Err(error) => self.status = error }
-                        }
-                    }
+                    if ui.button("Manage host invitations and reviewed revocation...").clicked(){self.access.open_host();}
+                    if self.connection.is_some() && ui.button("Leave joined member session; keep host running").clicked(){detach_member=true;}
                 }
                 if ui.button(if self.host.is_some() { "End hosted Room" } else { "Leave network Room" }).clicked() {
                     let recovery=std::mem::take(&mut self.recovery);
                     let launch=std::mem::take(&mut self.launch);
+                    let access=std::mem::take(&mut self.access);
                     let mut next=Self::default();
                     next.recovery=recovery;
                     next.launch=launch;
+                    next.access=access;
                     *self=next;
                     return;
                 }
@@ -459,6 +479,9 @@ impl NetworkRoom {
             }
           });
         });
+        if detach_member {
+            self.detach_local_member();
+        }
         if let Some(invite) = local_rejoin {
             self.connect(invite);
         }
@@ -729,6 +752,51 @@ mod recovery_integration_tests {
         assert!(forge_room_core::transport::inspect_recovery(&journal).is_ok());
     }
     #[test]
+    fn reviewed_join_adopts_once_saves_metadata_and_raced_results_never_replace_a_connection() {
+        let fixture = Fixture::new();
+        let ctx = egui::Context::default();
+        let first = Host::start("127.0.0.1:0".parse().unwrap(), "First").unwrap();
+        let second = Host::start("127.0.0.1:0".parse().unwrap(), "Second").unwrap();
+        let mut room = NetworkRoom::default();
+        room.recovery = crate::room_recovery::State::at(&fixture.catalog());
+        room.access = crate::room_access::State::at(fixture.0.join("connections"));
+        room.access
+            .join_for_test(&ctx, first.invite(Duration::from_secs(60)).unwrap(), "Ada");
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while room.connection.is_none() || room.access.busy() {
+            room.recovery_frame(&ctx, None);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(room.snapshot.room, "First");
+        let identity = room.snapshot.you.clone();
+        assert!(!identity.is_empty());
+        room.access.join_for_test(
+            &ctx,
+            second.invite(Duration::from_secs(60)).unwrap(),
+            "Grace",
+        );
+        while room.access.busy() {
+            room.recovery_frame(&ctx, None);
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(room.snapshot.room, "First");
+        assert_eq!(room.snapshot.you, identity);
+        room.access.detach_member = true;
+        room.recovery_frame(&ctx, None);
+        assert!(room.connection.is_none());
+        assert!(room.snapshot.shared.room_id.is_empty());
+        while !first.snapshot().unwrap().members.is_empty() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        while !second.snapshot().unwrap().members.is_empty() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+    #[test]
     fn blueprint_launch_adopts_the_prepared_member_and_never_replaces_an_existing_room() {
         let fixture = Fixture::new();
         let ctx = egui::Context::default();
@@ -749,13 +817,38 @@ mod recovery_integration_tests {
         room.recovery_frame(&ctx, None);
         assert!(room.connection.is_some());
         assert_eq!(room.snapshot.shared.tasks.len(), 4);
-        assert!(room.invites.is_empty());
+        assert!(
+            room.host
+                .as_ref()
+                .unwrap()
+                .invitation_summaries()
+                .unwrap()
+                .iter()
+                .all(|g| g.used)
+        );
         let first = room.host.as_ref().unwrap().address();
         let identity = room.snapshot.shared.tasks[0].owner_id.clone();
         room.launch.ready = Some(prepare());
         room.recovery_frame(&ctx, None);
         assert_eq!(room.host.as_ref().unwrap().address(), first);
         assert_eq!(room.snapshot.shared.tasks[0].owner_id, identity);
+        room.access.detach_member = true;
+        room.recovery_frame(&ctx, None);
+        assert!(room.connection.is_none());
+        assert_eq!(room.host.as_ref().unwrap().address(), first);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !room
+            .host
+            .as_ref()
+            .unwrap()
+            .recovered_members()
+            .unwrap()
+            .iter()
+            .any(|m| m.id == identity)
+        {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
     }
     #[test]
     fn reviewed_host_adopts_paused_and_never_replaces_an_existing_host() {
@@ -778,7 +871,15 @@ mod recovery_integration_tests {
         }
         assert_eq!(room.snapshot.lifecycle, RoomLifecycle::Paused);
         assert!(room.journal_lease.is_some());
-        assert!(room.invites.is_empty());
+        assert!(
+            room.host
+                .as_ref()
+                .unwrap()
+                .invitation_summaries()
+                .unwrap()
+                .iter()
+                .all(|g| g.used)
+        );
         let first = room.host.as_ref().unwrap().address();
         while room.recovery.busy() {
             room.recovery_frame(&context, None);

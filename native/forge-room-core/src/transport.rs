@@ -16,8 +16,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod access;
 mod blueprints;
 mod readiness;
+pub use access::{InviteSummary, RevocationReview};
 pub use blueprints::{BlueprintMilestone, BlueprintTask, RoomBlueprint, MAX_BLUEPRINT};
 mod recovery;
 pub use recovery::{
@@ -370,7 +372,7 @@ impl Authority {
             self.check_mutation()?;
         }
         let now = Instant::now();
-        self.sessions.retain(|_, s| s.expires > now);
+        self.retire_sessions(|s| s.expires <= now);
         self.sync_members();
         let mut credential = None;
         let mut identity = None;
@@ -466,9 +468,11 @@ impl Authority {
                 self.authenticate(&session, now)?;
                 let actor = self
                     .sessions
-                    .remove(&session)
+                    .get(&session)
                     .expect("authenticated session")
-                    .id;
+                    .id
+                    .clone();
+                self.retire_sessions(|s| s.id == actor);
                 self.sync_members();
                 self.shared.audit(&actor, "left the network Room");
                 return Ok(Response {
@@ -930,6 +934,8 @@ impl Host {
             }
         }
         let now = Instant::now();
+        state.retire_sessions(|s| s.expires <= now);
+        state.sync_members();
         let active: Vec<_> = state
             .sessions
             .values()
@@ -967,7 +973,7 @@ impl Host {
         if let Some(grant) = state.grants.get_mut(&invite.token) {
             grant.revoked = true;
         }
-        state.sessions.retain(|_, s| s.invite != invite.token);
+        state.retire_sessions(|s| s.invite == invite.token);
         state.sync_members();
         let host = state.shared.state.host_id.clone();
         state
@@ -1025,7 +1031,7 @@ impl Host {
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
         state.check_mutation()?;
         let now = Instant::now();
-        state.sessions.retain(|_, s| s.expires > now);
+        state.retire_sessions(|s| s.expires <= now);
         state.sync_members();
         if state.lifecycle != RoomLifecycle::Active {
             return Err("Host edits are unavailable while the Room is paused or archived".into());

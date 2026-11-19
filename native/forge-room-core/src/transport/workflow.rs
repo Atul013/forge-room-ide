@@ -286,6 +286,10 @@ impl SharedRoom {
         self.code_locations
             .retain(|actor, _| joined.contains(actor.as_str()));
     }
+    pub(super) fn retire_presence(&mut self, actor: &str) {
+        self.task_focus.remove(actor);
+        self.code_locations.remove(actor);
+    }
     pub(super) fn remaining(&self) -> Duration {
         self.started
             .map(|start| self.remaining.saturating_sub(start.elapsed()))
