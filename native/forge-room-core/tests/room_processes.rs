@@ -14,6 +14,45 @@ struct Peer {
 }
 
 #[test]
+fn independent_clients_review_invite_revocation_and_reclaim_departed_task_owners() {
+    use forge_room_core::transport::Action;
+    let host = Host::start("127.0.0.1:0".parse().unwrap(), "Access process").unwrap();
+    let a = host.invite(Duration::from_secs(60)).unwrap();
+    let b = host.invite(Duration::from_secs(60)).unwrap();
+    let stale = host.review_revocation(vec![a.public_id()]).unwrap();
+    let (mut ada, mut grace) = (Peer::start(), Peer::start());
+    let joined = ada.request(json!({"command":"join","invite":a.encode(),"name":"Ada"}));
+    let owner = joined["identity"].as_str().unwrap().to_owned();
+    grace.request(json!({"command":"join","invite":b.encode(),"name":"Grace"}));
+    assert!(host.revoke_reviewed(&stale).is_err());
+    assert!(ada.request(json!({"command":"poll"}))["snapshot"].is_object());
+    host.control(Action::CreateTask {
+        title: "Retained owner".into(),
+        owner: owner.clone(),
+        criteria: vec![],
+        dependencies: vec![],
+        priority: forge_room_core::TaskPriority::Normal,
+        due_hours: None,
+    })
+    .unwrap();
+    let reviewed = host.review_revocation(vec![a.public_id()]).unwrap();
+    assert_eq!(host.revoke_reviewed(&reviewed).unwrap(), 1);
+    assert!(ada.request(json!({"command":"poll"}))["error"].is_string());
+    assert!(grace.request(json!({"command":"poll"}))["snapshot"].is_object());
+    let claim = host
+        .reclaim_invite(&owner, Duration::from_secs(60))
+        .unwrap();
+    let mut returning = Peer::start();
+    let reclaimed =
+        returning.request(json!({"command":"join","invite":claim.encode(),"name":"Owner reclaim"}));
+    assert_eq!(reclaimed["identity"], owner);
+    assert_eq!(
+        reclaimed["snapshot"]["shared"]["tasks"][0]["ownerId"],
+        owner
+    );
+}
+
+#[test]
 fn independent_clients_review_plans_and_journal_recovery_preserves_the_batch() {
     use forge_room_core::transport::{Action, PlannedTask, TaskPlan};
     let path = std::env::temp_dir().join(format!(

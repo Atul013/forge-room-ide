@@ -44,6 +44,7 @@ mod project_tools;
 mod recovery;
 mod release_desk;
 mod review_checkpoints;
+mod room_access;
 mod room_changes;
 mod room_code_navigation;
 mod room_impact_scan;

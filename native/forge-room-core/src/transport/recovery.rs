@@ -79,13 +79,13 @@ impl Host {
         Ok(host)
     }
 
-    /// Only the local host can bind a fresh single-use invite to a saved member identity.
+    /// Only the local host can bind a fresh single-use invite to a retained offline owner identity.
     pub fn reclaim_invite(&self, member: &str, lifetime: Duration) -> Result<Invite> {
         let invite = self.invite(lifetime)?;
         let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
         let Some(member) = state.recovered.get(member).cloned() else {
             state.grants.remove(&invite.token);
-            return Err("Only an offline recovered member can be reclaimed".into());
+            return Err("Only an offline retained member can be reclaimed".into());
         };
         // Invalidate any earlier outstanding claim for the same identity.
         for grant in state.grants.values_mut() {
@@ -106,7 +106,11 @@ impl Host {
     }
 
     pub fn recovered_members(&self) -> Result<Vec<Member>> {
-        let state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        let mut state = self.authority.lock().map_err(|_| "Room unavailable")?;
+        state.check_storage()?;
+        let now = Instant::now();
+        state.retire_sessions(|s| s.expires <= now);
+        state.sync_members();
         let mut members: Vec<_> = state.recovered.values().cloned().collect();
         members.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(members)
