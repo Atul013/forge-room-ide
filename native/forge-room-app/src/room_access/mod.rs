@@ -16,6 +16,7 @@ pub struct Joined {
     project: Option<String>,
     expected: Option<Profile>,
     requested_name: String,
+    observed_at: u64,
 }
 impl Drop for Joined {
     fn drop(&mut self) {
@@ -37,6 +38,7 @@ enum Job {
     Profiles(Result<Profiles, String>),
     Export(Result<(), String>),
     Joined(Result<Box<Joined>, String>),
+    Rechecked(Result<(Box<Joined>, bool), String>),
 }
 pub struct State {
     pub open: bool,
@@ -159,7 +161,7 @@ impl State {
         self.last_joined = Some((
             joined.profile.clone(),
             joined.project.clone(),
-            forge_room_core::now_epoch_seconds(),
+            joined.observed_at,
         ));
         self.save_last_joined(ctx);
     }
@@ -174,17 +176,48 @@ impl State {
             });
         }
     }
+    fn finish_join(&mut self, result: Result<Box<Joined>, String>, reviewed: bool, changed: bool) {
+        self.joining = false;
+        match result {
+            Err(e) => self.notice = format!("Join/adoption failed: {e}"),
+            Ok(joined) => {
+                let needs_review = joined
+                    .expected
+                    .as_ref()
+                    .is_some_and(|p| p.room_id != joined.profile.room_id)
+                    || joined
+                        .snapshot
+                        .shared
+                        .tasks
+                        .iter()
+                        .any(|t| t.owner_id == joined.snapshot.you)
+                    || joined
+                        .snapshot
+                        .members
+                        .iter()
+                        .find(|m| m.id == joined.snapshot.you)
+                        .is_some_and(|m| m.name != joined.requested_name);
+                if self.cancelled {
+                    drop(joined);
+                    self.notice="Join adoption cancelled; completed temporary connections are closed with leave on a worker".into();
+                } else if changed || (!reviewed && needs_review) {
+                    self.pending = Some(joined);
+                    self.notice="Joined identity or existing task ownership requires review before adoption".into();
+                } else {
+                    self.ready = Some(joined);
+                }
+            }
+        }
+        self.cancelled = false;
+    }
     pub fn tick(&mut self) {
         if let Some(job) = self.worker.poll() {
-            match job {
+            match job{
             Job::Catalog(result)=>match result{Ok(store)=>{self.notice=if store.warning.is_empty(){"Connection metadata refreshed; saved entries do not prove a host is online".into()}else{store.warning.clone()};self.store=Some(store);},Err(e)=>{self.notice=format!("Connection metadata unavailable: {e}. Private invite joining remains available.");self.store=None;}},
-            Job::Profiles(result)=>match result{Ok(value)=>{let seal=self.store.as_ref().and_then(|s|s.index.seal().ok());self.import=Some((value,seal));self.notice="Import inspected; review the public host metadata before adding it".into();},Err(e)=>self.notice=e},
-            Job::Export(result)=>self.notice=match result{Ok(())=>"Public bookmark metadata exported to a new file; no project paths or authentication included".into(),Err(e)=>e},
-            Job::Joined(result)=>{self.joining=false;match result{Err(e)=>self.notice=format!("Join failed: {e}"),Ok(joined)=>{
-                if self.cancelled{drop(joined);self.notice="Join adoption cancelled; completed connections are closed with leave on a worker".into();}
-                else if joined.expected.as_ref().is_some_and(|p|p.room_id!=joined.profile.room_id) || joined.snapshot.shared.tasks.iter().any(|t|t.owner_id==joined.snapshot.you) || joined.snapshot.members.iter().find(|m|m.id==joined.snapshot.you).is_some_and(|m|m.name!=joined.requested_name){self.pending=Some(joined);self.notice="The joined Room/member identity or existing task ownership requires review before local adoption".into();}
-                else{self.ready=Some(joined);}
-            }}self.cancelled=false;}
+            Job::Profiles(result)=>match result{Ok(value)=>{let seal=self.store.as_ref().and_then(|s|s.index.seal().ok());self.import=Some((value,seal));self.notice="Import inspected; review public host metadata before adding it".into();},Err(e)=>self.notice=e},
+            Job::Export(result)=>self.notice=match result{Ok(())=>"Public metadata exported to a new file; no project paths or authentication included".into(),Err(e)=>e},
+            Job::Joined(result)=>self.finish_join(result,false,false),
+            Job::Rechecked(result)=>match result{Ok((joined,changed))=>self.finish_join(Ok(joined),true,changed),Err(e)=>self.finish_join(Err(e),true,false)},
         }
         }
         if self.worker.take_failed() {
@@ -193,6 +226,40 @@ impl State {
             self.notice =
                 "Access worker stopped without a result; no connection was adopted".into();
         }
+    }
+    fn adopt_pending(&mut self, ctx: &eframe::egui::Context) {
+        if self.worker.busy() {
+            return;
+        }
+        let Some(mut joined) = self.pending.take() else {
+            return;
+        };
+        self.joining = true;
+        self.cancelled = false;
+        self.worker.request(ctx, move || {
+            Job::Rechecked((|| {
+                let snapshot = joined
+                    .client
+                    .as_mut()
+                    .ok_or("Prepared client unavailable")?
+                    .poll()?;
+                let name = |s: &Snapshot| {
+                    s.members
+                        .iter()
+                        .find(|m| m.id == s.you)
+                        .map(|m| m.name.clone())
+                };
+                let changed = joined.snapshot.you != snapshot.you
+                    || joined.profile.room_id != snapshot.shared.room_id
+                    || joined.profile.room != snapshot.room
+                    || name(&joined.snapshot) != name(&snapshot);
+                joined.profile.room_id = snapshot.shared.room_id.clone();
+                joined.profile.room = snapshot.room.clone();
+                joined.snapshot = snapshot;
+                joined.profile.validate()?;
+                Ok((joined, changed))
+            })())
+        });
     }
     fn freeze(&mut self, project: Option<&Path>) -> Result<(), String> {
         let invite = Invite::decode(&self.invite)?;
@@ -242,6 +309,7 @@ impl State {
                     project: review.project,
                     expected: review.expected,
                     requested_name: review.name,
+                    observed_at: forge_room_core::now_epoch_seconds(),
                 });
                 joined.profile.validate()?;
                 Ok(joined)
@@ -418,7 +486,22 @@ mod tests {
         output.textures_delta.clear();
         assert!(!output.shapes.is_empty());
         state.open = false;
-        state.pending.take();
+        let observed = state.pending.as_ref().unwrap().observed_at;
+        state.adopt_pending(&ctx);
+        finish(&mut state);
+        let joined = state.ready.take().expect("rechecked connection");
+        assert_eq!(joined.observed_at, observed);
+        drop(joined);
+        let revoked = host.invite(Duration::from_secs(60)).unwrap();
+        state.invite = revoked.encode();
+        state.freeze(None).unwrap();
+        state.connect(&ctx);
+        finish(&mut state);
+        assert!(state.pending.is_some());
+        host.revoke(&revoked).unwrap();
+        state.adopt_pending(&ctx);
+        finish(&mut state);
+        assert!(state.ready.is_none() && state.pending.is_none());
         state.store = None;
         state.invite = host.invite(Duration::from_secs(60)).unwrap().encode();
         assert!(state.freeze(None).is_err());

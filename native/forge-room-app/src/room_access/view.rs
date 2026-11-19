@@ -35,7 +35,7 @@ impl State {
                     ui.label(format!("{} / {} / {} members / {} tasks",joined.profile.room,joined.profile.address,joined.snapshot.members.len(),joined.snapshot.shared.tasks.len()));ui.monospace(format!("Actual Room ID: {}",if joined.profile.room_id.is_empty(){"not supplied"}else{&joined.profile.room_id}));
                     ui.label(format!("Actual member: {} / {} / {} owned tasks",joined.snapshot.members.iter().find(|m|m.id==joined.snapshot.you).map(|m|m.name.as_str()).unwrap_or("Unavailable"),joined.snapshot.you,joined.snapshot.shared.tasks.iter().filter(|t|t.owner_id==joined.snapshot.you).count()));
                     if let Some(expected)=&joined.expected{ui.monospace(format!("Bookmarked Room ID: {}",expected.room_id));}
-                    if ui.add_enabled(offline,egui::Button::new("Adopt this reviewed Room connection")).clicked(){self.ready=self.pending.take();}
+                    if ui.add_enabled(offline,egui::Button::new("Recheck membership and adopt this reviewed connection")).clicked(){self.adopt_pending(ui.ctx());}
                     if ui.button("Close this temporary joined connection").clicked(){self.pending.take();self.invite.clear();self.notice="Temporary connection closed with leave; saved bookmark unchanged".into();}
                     if !offline{ui.label("Leave/end the current Network Room before adopting this connection.");}
                 }
@@ -257,7 +257,7 @@ impl State {
             });
         }
         ui.separator();
-        ui.label("Up to 64 entries; eight private catalog versions retained. Removing a bookmark changes the current catalog only; retained versions can still contain public metadata. It never revokes a host invite, deletes a project or erases Room history.");
+        ui.label("Up to 64 entries; eight private catalog versions retained. Removing a bookmark changes the current catalog only; retained versions can still contain metadata, including private project associations. It never revokes a host invite, deletes a project or erases Room history.");
         ui.horizontal_wrapped(|ui| {
             if ui.button("Refresh metadata").clicked() {
                 let root = self.catalog_root.clone();
@@ -322,7 +322,7 @@ impl State {
         }
         if let Some((id, seal)) = self.forget.clone() {
             ui.separator();
-            ui.label("Remove this reference from the current catalog? Older retained metadata versions remain. No files or host grants are removed.");
+            ui.label("Remove this reference from the current catalog? Older retained metadata, including project associations, remains. No files or host grants are removed.");
             ui.monospace(&id);
             if ui.button("Confirm remove bookmark reference").clicked() {
                 let root = self.catalog_root.clone();
