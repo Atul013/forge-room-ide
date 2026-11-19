@@ -60,6 +60,12 @@ pub(crate) struct Prepared {
     set: Arc<SyntaxSet>,
     pub names: Vec<String>,
 }
+pub(crate) fn builtins() -> Prepared {
+    Prepared {
+        set: Arc::new(SyntaxSet::load_defaults_newlines()),
+        names: Vec::new(),
+    }
+}
 pub(crate) fn prepare_packs(grammars: &[(String, String)]) -> Result<Prepared, String> {
     build(None, grammars)
 }

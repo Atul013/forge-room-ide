@@ -78,6 +78,28 @@ pub struct Prepared {
     pub resources: Resources,
     syntax: crate::syntax::Prepared,
 }
+/// Clearing damaged contributions must not depend on successfully rebuilding optional loose grammars.
+pub fn disabled() -> Prepared {
+    disabled_with_syntax(crate::syntax::prepare_packs(&[]))
+}
+fn disabled_with_syntax(syntax: Result<crate::syntax::Prepared, String>) -> Prepared {
+    let mut resources = Resources::default();
+    for theme in crate::theme::base_all() {
+        resources
+            .theme_refs
+            .insert(theme.key.clone(), theme.key.clone());
+    }
+    let syntax = match syntax {
+        Ok(syntax) => syntax,
+        Err(error) => {
+            resources.warnings.push(format!(
+                "Optional grammar rebuild failed; built-in highlighting restored: {error}"
+            ));
+            crate::syntax::builtins()
+        }
+    };
+    Prepared { resources, syntax }
+}
 pub fn prepare(activation: &Activation, catalog: &Catalog) -> Result<Prepared, String> {
     let order = activation.validate(catalog)?;
     let mut resources = Resources::default();
@@ -181,6 +203,21 @@ pub fn apply(prepared: Prepared) {
 mod tests {
     use super::super::author;
     use super::*;
+    #[test]
+    fn disabling_resources_has_a_builtin_fallback_even_when_optional_grammar_rebuild_fails() {
+        let prepared = disabled_with_syntax(Err("bad loose grammar linking".into()));
+        assert!(prepared.resources.assets.is_empty());
+        assert!(prepared.resources.grammars.is_empty());
+        assert!(prepared.resources.snippets.is_empty());
+        assert!(prepared.syntax.names.is_empty());
+        assert_eq!(prepared.resources.warnings.len(), 1);
+        assert!(
+            prepared
+                .resources
+                .theme_refs
+                .contains_key(crate::theme::DEFAULT_THEME)
+        );
+    }
     fn activation(pack: &packs::Pack) -> Activation {
         Activation {
             enabled: [(

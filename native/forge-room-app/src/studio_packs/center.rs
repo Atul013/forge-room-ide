@@ -58,6 +58,9 @@ fn read_pack(path: &Path) -> Result<Pack, String> {
     Pack::parse(&bytes)
 }
 impl State {
+    pub fn widgets_visible(&self) -> bool {
+        self.open && self.page == 3
+    }
     pub fn tick(&mut self, ctx: &egui::Context) {
         if !self.started {
             self.started = true;
@@ -97,13 +100,8 @@ impl State {
                                 self.notice = "Pack registry loaded; no workflow, Skill or profile was automatically executed".into();
                             }
                             Err(error) => {
-                                if let Ok(empty) = runtime::prepare(
-                                    &packs::Activation::default(),
-                                    &BTreeMap::new(),
-                                ) {
-                                    runtime::apply(empty);
-                                    self.changed = true;
-                                }
+                                runtime::apply(runtime::disabled());
+                                self.changed = true;
                                 self.notice = format!(
                                     "Contributions disabled: {error}. Inspect storage and use explicit repair."
                                 )
@@ -115,12 +113,8 @@ impl State {
                     }
                     Err(error) => {
                         self.store = None;
-                        if let Ok(empty) =
-                            runtime::prepare(&packs::Activation::default(), &BTreeMap::new())
-                        {
-                            runtime::apply(empty);
-                            self.changed = true;
-                        }
+                        runtime::apply(runtime::disabled());
+                        self.changed = true;
                         self.notice = format!(
                             "Pack storage could not be opened; existing files preserved: {error}"
                         )
@@ -676,14 +670,14 @@ impl State {
         if let Some((kind, key, seal)) = &self.confirm {
             let mut apply = false;
             let mut cancel = false;
-            egui::Modal::new(egui::Id::unique("pack-storage-action")).show(ctx,|ui|{
-ui.heading("Confirm owned pack storage action");
-ui.label(format!("{kind}: {key}"));
-ui.label("The registry revision must still match. Quarantine retains original bytes; removal deletes only the selected owned inactive data file. Disabling preserves all version bytes.");
-apply=ui.add_enabled(!self.profiles.active(),egui::Button::new("Apply this storage action")).clicked();
-cancel=ui.button("Cancel").clicked();
-}
-);
+            egui::Modal::new(egui::Id::unique("pack-storage-action")).show(ctx, |ui| {
+                ui.heading("Confirm owned pack storage action");
+                ui.label(format!("{kind}: {key}"));
+                ui.label("The registry revision must still match. Quarantine retains original bytes.");
+                ui.label("Removal deletes only the selected owned inactive data file. Disabling preserves version bytes.");
+                apply = ui.add_enabled(!self.profiles.active(), egui::Button::new("Apply this storage action")).clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
             if apply {
                 let result = (|| {
                     let store = self.store.as_mut().ok_or("Registry unavailable")?;
@@ -694,8 +688,7 @@ cancel=ui.button("Cancel").clicked();
                         "quarantine" => store.quarantine(key),
                         "purge" => store.purge(key),
                         "disable" => {
-                            let prepared =
-                                runtime::prepare(&packs::Activation::default(), &BTreeMap::new())?;
+                            let prepared = runtime::disabled();
                             store.repair_disable(seal)?;
                             runtime::apply(prepared);
                             self.widgets.resources_changed();

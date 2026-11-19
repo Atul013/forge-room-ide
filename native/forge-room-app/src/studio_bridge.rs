@@ -126,7 +126,7 @@ impl ForgeRoomApp {
         if let Some(sources) = self
             .studio_packs
             .widgets
-            .sources(ctx, self.studio_packs.open)
+            .sources(ctx, self.studio_packs.widgets_visible())
         {
             let snapshot = self.widget_snapshot(scope.clone(), &sources);
             if let Err(error) = self.studio_packs.widgets.capture(snapshot) {
