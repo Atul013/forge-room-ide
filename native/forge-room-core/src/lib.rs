@@ -1,5 +1,6 @@
 mod persistence;
 pub mod transport;
+pub mod workflows;
 
 pub use persistence::{LoadOutcome, StateStore, StoreError};
 

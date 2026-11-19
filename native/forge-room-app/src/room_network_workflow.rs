@@ -60,6 +60,35 @@ pub struct Workflow {
     requested_open: Option<forge_room_core::transport::CodeReference>,
 }
 impl Workflow {
+    pub fn stage_workflow_receipt(
+        &mut self,
+        snapshot: &Snapshot,
+        task: &str,
+        text: String,
+    ) -> Result<(), String> {
+        if text.len() > 500
+            || snapshot.lifecycle != forge_room_core::transport::RoomLifecycle::Active
+        {
+            return Err("Evidence needs an active Room and at most 500 bytes".into());
+        }
+        let selected = snapshot
+            .shared
+            .tasks
+            .iter()
+            .find(|item| item.id == task)
+            .ok_or("Linked Room task no longer exists")?;
+        if selected.owner_id != snapshot.you {
+            return Err("Only the current task owner can stage workflow evidence".into());
+        }
+        let slot = self.evidence.entry(task.into()).or_default();
+        if !slot.is_empty() {
+            return Err("Existing Room evidence draft preserved; attach or clear it first".into());
+        }
+        *slot = text;
+        self.selected = Some(task.into());
+        self.tab = 1;
+        Ok(())
+    }
     pub fn take_open_location(&mut self) -> Option<forge_room_core::transport::CodeReference> {
         self.requested_open.take()
     }
@@ -1405,6 +1434,52 @@ fn due(ui: &mut egui::Ui, id: &str, value: &mut Option<u64>) {
 #[cfg(test)]
 mod draft_tests {
     use super::*;
+    #[test]
+    fn workflow_receipts_preserve_existing_drafts_and_require_active_current_ownership() {
+        let mut snapshot = Snapshot {
+            you: "owner".into(),
+            ..Default::default()
+        };
+        snapshot.shared.tasks.push(forge_room_core::Task {
+            id: "T1".into(),
+            title: "Task".into(),
+            owner_id: "owner".into(),
+            owner_name: "Owner".into(),
+            status: TaskStatus::InProgress,
+            priority: TaskPriority::Normal,
+            dependencies: vec![],
+            acceptance_criteria: vec!["observe".into()],
+            completed_criteria: vec![],
+            worktree_branch: None,
+            due_at_epoch_seconds: None,
+            updated_at_epoch_seconds: 0,
+        });
+        let mut workflow = Workflow::default();
+        workflow
+            .stage_workflow_receipt(&snapshot, "T1", "status receipt".into())
+            .unwrap();
+        assert!(
+            workflow
+                .stage_workflow_receipt(&snapshot, "T1", "replacement".into())
+                .is_err()
+        );
+        assert_eq!(workflow.evidence["T1"], "status receipt");
+        workflow.evidence.clear();
+        snapshot.you = "other".into();
+        assert!(
+            workflow
+                .stage_workflow_receipt(&snapshot, "T1", "receipt".into())
+                .is_err()
+        );
+        snapshot.you = "owner".into();
+        snapshot.lifecycle = forge_room_core::transport::RoomLifecycle::Paused;
+        assert!(
+            workflow
+                .stage_workflow_receipt(&snapshot, "T1", "receipt".into())
+                .is_err()
+        );
+        assert!(workflow.evidence.is_empty());
+    }
     #[test]
     fn a_rejected_message_does_not_replace_a_newer_draft() {
         let mut state = Workflow {

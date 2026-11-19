@@ -1,4 +1,7 @@
 //! Closed validation recipes, explicit argv, owned-process cancellation and bounded capture.
+pub use forge_room_core::workflows::CheckRecipe as Recipe;
+#[cfg(windows)]
+mod job;
 use serde::{Deserialize, Serialize};
 use std::{
     io::Read,
@@ -11,38 +14,14 @@ use std::{
     },
     time::{Duration, Instant},
 };
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Recipe {
-    CargoCheck,
-    CargoTest,
-    PythonCompile,
-    Pytest,
-}
-impl Recipe {
-    pub const ALL: [Self; 4] = [
-        Self::CargoCheck,
-        Self::CargoTest,
-        Self::PythonCompile,
-        Self::Pytest,
-    ];
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::CargoCheck => "cargo check --all-targets",
-            Self::CargoTest => "cargo test",
-            Self::PythonCompile => "Python compile selected .py files",
-            Self::Pytest => "python -m pytest -q",
-        }
-    }
-}
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Plan {
     pub program: PathBuf,
     pub args: Vec<String>,
     pub root: PathBuf,
     pub recipe: Recipe,
 }
-fn find(program: &str) -> Option<PathBuf> {
+pub(crate) fn find(program: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     for dir in std::env::split_paths(&path).filter(|p| p.is_absolute()) {
         let file = dir.join(if cfg!(windows) {
@@ -60,7 +39,12 @@ impl Plan {
     pub fn resolve(root: &Path, recipe: Recipe, files: &[PathBuf]) -> Result<Self, String> {
         let root = root.canonicalize().map_err(|e| e.to_string())?;
         let (program, args) = match recipe {
-            Recipe::CargoCheck | Recipe::CargoTest => {
+            Recipe::CargoCheck
+            | Recipe::CargoTest
+            | Recipe::CargoBuild
+            | Recipe::CargoFmtCheck
+            | Recipe::CargoClippy
+            | Recipe::CargoDoc => {
                 let manifest = crate::diagnostics::find_manifest(&root)
                     .ok_or("No Cargo.toml was found")?
                     .canonicalize()
@@ -69,10 +53,14 @@ impl Plan {
                     return Err("Cargo manifest resolves outside this workspace".into());
                 }
                 let mut args = vec![
-                    if recipe == Recipe::CargoCheck {
-                        "check"
-                    } else {
-                        "test"
+                    match recipe {
+                        Recipe::CargoCheck => "check",
+                        Recipe::CargoTest => "test",
+                        Recipe::CargoBuild => "build",
+                        Recipe::CargoFmtCheck => "fmt",
+                        Recipe::CargoClippy => "clippy",
+                        Recipe::CargoDoc => "doc",
+                        _ => unreachable!(),
                     }
                     .into(),
                     "--manifest-path".into(),
@@ -80,15 +68,26 @@ impl Plan {
                         .to_string_lossy()
                         .into_owned(),
                 ];
-                if recipe == Recipe::CargoCheck {
-                    args.push("--all-targets".into());
+                match recipe {
+                    Recipe::CargoCheck => args.push("--all-targets".into()),
+                    Recipe::CargoFmtCheck => {
+                        args.extend(["--all".into(), "--".into(), "--check".into()])
+                    }
+                    Recipe::CargoClippy => args.extend([
+                        "--all-targets".into(),
+                        "--".into(),
+                        "-D".into(),
+                        "warnings".into(),
+                    ]),
+                    Recipe::CargoDoc => args.push("--no-deps".into()),
+                    _ => (),
                 }
                 (
                     find("cargo").ok_or("Cargo is unavailable on an absolute PATH")?,
                     args,
                 )
             }
-            Recipe::PythonCompile | Recipe::Pytest => {
+            Recipe::PythonCompile | Recipe::Pytest | Recipe::PythonUnittest => {
                 let venv = if cfg!(windows) {
                     "Scripts/python.exe"
                 } else {
@@ -102,15 +101,18 @@ impl Plan {
                     .ok_or("Python is unavailable")?;
                 let mut args = vec![
                     "-m".into(),
-                    if recipe == Recipe::PythonCompile {
-                        "py_compile"
-                    } else {
-                        "pytest"
+                    match recipe {
+                        Recipe::PythonCompile => "py_compile",
+                        Recipe::Pytest => "pytest",
+                        Recipe::PythonUnittest => "unittest",
+                        _ => unreachable!(),
                     }
                     .into(),
                 ];
                 if recipe == Recipe::Pytest {
                     args.push("-q".into());
+                } else if recipe == Recipe::PythonUnittest {
+                    args.extend(["discover".into(), "-v".into()]);
                 } else {
                     for file in files
                         .iter()
@@ -127,6 +129,102 @@ impl Plan {
                     }
                 }
                 (program, args)
+            }
+            Recipe::NodeTest => {
+                let mut args = vec!["--test".into()];
+                for file in files.iter().filter(|path| {
+                    path.extension().is_some_and(|extension| {
+                        ["js", "cjs", "mjs"]
+                            .iter()
+                            .any(|allowed| extension == *allowed)
+                    })
+                }) {
+                    let path = file.canonicalize().map_err(|e| e.to_string())?;
+                    if !path.starts_with(&root) {
+                        return Err("Node test input is outside the workspace".into());
+                    }
+                    args.push(crate::tabs::normalize(&path).to_string_lossy().into_owned());
+                }
+                (find("node").ok_or("Node is unavailable")?, args)
+            }
+            Recipe::GoTest | Recipe::GoVet => {
+                let manifest = root
+                    .join("go.mod")
+                    .canonicalize()
+                    .map_err(|_| "Choose the Go module folder containing go.mod")?;
+                if !manifest.starts_with(&root) {
+                    return Err("Go manifest is outside this root".into());
+                }
+                (
+                    find("go").ok_or("Go is unavailable")?,
+                    vec![
+                        if recipe == Recipe::GoTest {
+                            "test".into()
+                        } else {
+                            "vet".into()
+                        },
+                        "./...".into(),
+                    ],
+                )
+            }
+            Recipe::DotnetBuild | Recipe::DotnetTest => {
+                let mut candidates = files
+                    .iter()
+                    .filter(|path| {
+                        path.extension().is_some_and(|extension| {
+                            ["sln", "slnx", "csproj", "fsproj", "vbproj"]
+                                .iter()
+                                .any(|allowed| extension == *allowed)
+                        })
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if candidates.is_empty() {
+                    candidates = std::fs::read_dir(&root)
+                        .map_err(|e| e.to_string())?
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|path| {
+                            path.extension().is_some_and(|extension| {
+                                ["sln", "slnx"].iter().any(|allowed| extension == *allowed)
+                            })
+                        })
+                        .collect();
+                }
+                if candidates.is_empty() {
+                    candidates = std::fs::read_dir(&root)
+                        .map_err(|e| e.to_string())?
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|path| {
+                            path.extension().is_some_and(|extension| {
+                                ["csproj", "fsproj", "vbproj"]
+                                    .iter()
+                                    .any(|allowed| extension == *allowed)
+                            })
+                        })
+                        .collect();
+                }
+                if candidates.len() != 1 {
+                    return Err("Select exactly one .NET solution/project, or use a folder with one unambiguous project".into());
+                }
+                let target = candidates[0].canonicalize().map_err(|e| e.to_string())?;
+                if !target.starts_with(&root) {
+                    return Err(".NET target is outside this root".into());
+                }
+                (
+                    find("dotnet").ok_or(".NET SDK is unavailable")?,
+                    vec![
+                        if recipe == Recipe::DotnetBuild {
+                            "build".into()
+                        } else {
+                            "test".into()
+                        },
+                        crate::tabs::normalize(&target)
+                            .to_string_lossy()
+                            .into_owned(),
+                    ],
+                )
             }
         };
         Ok(Self {
@@ -145,7 +243,7 @@ impl Plan {
         )
     }
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Evidence {
     pub recipe: Recipe,
     pub exit_code: Option<i32>,
@@ -220,6 +318,11 @@ impl Run {
         let canceled = stop.clone();
         std::thread::spawn(move || {
             let result = (|| -> Result<Evidence, String> {
+                if canceled.load(Ordering::Acquire) {
+                    return Err("Validation canceled before spawning".into());
+                }
+                #[cfg(windows)]
+                let job = job::Guard::new()?;
                 let mut command = Command::new(&plan.program);
                 command
                     .args(&plan.args)
@@ -235,6 +338,12 @@ impl Run {
                 let mut process = command
                     .spawn()
                     .map_err(|e| format!("Validation could not start: {e}"))?;
+                #[cfg(windows)]
+                if let Err(error) = job.assign(&process) {
+                    kill(&mut process);
+                    let _ = process.wait();
+                    return Err(error);
+                }
                 let stdout = reader(process.stdout.take().unwrap());
                 let stderr = reader(process.stderr.take().unwrap());
                 let start = Instant::now();
@@ -330,6 +439,88 @@ impl Drop for Run {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    #[test]
+    fn owned_child_cannot_outlive_runner_process() {
+        const ROLE: &str = "FORGE_VALIDATION_CRASH_FIXTURE";
+        const TEST: &str =
+            "controlled_build::validation::tests::owned_child_cannot_outlive_runner_process";
+        if let Some(root) = std::env::var_os(ROLE) {
+            let root = PathBuf::from(root).canonicalize().unwrap();
+            let temp = std::env::temp_dir().canonicalize().unwrap();
+            assert!(
+                root.starts_with(temp)
+                    && root
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("forge-owned-crash-")
+            );
+            let plan=Plan{program:PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/WindowsPowerShell/v1.0/powershell.exe"),args:vec!["-NoProfile".into(),"-NonInteractive".into(),"-Command".into(),"[IO.File]::WriteAllText([IO.Path]::Combine($env:FORGE_VALIDATION_CRASH_FIXTURE,'child-started'),'owned'); Start-Sleep -Milliseconds 1000; [IO.File]::WriteAllText([IO.Path]::Combine($env:FORGE_VALIDATION_CRASH_FIXTURE,'child-finished'),'orphan')".into()],root:root.clone(),recipe:Recipe::CargoCheck};
+            let mut run = Run::start(plan, 30, || {});
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !root.join("child-started").exists() {
+                assert!(run.poll().is_none(), "Owned child ended before startup");
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::fs::write(root.join("helper-ready"), "ready").unwrap();
+            loop {
+                assert!(
+                    run.poll().is_none(),
+                    "Helper was not terminated before child completion"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let temp = std::env::temp_dir().canonicalize().unwrap();
+        let root = temp.join(format!(
+            "forge-owned-crash-{}",
+            forge_room_core::workflows::new_id().unwrap()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", TEST, "--test-threads=1"])
+            .env(ROLE, crate::tabs::normalize(&root))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        let mut helper = command.spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !root.join("helper-ready").exists() {
+            assert!(
+                helper.try_wait().unwrap().is_none(),
+                "Runner helper exited before readiness"
+            );
+            if Instant::now() >= deadline {
+                let _ = helper.kill();
+                let _ = helper.wait();
+                panic!("Runner helper did not become ready");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        helper.kill().unwrap();
+        helper.wait().unwrap();
+        std::thread::sleep(Duration::from_millis(1800));
+        let orphan = root.join("child-finished").exists();
+        assert!(
+            root.starts_with(&temp)
+                && root
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("forge-owned-crash-")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            !orphan,
+            "Owned validation child kept running after its runner process was force-terminated"
+        );
+    }
     fn run(script: &str, seconds: u64, cancel: bool) -> Evidence {
         let plan = Plan {
             program: PathBuf::from(std::env::var_os("SystemRoot").unwrap())

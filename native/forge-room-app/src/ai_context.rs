@@ -18,9 +18,10 @@ pub enum Kind {
     Debugger,
     RoomTasks,
     Skills,
+    WorkflowReport,
 }
 impl Kind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Selection,
         Self::GitDiff,
         Self::Diagnostics,
@@ -28,6 +29,7 @@ impl Kind {
         Self::Debugger,
         Self::RoomTasks,
         Self::Skills,
+        Self::WorkflowReport,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -38,6 +40,7 @@ impl Kind {
             Self::Debugger => "Debugger stack",
             Self::RoomTasks => "Local Room tasks",
             Self::Skills => "Discover project Skills",
+            Self::WorkflowReport => "Selected workflow run status",
         }
     }
 }

@@ -190,6 +190,9 @@ pub struct CodeLocation {
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SharedSnapshot {
+    /// Public persistent identity for locally staged receipts; never an authentication token.
+    #[serde(default)]
+    pub room_id: String,
     #[serde(default)]
     pub planning_supported: bool,
     #[serde(default)]
@@ -230,7 +233,7 @@ impl SharedRoom {
             readiness: Default::default(),
             milestones: Vec::new(),
             state: RoomState::new(
-                "network",
+                super::secret()?,
                 Participant {
                     id: super::secret()?,
                     name: "Host authority".into(),
@@ -290,6 +293,7 @@ impl SharedRoom {
     }
     pub(super) fn snapshot(&self) -> SharedSnapshot {
         SharedSnapshot {
+            room_id: self.state.room_id.clone(),
             planning_supported: true,
             shipping: self.shipping.clone(),
             readiness: self.readiness.view.clone(),

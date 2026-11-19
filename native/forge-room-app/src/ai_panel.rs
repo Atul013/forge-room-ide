@@ -114,6 +114,20 @@ pub struct State {
     chat_dirty: bool,
     chat_saved: std::time::Instant,
 }
+impl State {
+    pub fn workflow_model_config(&self) -> Option<crate::native_models::Config> {
+        self.native.enabled.then(|| self.native.config.clone())
+    }
+    pub fn workflow_workspaces(&self) -> Vec<crate::agent_workspaces::Workspace> {
+        self.isolated.records.clone()
+    }
+    pub fn adopt_workflow_workspace(
+        &mut self,
+        workspace: crate::agent_workspaces::Workspace,
+    ) -> Result<(), String> {
+        self.isolated.register_workflow(workspace)
+    }
+}
 
 impl Default for State {
     fn default() -> Self {

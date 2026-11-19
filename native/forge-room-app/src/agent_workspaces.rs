@@ -9,7 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workspace {
     pub name: String,
     pub source: PathBuf,
@@ -273,6 +273,18 @@ impl State {
             self.selected = Some(self.records.len() - 1);
         }
         self.enabled = true;
+        self.save()
+    }
+    pub fn register_workflow(&mut self, workspace: Workspace) -> Result<(), String> {
+        let root = self.root.as_ref().ok_or("Open the source project first")?;
+        workspace.validate(root)?;
+        if !self
+            .records
+            .iter()
+            .any(|record| record.folder == workspace.folder)
+        {
+            self.records.push(workspace);
+        }
         self.save()
     }
     pub fn load(&mut self, root: &Path) {

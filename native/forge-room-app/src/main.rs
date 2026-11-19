@@ -66,6 +66,7 @@ mod terminal;
 mod theme;
 mod theme_gallery;
 mod transforms;
+mod workflow_center;
 mod workspace;
 mod workspace_file;
 
@@ -278,6 +279,7 @@ struct ForgeRoomApp {
     checking: background::Latest<diagnostics::Report>,
     lsp_query: background::Latest<lsp::QueryAnswer>,
     task_pipelines: task_pipeline::State,
+    workflow_center: workflow_center::State,
     lsp_live: lsp::live::Manager,
     lsp_sync_at: Option<std::time::Instant>,
     lsp_query_context: Option<(PathBuf, PathBuf, String)>,
@@ -452,6 +454,7 @@ impl ForgeRoomApp {
             checking: background::Latest::default(),
             lsp_query: background::Latest::default(),
             task_pipelines: task_pipeline::State::default(),
+            workflow_center: workflow_center::State::default(),
             lsp_live: lsp::live::Manager::default(),
             lsp_sync_at: None,
             lsp_query_context: None,
@@ -3992,6 +3995,11 @@ impl ForgeRoomApp {
             SidebarView::SourceControl => self.source_control_view(ui, false),
             SidebarView::Project(page) => {
                 let root = self.repo_root();
+                if page == project_tools::Page::Workflows
+                    && ui.button("Open Workflow execution center").clicked()
+                {
+                    self.workflow_center.open = true;
+                }
                 match project_tools::show(
                     ui,
                     page,
@@ -5136,6 +5144,11 @@ impl ForgeRoomApp {
                 )
             }
             Kind::Skills => return self.ai.context.discover(&root),
+            Kind::WorkflowReport => (
+                "Workflow status receipt".into(),
+                self.workflow_center.brief()?,
+                false,
+            ),
         };
         self.ai.context.capture(&root, kind, title, text, tail)
     }
@@ -6326,6 +6339,7 @@ impl eframe::App for ForgeRoomApp {
     }
 
     fn on_exit(&mut self) {
+        self.workflow_center.finish();
         let _ = self.lobby.finish();
         self.save_session(true);
         self.ai.finish();
@@ -6336,6 +6350,55 @@ impl eframe::App for ForgeRoomApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.settle_status(ui.ctx());
         let context = ui.ctx().clone();
+        let workflow_root = self.repo_root();
+        let workflow_dirty = self.tabs.dirty_paths();
+        let workflow_records = self.ai.workflow_workspaces();
+        let workflow_config = self.ai.workflow_model_config();
+        self.workflow_center.tick(
+            &context,
+            workflow_root.as_deref(),
+            self.trusted,
+            &workflow_dirty,
+            &workflow_records,
+            workflow_config.as_ref(),
+        );
+        self.workflow_center
+            .show(&context, self.trusted, &workflow_dirty, &workflow_records);
+        if let Some(workspace) = self.workflow_center.created.take() {
+            self.status = self
+                .ai
+                .adopt_workflow_workspace(workspace)
+                .err()
+                .unwrap_or_else(|| "Workflow worktree registered".into());
+        }
+        if self.workflow_center.import_room {
+            self.workflow_center.import_room = false;
+            self.status = self
+                .workflow_center
+                .import_tasks(&self.room.workflow_room_id(), &self.room.workflow_tasks())
+                .err()
+                .unwrap_or_else(|| "Room tasks imported as manual acceptance graph".into());
+        }
+        if let Some(text) = self.workflow_center.stage_ai.take() {
+            if let Some(root) = &workflow_root
+                .filter(|_| self.trusted && !self.ai.busy() && !self.ai.context_locked())
+            {
+                self.status=self.ai.context.capture(root,ai_context::Kind::WorkflowReport,"Workflow status receipt".into(),text,false).err().unwrap_or_else(||"Workflow status captured. Include it in AI context explicitly before sending.".into());
+            } else {
+                self.status =
+                    "Workflow brief needs an idle trusted workspace outside a controlled session"
+                        .into();
+            }
+        }
+        if let Some((room, task, text)) = self.workflow_center.stage_room.take() {
+            self.status = self
+                .room
+                .stage_workflow_receipt(&room, &task, text)
+                .err()
+                .unwrap_or_else(|| {
+                    "Workflow status staged in Room evidence; inspect and attach explicitly".into()
+                });
+        }
         self.lobby.flush_pending();
         // A terminal that is not on screen cannot have the keyboard; a stale flag would swallow every
         // shortcut (Ctrl+S, Ctrl+P ...) after it was hidden.
