@@ -41,6 +41,7 @@ mod position;
 mod preview;
 mod project_tools;
 mod recovery;
+mod release_desk;
 mod review_checkpoints;
 mod room_changes;
 mod room_code_navigation;
@@ -290,6 +291,7 @@ struct ForgeRoomApp {
     task_pipelines: task_pipeline::State,
     workflow_center: workflow_center::State,
     studio_packs: studio_packs::State,
+    release_desk: release_desk::State,
     density: forge_room_core::packs::Density,
     reduced_motion: bool,
     lsp_live: lsp::live::Manager,
@@ -484,6 +486,7 @@ impl ForgeRoomApp {
             task_pipelines: task_pipeline::State::default(),
             workflow_center: workflow_center::State::default(),
             studio_packs: studio_packs::State::default(),
+            release_desk: release_desk::State::default(),
             density: settings::load()
                 .appearance_profile
                 .and_then(|value| {
@@ -4100,6 +4103,9 @@ impl ForgeRoomApp {
                 {
                     self.studio_packs.open = true;
                 }
+                if ui.button("Open Release Evidence Desk").clicked() {
+                    self.release_desk.open = true;
+                }
                 if page == project_tools::Page::Workflows
                     && ui.button("Open Workflow execution center").clicked()
                 {
@@ -6485,6 +6491,23 @@ impl eframe::App for ForgeRoomApp {
             .show(&context, self.trusted, &workflow_dirty, &workflow_records);
         self.studio_packs_frame(&context, workflow_config.as_ref());
         self.room.recovery_frame(&context, workflow_root.as_deref());
+        self.release_desk.frame(
+            &context,
+            workflow_root.as_deref(),
+            self.trusted,
+            &self.room.workflow_room_id(),
+            &self.room.workflow_tasks(),
+        );
+        if let Some((room, task, text)) = self.release_desk.stage.take() {
+            self.status = self
+                .room
+                .stage_workflow_receipt(&room, &task, text)
+                .err()
+                .unwrap_or_else(|| {
+                    "Release status staged in Room evidence; inspect and attach explicitly".into()
+                });
+        }
+
         if let Some(workspace) = self.workflow_center.created.take() {
             self.status = self
                 .ai
