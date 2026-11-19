@@ -4,10 +4,10 @@ Studio is one local declarative resource system, entered from Extensions, Settin
 
 ## Complete user flow
 
-1. Open the Pack workshop to author a manifest, use the eight-resource local starter or copy an installed version. Edit metadata, dependencies, individual bodies or complete JSON; import bounded UTF-8 bodies, recompute digests, capture appearance and export a new pack file. Installation does not occur while editing.
+1. Open the Pack workshop to author a manifest, use the nine-resource local starter or copy an installed version. Edit metadata, dependencies, individual bodies or complete JSON; import bounded UTF-8 bodies, recompute digests, capture appearance and export a new pack file. Installation does not occur while editing.
 2. Inspect a local pack file or workshop draft. Review publisher/source/license claims, readme, resource bodies and content hashes. Install the exact inspected immutable version **disabled**. Same-version different bytes are rejected.
 3. Select one version per pack and individual resources, then validate dependencies and review the activation. Preparation compiles the complete grammar set before committing. Stale registry/selection reviews fail; rollback is a new reviewed revision.
-4. Enabled themes enter the native theme picker, grammars rebuild highlighting/cache and snippets enter the editor picker. Workflow libraries and Skills remain data until explicit staging. Profiles and widget permissions remain separate choices.
+4. Enabled themes enter the native theme picker, grammars rebuild highlighting/cache and snippets enter the editor picker. Workflow libraries, Skills and Room blueprints remain data until explicit staging. Profiles and widget permissions remain separate choices.
 5. Stage workflows in the trusted active project's existing editor; imported identities are disambiguated, Room links are cleared by default, and saving/execution still require their usual explicit actions. Capture a Skill only in an idle trusted active project; Include and Send remain explicit. No pack script/assets are read or executed.
 
 ## Appearance and Morph
@@ -34,7 +34,7 @@ Author drafts are explicitly saved private records, including invalid/unfinished
 
 ## Verification and open acceptance
 
-Local source verification: strict schemas/dependencies/version upgrades/selective rollback, immutable install/export, competing writers, torn/corrupt restart, exact repair/quarantine, all eight native resource parsers, pre-publication grammar/profile conflicts, unfinished draft/history restart, profile scope-aware rollback, widget privacy/grant revocation and exact mock HTTP Morph sends. Offscreen egui frames cover all five Studio pages at regular/narrow input sizes and the install review. These checks do not establish visible Windows behavior.
+Local source verification: strict schemas/dependencies/version upgrades/selective rollback, immutable install/export, competing writers, torn/corrupt restart, exact repair/quarantine, all nine native resource parsers, pre-publication grammar/profile conflicts, unfinished draft/history restart, profile scope-aware rollback, widget privacy/grant revocation and exact mock HTTP Morph sends. Offscreen egui frames cover all five Studio pages at regular/narrow input sizes and the install review. These checks do not establish visible Windows behavior.
 
 Final Windows CI and package receipts are recorded in progress.md after completion. Visible desktop interaction (including preview/restore, real editor resource behavior, scaled/narrow layouts and installer UI), a configured real native model's Morph response, and physical two-client Room acceptance remain independent gates. The desktop bridge probe on 19 November still returned native pipe unavailable / os error 2. No usual local model listener/executable or second physical device is currently available. No hands-on/provider/physical acceptance is claimed.
 

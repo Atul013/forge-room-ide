@@ -2,7 +2,7 @@
 
 A light, fast, native IDE written in Rust. No Electron, no webview, no bundled Node runtime.
 
-**Status:** early preview (`0.110.0-alpha.3`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in small verified steps. Progress and roadmap: [progress.md](progress.md).
+**Status:** early preview (`0.110.0-alpha.3`), Windows 11 x64, unsigned. The goal is to grow it toward the everyday feature set people expect from VS Code, in cohesive verified bundles. Progress and roadmap: [progress.md](progress.md).
 
 ## What works today
 
@@ -14,6 +14,10 @@ A light, fast, native IDE written in Rust. No Electron, no webview, no bundled N
 - AI panel (Ctrl+Shift+A): installed Claude Code/Codex agents remain available, alongside native text model connections for Chat Completions-compatible endpoints and Anthropic Messages. Native requests show the complete prompt content, endpoint, model and limits for approval before transmission; API keys come from named environment variables. Ask/Plan and explicit reviewed edits share stale-file guards, Apply, undo and durable recovery. Native HTTP has no tools or automatic workspace access. Git, project tools and AI require folder trust. See [native model connections](docs/native/NATIVE_MODEL_CONNECTIONS.md) for supported behavior and unverified live-provider gates.
 - Several terminals with split view, maximize and a VS Code-style header. Choose an installed shell profile for each new terminal; the default choice is saved, and restarting an individual terminal keeps its selected shell. See [terminal shell profiles](docs/native/TERMINAL_SHELLS.md).
 - Six appearance themes and a per-user Windows installer with in-place updates and a themed uninstaller.
+
+- Room Launch and Recovery Centers: reusable reviewed blueprints, public-only setup capture, fresh Room creation, inspected checkpoint/journal restoration, comparisons and protected managed recovery files.
+- Studio/Packs: versioned declarative resources, authoring/import/export, selective activation/rollback, typed appearance previews, permissioned summary widgets and explicit Workflow/Skill/Room blueprint staging.
+- Release Evidence Desk: source anchors, artifact fingerprints, separate attributed acceptance reports, checked portable handoffs and explicit Room evidence staging. Running release builds expose their recorded source identity; visible desktop, real-provider and physical-client acceptance remain separate.
 
 Current gaps and the shared work plan are in [progress.md](progress.md).
 
