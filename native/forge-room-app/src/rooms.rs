@@ -225,6 +225,9 @@ impl RoomView {
         self.store = Some(store);
     }
 
+    pub fn stage_blueprint(&mut self, blueprint: forge_room_core::transport::RoomBlueprint) {
+        self.network.stage_blueprint(blueprint);
+    }
     pub fn take_network_files_changed(&mut self) -> bool {
         self.network.take_files_changed()
     }

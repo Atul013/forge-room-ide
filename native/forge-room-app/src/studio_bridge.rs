@@ -198,6 +198,9 @@ impl ForgeRoomApp {
                 self.studio_packs.profiles.notice = error;
             }
         }
+        if let Some(blueprint) = self.studio_packs.stage_blueprint.take() {
+            self.room.stage_blueprint(blueprint);
+        }
         if let Some(library) = self.studio_packs.stage_workflows.take() {
             self.status = if self.trusted {
                 self.repo_root()
