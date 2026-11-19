@@ -9,6 +9,7 @@ mod autosave;
 mod background;
 #[allow(dead_code)] // Keep optional brand artwork available to the AI panel and future themes.
 mod brand;
+mod build_identity;
 mod commands;
 mod controlled_build;
 mod dap;
@@ -118,6 +119,17 @@ enum BottomTab {
 }
 
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--forge-build-info")) {
+        use std::io::Write;
+        if std::io::stdout()
+            .lock()
+            .write_all(build_identity::json().as_bytes())
+            .is_err()
+        {
+            std::process::exit(2);
+        }
+        return;
+    }
     if let Err(error) = run() {
         let message = format!("{error:#}");
         let log_path = startup_error_path();
@@ -6020,7 +6032,8 @@ impl ForgeRoomApp {
                 .on_hover_text(&self.status);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let dim = |text: String| egui::RichText::new(text).color(theme::status_dim());
-                ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()));
+                ui.label(dim(forge_room_core::NATIVE_PREVIEW_VERSION.to_string()))
+                    .on_hover_text(build_identity::json());
                 ui.add_space(6.0);
                 if let Some(tab) = self.tabs.tabs.get(self.tabs.active) {
                     ui.label(dim(tab.doc.line_ending().label().to_string()));

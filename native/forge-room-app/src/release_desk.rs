@@ -330,7 +330,9 @@ impl State {
         }
         let mut open = self.open;
         egui::Window::new("Release Evidence Desk").open(&mut open).default_size([820.0,700.0]).resizable(true).show(ctx,|ui|{
-            ui.heading("Record each acceptance layer separately");ui.label("Human reports remain attributed claims. Git checks establish source identity; file fingerprints establish bytes. Neither proves visible desktop, real-provider inference or a physical two-client trial.");ui.label(&self.notice);
+            ui.heading("Record each acceptance layer separately");
+            ui.label(format!("Running app: {}",crate::build_identity::label()));
+            if ui.button("Copy running app build identity").clicked(){ctx.copy_text(crate::build_identity::json());}ui.label("Human reports remain attributed claims. Git checks establish source identity; file fingerprints establish bytes. Neither proves visible desktop, real-provider inference or a physical two-client trial.");ui.label(&self.notice);
             if self.worker.busy(){ui.spinner();}
             egui::ScrollArea::vertical().id_salt("release-evidence").show(ui,|ui|{
                 ui.add_enabled_ui(!self.worker.busy() && self.review.is_none(),|ui|self.editor(ui,active_root,trusted,room,tasks));

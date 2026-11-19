@@ -41,6 +41,16 @@ Set-Content $settingsMarker "Forge Room settings preservation marker" -Encoding 
 $install = Start-Process $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
 if ($install.ExitCode -ne 0) { throw "Silent upgrade failed with exit code $($install.ExitCode)" }
 if (-not (Test-Path $installedExe)) { throw "Installed executable is missing" }
+$expectedIdentity = Get-Content -LiteralPath (Join-Path $artifacts "BUILD_IDENTITY.json") -Raw | ConvertFrom-Json
+$installedIdentityPath = Join-Path $artifacts "INSTALLED_BUILD_IDENTITY.json"
+$identityProbe = Start-Process -FilePath $installedExe -ArgumentList "--forge-build-info" -RedirectStandardOutput $installedIdentityPath -WindowStyle Hidden -PassThru
+$null = $identityProbe.Handle
+if (-not $identityProbe.WaitForExit(10000)) { $identityProbe.Kill(); throw "Installed identity probe timed out" }
+$identityProbe.WaitForExit()
+if ($identityProbe.ExitCode -ne 0) { throw "Installed build identity probe failed" }
+$actualIdentity = Get-Content -LiteralPath $installedIdentityPath -Raw | ConvertFrom-Json
+if (-not $actualIdentity.recorded -or $actualIdentity.sourceRevision -ne $expectedIdentity.sourceRevision -or $actualIdentity.nativeTree -ne $expectedIdentity.nativeTree -or $actualIdentity.target -ne $expectedIdentity.target -or $actualIdentity.version -ne $Version -or $actualIdentity.profile -ne "release") { throw "Installed app build identity mismatch" }
+if ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedIdentity.executableSha256) { throw "Installed executable bytes differ from packaged build" }
 if (-not (Test-Path $settingsMarker)) { throw "Application data marker was not preserved during upgrade" }
 if ((Get-Content $settingsMarker -Raw).Trim() -ne "Forge Room settings preservation marker") { throw "Application data marker changed during upgrade" }
 if (-not (Test-Path $preservedProject)) { throw "External project file was not preserved during upgrade" }
@@ -92,6 +102,8 @@ $installVerification = [ordered]@{
     baselineVersion = $baselineVersion
     upgradedVersion = $Version
     stableAppIdUpgradePassed = $true
+    installedBuildIdentityMatched = $true
+    installedExecutableHashMatched = $true
     applicationDataPreservedAcrossUpgrade = $true
     externalProjectPreservedAcrossUpgrade = $true
     defaultStartMenuShortcutCreated = $true

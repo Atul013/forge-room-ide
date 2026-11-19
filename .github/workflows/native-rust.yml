@@ -66,6 +66,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install pinned license report generator
         run: cargo install --locked --features cli cargo-about --version 0.9.2
+      - name: Record native build source identity
+        run: |
+          $source = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Source identity unavailable" }
+          $nativeTree = (git rev-parse HEAD:native).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Native tree identity unavailable" }
+          "FORGE_ROOM_BUILD_SOURCE=$source" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FORGE_ROOM_BUILD_NATIVE_TREE=$nativeTree" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Build native Windows release
         run: cargo build --release --locked --target x86_64-pc-windows-msvc --manifest-path native/forge-room-app/Cargo.toml
       - name: Build portable archive, installer and checksums
@@ -83,6 +91,7 @@ jobs:
             artifacts/windows-x64/Forge-Room-Early-Preview-0.110.0-alpha.3-windows-x64-setup.exe
             artifacts/windows-x64/SHA256SUMS.txt
             artifacts/windows-x64/BUILD_METRICS.json
+            artifacts/windows-x64/BUILD_IDENTITY.json
             artifacts/windows-x64/LAUNCH_SMOKE.json
             artifacts/windows-x64/INSTALL_VERIFY.json
             artifacts/windows-x64/STARTUP_ERROR.log
