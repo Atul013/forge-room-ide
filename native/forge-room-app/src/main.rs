@@ -29,6 +29,7 @@ mod icons;
 mod line_ops;
 mod lobby;
 mod local_models;
+mod local_records;
 mod lsp;
 mod lsp_rename;
 mod mark;
@@ -58,6 +59,8 @@ mod session;
 mod settings;
 mod snippets;
 mod source_control;
+mod studio_bridge;
+mod studio_packs;
 mod symbols;
 mod syntax;
 mod tabs;
@@ -284,6 +287,9 @@ struct ForgeRoomApp {
     lsp_query: background::Latest<lsp::QueryAnswer>,
     task_pipelines: task_pipeline::State,
     workflow_center: workflow_center::State,
+    studio_packs: studio_packs::State,
+    density: forge_room_core::packs::Density,
+    reduced_motion: bool,
     lsp_live: lsp::live::Manager,
     lsp_sync_at: Option<std::time::Instant>,
     lsp_query_context: Option<(PathBuf, PathBuf, String)>,
@@ -475,6 +481,21 @@ impl ForgeRoomApp {
             lsp_query: background::Latest::default(),
             task_pipelines: task_pipeline::State::default(),
             workflow_center: workflow_center::State::default(),
+            studio_packs: studio_packs::State::default(),
+            density: settings::load()
+                .appearance_profile
+                .and_then(|value| {
+                    serde_json::from_value::<forge_room_core::packs::Profile>(value).ok()
+                })
+                .filter(|profile| profile.validate().is_ok())
+                .map_or_default(|profile| profile.density),
+            reduced_motion: settings::load()
+                .appearance_profile
+                .and_then(|value| {
+                    serde_json::from_value::<forge_room_core::packs::Profile>(value).ok()
+                })
+                .filter(|profile| profile.validate().is_ok())
+                .is_some_and(|profile| profile.reduced_motion),
             lsp_live: lsp::live::Manager::default(),
             lsp_sync_at: None,
             lsp_query_context: None,
@@ -592,12 +613,12 @@ impl ForgeRoomApp {
             };
             // A width near the limit is almost always a panel that grew by itself (an old bug),
             // not a choice: it starts at the default size instead.
-            let right = if layout.right_width >= 640 {
+            let right = if layout.right_width > 640 {
                 364
             } else {
                 layout.right_width
             };
-            let side = if layout.sidebar_width >= 560 {
+            let side = if layout.sidebar_width > 560 {
                 250
             } else {
                 layout.sidebar_width
@@ -670,6 +691,9 @@ impl ForgeRoomApp {
 
     /// Write the session when it changed (checked every couple of seconds, and on exit).
     fn save_session(&mut self, force: bool) {
+        if self.studio_packs.profiles.active() {
+            return;
+        }
         const EVERY: std::time::Duration = std::time::Duration::from_secs(2);
         if !force && self.session_checked.elapsed() < EVERY {
             // Nothing else may wake an idle window, so ask to be woken for the next check.
@@ -2610,6 +2634,9 @@ impl ForgeRoomApp {
     }
 
     fn handle_shortcuts(&mut self, ui: &egui::Ui) {
+        if self.studio_packs.profiles.active() {
+            return;
+        }
         let command = Modifiers::COMMAND;
         let command_shift = Modifiers::COMMAND | Modifiers::SHIFT;
         if self.terminal_has_focus {
@@ -4060,6 +4087,17 @@ impl ForgeRoomApp {
             SidebarView::SourceControl => self.source_control_view(ui, false),
             SidebarView::Project(page) => {
                 let root = self.repo_root();
+                if matches!(
+                    page,
+                    project_tools::Page::Extensions
+                        | project_tools::Page::Settings
+                        | project_tools::Page::Accessibility
+                ) && ui
+                    .button("Open Studio / Packs, appearance and widgets")
+                    .clicked()
+                {
+                    self.studio_packs.open = true;
+                }
                 if page == project_tools::Page::Workflows
                     && ui.button("Open Workflow execution center").clicked()
                 {
@@ -6408,6 +6446,16 @@ impl eframe::App for ForgeRoomApp {
     }
 
     fn on_exit(&mut self) {
+        let current = self.appearance();
+        let scope = self.pack_scope();
+        if let Some(previous) = self
+            .studio_packs
+            .profiles
+            .previous_on_exit(&current, &scope)
+        {
+            let _ = self.apply_appearance(&previous);
+        }
+        self.studio_packs.finish();
         self.workflow_center.finish();
         let _ = self.lobby.finish();
         self.save_session(true);
@@ -6433,6 +6481,7 @@ impl eframe::App for ForgeRoomApp {
         );
         self.workflow_center
             .show(&context, self.trusted, &workflow_dirty, &workflow_records);
+        self.studio_packs_frame(&context, workflow_config.as_ref());
         if let Some(workspace) = self.workflow_center.created.take() {
             self.status = self
                 .ai

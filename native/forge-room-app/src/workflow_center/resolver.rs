@@ -54,17 +54,7 @@ pub struct Review {
     pub seal_tracked: bool,
 }
 
-pub fn linked(meta: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        meta.file_type().is_symlink() || meta.file_attributes() & 0x400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        meta.file_type().is_symlink()
-    }
-}
+pub use crate::local_records::linked;
 pub fn canonical(path: &Path) -> Result<PathBuf, String> {
     path.canonicalize()
         .map_err(|e| format!("{}: {e}", path.display()))

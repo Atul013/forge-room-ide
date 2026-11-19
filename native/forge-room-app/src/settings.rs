@@ -20,6 +20,9 @@ pub struct Settings {
     /// point). Missing means automatic: the app's own fit to the Windows display scale.
     #[serde(default)]
     pub ui_scale: Option<f32>,
+    /// Validate this independently so a malformed appearance record cannot discard other settings.
+    #[serde(default)]
+    pub appearance_profile: Option<serde_json::Value>,
     /// Save file tabs automatically once their text stops changing.
     #[serde(default)]
     pub auto_save: Option<bool>,
@@ -237,6 +240,21 @@ pub fn save(settings: &Settings) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn appearance_payload_is_independent_of_existing_trust_provider_and_scale_settings() {
+        let settings:Settings=serde_json::from_value(serde_json::json!({"trusted_folders":["C:/work"],"ai_provider":"codex","ui_scale":1.25,"appearance_profile":{"unexpected":"unfinished or newer data"}})).unwrap();
+        assert_eq!(settings.trusted_folders, vec!["C:/work"]);
+        assert_eq!(settings.ai_provider.as_deref(), Some("codex"));
+        assert_eq!(settings.ui_scale, Some(1.25));
+        assert!(
+            serde_json::from_value::<forge_room_core::packs::Profile>(
+                settings.appearance_profile.unwrap()
+            )
+            .is_err()
+        );
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert!(old.appearance_profile.is_none());
+    }
 
     #[test]
     fn stopping_trust_removes_the_folder_and_any_folder_that_covers_it() {

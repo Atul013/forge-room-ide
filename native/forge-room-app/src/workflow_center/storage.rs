@@ -57,12 +57,6 @@ pub struct Record {
     pub saved: SavedRun,
     pub review: Review,
 }
-#[derive(Serialize, Deserialize)]
-struct Envelope {
-    version: u32,
-    digest: String,
-    payload: serde_json::Value,
-}
 pub struct Store {
     pub root: PathBuf,
     pub source: PathBuf,
@@ -89,48 +83,16 @@ fn safe_directory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 pub fn write_new(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    let payload = serde_json::to_value(value).map_err(|e| e.to_string())?;
-    let digest = workflows::seal(&payload)?;
-    let envelope = Envelope {
-        version: 1,
-        digest,
-        payload,
-    };
-    let bytes = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > MAX_RECORD {
-        return Err("Workflow record exceeds 8 MiB".into());
-    }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|e| e.to_string())?;
-    file.write_all(b"FRC1\n")
-        .and_then(|_| file.write_all(&bytes))
-        .and_then(|_| file.write_all(b"\nDONE\n"))
-        .and_then(|_| file.sync_all())
-        .map_err(|e| format!("Workflow record was not durably saved: {e}"))
+    crate::local_records::write_new(path, MAX_RECORD, value)
 }
 fn read_envelope<T: DeserializeOwned>(path: &Path) -> Result<T, String> {
-    safe_file(path)?;
-    let mut bytes = Vec::new();
-    fs::File::open(path)
-        .map_err(|e| e.to_string())?
-        .take(MAX_RECORD + 12)
-        .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > MAX_RECORD + 11 {
-        return Err("Oversized workflow record".into());
-    }
-    if !bytes.starts_with(b"FRC1\n") || !bytes.ends_with(b"\nDONE\n") {
-        return Err("Incomplete workflow record".into());
-    }
-    let envelope: Envelope = serde_json::from_slice(&bytes[5..bytes.len() - 6])
-        .map_err(|e| format!("Corrupt complete workflow record: {e}"))?;
-    if envelope.version != 1 || workflows::seal(&envelope.payload)? != envelope.digest {
-        return Err("Workflow record checksum/version mismatch".into());
-    }
-    serde_json::from_value(envelope.payload).map_err(|e| e.to_string())
+    crate::local_records::read(path, MAX_RECORD).map_err(|error| {
+        if error == crate::local_records::INCOMPLETE {
+            "Incomplete workflow record".into()
+        } else {
+            error
+        }
+    })
 }
 impl SavedRun {
     pub fn validate(&self) -> Result<(), String> {

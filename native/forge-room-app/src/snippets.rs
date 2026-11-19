@@ -58,6 +58,17 @@ fn parse(text: &str) -> Result<Vec<Snippet>, String> {
     }
     Ok(result)
 }
+pub(crate) fn parse_pack(text: &str) -> Result<Vec<Snippet>, String> {
+    let snippets = parse(text)?;
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    if value
+        .as_object()
+        .is_none_or(|object| object.len() != snippets.len())
+    {
+        return Err("Pack snippets must all be bounded plain text without placeholders".into());
+    }
+    Ok(snippets)
+}
 
 pub fn import(text: &str) -> Result<usize, String> {
     let snippets = parse(text)?;
@@ -86,5 +97,11 @@ pub fn installed() -> Vec<Snippet> {
             }
         }
     }
+    out.extend(
+        crate::studio_packs::runtime::current()
+            .snippets
+            .iter()
+            .cloned(),
+    );
     out
 }
