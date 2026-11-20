@@ -1203,7 +1203,12 @@ impl ForgeRoomApp {
         // A Git command in a folder where Git is off would do nothing and say nothing.
         if matches!(
             command,
-            Command::SwitchBranch
+            Command::GitStageFile
+                | Command::GitUnstageFile
+                | Command::GitDiscardFile
+                | Command::GitAcceptCurrent
+                | Command::GitAcceptIncoming
+                | Command::SwitchBranch
                 | Command::MergeBranch
                 | Command::DeleteBranch
                 | Command::CreateTag
@@ -1482,6 +1487,11 @@ impl ForgeRoomApp {
             Command::GitFetch => self.git_action(source_control::Action::Fetch),
             Command::GitStash => self.git_action(source_control::Action::Stash),
             Command::GitStashApply => self.git_action(source_control::Action::StashApply),
+            Command::GitStageFile
+            | Command::GitUnstageFile
+            | Command::GitDiscardFile
+            | Command::GitAcceptCurrent
+            | Command::GitAcceptIncoming => self.git_open_file_command(command),
             Command::Find => self.find.show_bar(false),
             Command::Replace => self.find.show_bar(true),
             Command::QuickOpen => {
@@ -3597,6 +3607,76 @@ impl ForgeRoomApp {
     }
 
     /// Stage or revert the single change at `line` of the active file (from the gutter menu).
+    /// Stage, unstage, discard or resolve the conflict of the file open in the editor: the same
+    /// actions as the Source Control buttons, reachable from the palette (and so by keyboard).
+    fn git_open_file_command(&mut self, command: Command) {
+        let (Some(root), Some(tab)) = (self.git_root(), self.tabs.tabs.get(self.tabs.active))
+        else {
+            self.status = "Open a file in a Git folder first".into();
+            return;
+        };
+        let Some(path) = tab.doc.path() else {
+            self.status = "This tab is not a saved file".into();
+            return;
+        };
+        let Ok(relative) = path.strip_prefix(&root) else {
+            self.status = "This file is outside the Git folder".into();
+            return;
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let dirty = tab.doc.is_dirty();
+        let change = match &self.git_status {
+            Some(Ok(status)) => status
+                .changes
+                .iter()
+                .find(|change| change.path == relative)
+                .cloned(),
+            _ => None,
+        };
+        let Some(change) = change else {
+            self.status = format!("{relative} has no changes");
+            return;
+        };
+        match command {
+            Command::GitStageFile if change.is_staged() && !change.is_unstaged() => {
+                self.status = format!("{relative} is already staged");
+            }
+            Command::GitStageFile => self.git_action(source_control::Action::Stage(vec![relative])),
+            Command::GitUnstageFile if !change.is_staged() => {
+                self.status = format!("{relative} is not staged");
+            }
+            Command::GitUnstageFile => {
+                self.git_action(source_control::Action::Unstage(vec![relative]));
+            }
+            Command::GitDiscardFile if change.is_conflict() || !change.is_unstaged() => {
+                self.status = format!("{relative} has no unstaged changes to discard");
+            }
+            Command::GitDiscardFile => {
+                // The same question as the button: this one cannot be undone.
+                self.pending_discard = Some(vec![change]);
+            }
+            Command::GitAcceptCurrent | Command::GitAcceptIncoming if !change.is_conflict() => {
+                self.status = format!("{relative} is not in conflict");
+            }
+            Command::GitAcceptCurrent | Command::GitAcceptIncoming if dirty => {
+                self.status = "Save the file first: resolving replaces its text".into();
+            }
+            Command::GitAcceptCurrent | Command::GitAcceptIncoming => {
+                let side = if command == Command::GitAcceptCurrent {
+                    git::Side::Current
+                } else {
+                    git::Side::Incoming
+                };
+                self.git_action(source_control::Action::Resolve {
+                    path: relative,
+                    side,
+                });
+                self.reload_clean_tabs();
+            }
+            _ => {}
+        }
+    }
+
     fn change_at_line(&mut self, stage: bool, line: usize) {
         let (Some(root), Some(tab)) = (self.git_root(), self.tabs.tabs.get(self.tabs.active))
         else {

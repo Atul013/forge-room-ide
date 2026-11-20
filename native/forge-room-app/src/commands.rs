@@ -61,6 +61,11 @@ pub enum Command {
     GitFetch,
     GitStash,
     GitStashApply,
+    GitStageFile,
+    GitUnstageFile,
+    GitDiscardFile,
+    GitAcceptCurrent,
+    GitAcceptIncoming,
     ToggleTerminal,
     CheckProject,
     LspHover,
@@ -247,6 +252,23 @@ pub const ALL: &[(Command, &str, &str)] = &[
     (Command::GitFetch, "Git: Fetch", ""),
     (Command::GitStash, "Git: Stash Changes", ""),
     (Command::GitStashApply, "Git: Apply Latest Stash", ""),
+    (Command::GitStageFile, "Git: Stage Open File", ""),
+    (Command::GitUnstageFile, "Git: Unstage Open File", ""),
+    (
+        Command::GitDiscardFile,
+        "Git: Discard Changes in Open File…",
+        "",
+    ),
+    (
+        Command::GitAcceptCurrent,
+        "Git: Resolve Conflict in Open File: Keep Current",
+        "",
+    ),
+    (
+        Command::GitAcceptIncoming,
+        "Git: Resolve Conflict in Open File: Keep Incoming",
+        "",
+    ),
 ];
 
 #[cfg(test)]
