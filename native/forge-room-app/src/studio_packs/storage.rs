@@ -613,6 +613,83 @@ mod tests {
         }
     }
     #[test]
+    fn skill_library_versions_selective_update_stale_review_disable_and_rollback() {
+        use crate::studio_packs::skills::selection_for;
+        let fixture = Fixture::new();
+        let mut store = fixture.open();
+        let doc = packs::SkillDocument::parse(
+            b"---\nname: Review\ndescription: Evidence review\n---\nOriginal instructions",
+        )
+        .unwrap();
+        let first = doc
+            .pack(
+                "local.review",
+                packs::Version([1, 0, 0]),
+                "Claim",
+                "MIT",
+                "local source",
+            )
+            .unwrap();
+        store.install(&first, &first.digest().unwrap()).unwrap();
+        assert!(store.ledger.activation.enabled.is_empty());
+        let enable = store
+            .review(selection_for(&store, &first, "instructions", true))
+            .unwrap();
+        let prepared =
+            crate::studio_packs::runtime::prepare(&enable.review.next, &store.catalog().unwrap())
+                .unwrap();
+        assert_eq!(prepared.resources.assets.len(), 1);
+        store.activate(&enable).unwrap();
+        let mut second = first.clone();
+        second.version = packs::Version([2, 0, 0]);
+        second.resources[0] = packs::Resource::new(
+            "instructions".into(),
+            "Review".into(),
+            packs::Kind::Skill,
+            "Updated instructions".into(),
+        )
+        .unwrap();
+        store.install(&second, &second.digest().unwrap()).unwrap();
+        assert_eq!(
+            store.ledger.activation.enabled[&first.id].version,
+            first.version
+        );
+        store.install(&second, &second.digest().unwrap()).unwrap();
+        let mut rewritten = second.clone();
+        rewritten.resources[0] = packs::Resource::new(
+            "instructions".into(),
+            "Review".into(),
+            packs::Kind::Skill,
+            "Rewritten same version".into(),
+        )
+        .unwrap();
+        assert!(
+            store
+                .install(&rewritten, &rewritten.digest().unwrap())
+                .is_err()
+        );
+        let update = store
+            .review(selection_for(&store, &second, "instructions", true))
+            .unwrap();
+        store.activate(&update).unwrap();
+        assert!(store.activate(&enable).is_err());
+        assert_eq!(fixture.open().pack(&first.key()).unwrap(), first);
+        let rollback = store
+            .rollback_review(store.ledger.history.len() - 1)
+            .unwrap();
+        store.activate(&rollback).unwrap();
+        assert_eq!(
+            store.ledger.activation.enabled[&first.id].version,
+            first.version
+        );
+        let disable = store
+            .review(selection_for(&store, &first, "instructions", false))
+            .unwrap();
+        store.activate(&disable).unwrap();
+        assert!(store.ledger.activation.enabled.is_empty());
+        assert_eq!(store.catalog().unwrap().len(), 2);
+    }
+    #[test]
     fn immutable_install_review_activation_restart_and_rollback_do_not_overwrite_versions() {
         let fixture = Fixture::new();
         let mut store = fixture.open();
