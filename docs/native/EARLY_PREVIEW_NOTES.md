@@ -74,7 +74,7 @@ These are native source capabilities, not a claim that every workflow has passed
 
 - Declarative themes, snippets and grammars: bounded native imports and local Pack catalogs are implemented; desktop compatibility acceptance remains separate.
 - LSP and DAP: native language-server sessions and Python debugger workflows are implemented; adapter availability and language-specific desktop acceptance vary.
-- Local declarative Packs have inspection, immutable versions, selective activation and rollback. General VSIX execution is unsupported.
+- Local declarative Packs have inspection, immutable versions, selective activation and rollback. The native Skills library imports one bounded `SKILL.md` file, labels publisher/source/license as unverified claims, and captures an active Skill into AI Context only by explicit action; the snapshot starts excluded and provider Send stays separate. Skills and Pack resources do not execute companion scripts. General VSIX execution is unsupported.
 - Arbitrary VS Code API extensions: unsupported because they require a JavaScript/Node or web extension host outside the strict Rust-only runtime.
 - Microsoft Marketplace catalog: unresolved for a non-Microsoft editor.
 - Open VSX or a Forge catalog: candidates only; neither is represented as the Microsoft Marketplace.
