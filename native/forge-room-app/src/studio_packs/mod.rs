@@ -4,6 +4,7 @@ mod author;
 mod center;
 mod profiles;
 pub(crate) mod runtime;
+mod skills;
 mod storage;
 mod widgets;
 pub(crate) use center::State;

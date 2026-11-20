@@ -25,6 +25,7 @@ pub struct State {
     page: usize,
     notice: String,
     author: author::Author,
+    skills: super::skills::Panel,
     selected: String,
     selection: BTreeMap<String, Selection>,
     inspected: Option<(Pack, Vec<String>)>,
@@ -180,6 +181,7 @@ impl State {
                             "Appearance / Morph",
                             "Widgets",
                             "History / repair",
+                            "Skills library",
                         ]
                         .iter()
                         .enumerate()
@@ -220,6 +222,7 @@ impl State {
                             self.profiles.show(ui, current, config)
                         }
                         3 => self.widgets.show(ui),
+                        5 => self.skills_library(ui),
                         _ => self.history(ui),
                     });
                 });
@@ -235,6 +238,32 @@ impl State {
             });
         }
         self.dialogs(ctx);
+    }
+    fn skills_library(&mut self, ui: &mut egui::Ui) {
+        let action = self.skills.show(
+            ui,
+            self.store.as_ref(),
+            self.job.busy() || self.profiles.active(),
+        );
+        match action {
+            Some(super::skills::Action::Inspect(pack)) => self.inspect(ui.ctx(), *pack),
+            Some(super::skills::Action::Activate(next)) => {
+                let result = self
+                    .store
+                    .as_ref()
+                    .ok_or("Open registry first".into())
+                    .and_then(|store| store.review(next))
+                    .and_then(|review| self.prepare(ui.ctx(), review));
+                self.notice = result
+                    .err()
+                    .unwrap_or_else(|| "Preparing exact Skill activation review".into());
+            }
+            Some(super::skills::Action::Capture(title, text)) => {
+                self.stage_skill = Some((title, text))
+            }
+            Some(super::skills::Action::History) => self.page = 4,
+            None => {}
+        }
     }
     fn library(&mut self, ui: &mut egui::Ui) {
         ui.heading("Local resource packs");
@@ -593,6 +622,7 @@ impl State {
                 ui.label(format!("{} / {}", pack.key(), pack.name));
                 ui.label(format!("Publisher claim: {} / License claim: {}", pack.publisher, pack.license));
                 ui.label(&pack.summary);
+                ui.label(format!("Source claim: {}", pack.source));
                 ui.monospace(pack.digest().unwrap_or_default());
                 egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
                     ui.label(&pack.readme);
@@ -902,7 +932,7 @@ mod tests {
         };
         let context = egui::Context::default();
         for width in [1280.0, 700.0] {
-            for page in 0..5 {
+            for page in 0..6 {
                 state.page = page;
                 let mut output = context.run_ui(
                     egui::RawInput {

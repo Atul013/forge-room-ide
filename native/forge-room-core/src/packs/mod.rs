@@ -1,5 +1,7 @@
 //! Declarative local resources. Parsing or activation plans never execute code, fetch or write files.
 mod profile;
+mod skills;
+pub use skills::*;
 mod widgets;
 use crate::workflows::{self, text};
 pub use profile::*;
